@@ -1,0 +1,1816 @@
+
+> truthseeker-web@0.1.0 dev
+> next dev
+
+鈿?Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of D:\a311\绯荤粺璧沑2026绯荤粺璧沑淇″畨\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * D:\a311\绯荤粺璧沑2026绯荤粺璧沑淇″畨\truthseeker-web\package-lock.json
+
+鈻?Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://198.18.0.1:3000
+- Environments: .env.local
+- Experiments (use with caution):
+  路 serverActions
+
+鉁?Starting...
+鈿?The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+鉁?Ready in 935ms
+ GET / 200 in 800ms (compile: 337ms, proxy.ts: 113ms, render: 351ms)
+ GET /detect 404 in 282ms (compile: 175ms, proxy.ts: 13ms, render: 94ms)
+ GET / 200 in 116ms (compile: 9ms, proxy.ts: 7ms, render: 99ms)
+ GET /detect 404 in 80ms (compile: 12ms, proxy.ts: 8ms, render: 60ms)
+ GET / 200 in 140ms (compile: 10ms, proxy.ts: 11ms, render: 119ms)
+ GET / 200 in 112ms (compile: 10ms, proxy.ts: 6ms, render: 96ms)
+ GET /cases 200 in 312ms (compile: 80ms, proxy.ts: 6ms, render: 226ms)
+ GET /?demo=case-audio-scam 200 in 71ms (compile: 8ms, proxy.ts: 9ms, render: 55ms)
+ GET /detect 404 in 107ms (compile: 14ms, proxy.ts: 9ms, render: 84ms)
+ GET /?demo=case-audio-scam 200 in 112ms (compile: 6ms, proxy.ts: 12ms, render: 94ms)
+ GET /cases 200 in 38ms (compile: 5ms, proxy.ts: 5ms, render: 28ms)
+ GET /?demo=case-audio-scam 200 in 41ms (compile: 5ms, proxy.ts: 3ms, render: 33ms)
+ GET /cases 200 in 36ms (compile: 5ms, proxy.ts: 4ms, render: 28ms)
+ GET /?demo=case-video-faceswap 200 in 40ms (compile: 4ms, proxy.ts: 3ms, render: 33ms)
+ GET /cases 200 in 33ms (compile: 4ms, proxy.ts: 3ms, render: 25ms)
+ GET /?demo=case-text-news 200 in 39ms (compile: 4ms, proxy.ts: 3ms, render: 32ms)
+ GET /cases 200 in 34ms (compile: 4ms, proxy.ts: 3ms, render: 27ms)
+ GET /dashboard 200 in 199ms (compile: 106ms, proxy.ts: 3ms, render: 90ms)
+ GET /cases 200 in 44ms (compile: 6ms, proxy.ts: 5ms, render: 34ms)
+ GET / 200 in 37ms (compile: 4ms, proxy.ts: 3ms, render: 30ms)
+ GET /detect/99ffc48c-1298-4e72-891f-8b9b80e74e46?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 653ms (compile: 614ms, proxy.ts: 4ms, render: 35ms)
+ GET /detect/99ffc48c-1298-4e72-891f-8b9b80e74e46?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 262ms (compile: 13ms, proxy.ts: 5ms, render: 244ms)
+ GET / 200 in 43ms (compile: 5ms, proxy.ts: 6ms, render: 32ms)
+ GET /cases 200 in 41ms (compile: 5ms, proxy.ts: 5ms, render: 32ms)
+ GET /dashboard 200 in 39ms (compile: 5ms, proxy.ts: 5ms, render: 30ms)
+ GET / 200 in 45ms (compile: 4ms, proxy.ts: 4ms, render: 37ms)
+ GET /cases 200 in 32ms (compile: 4ms, proxy.ts: 3ms, render: 25ms)
+ GET /cases 200 in 30ms (compile: 4ms, proxy.ts: 3ms, render: 23ms)
+ GET / 200 in 35ms (compile: 4ms, proxy.ts: 3ms, render: 28ms)
+ GET /cases 200 in 38ms (compile: 4ms, proxy.ts: 3ms, render: 31ms)
+ GET / 200 in 36ms (compile: 4ms, proxy.ts: 3ms, render: 29ms)
+ GET /cases 200 in 31ms (compile: 4ms, proxy.ts: 3ms, render: 24ms)
+ GET / 200 in 38ms (compile: 5ms, proxy.ts: 3ms, render: 31ms)
+ GET /cases 200 in 41ms (compile: 5ms, proxy.ts: 4ms, render: 31ms)
+ GET /cases 200 in 31ms (compile: 4ms, proxy.ts: 3ms, render: 24ms)
+ GET /dashboard 200 in 31ms (compile: 5ms, proxy.ts: 3ms, render: 24ms)
+ GET /cases 200 in 37ms (compile: 5ms, proxy.ts: 3ms, render: 29ms)
+ GET / 200 in 36ms (compile: 3ms, proxy.ts: 3ms, render: 29ms)
+ GET /detect/81d69994-183f-46d7-95e1-a0d95e1ce5b0?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 38ms (compile: 12ms, proxy.ts: 5ms, render: 20ms)
+ GET / 200 in 41ms (compile: 3ms, proxy.ts: 3ms, render: 34ms)
+ GET /login 200 in 88ms (compile: 59ms, proxy.ts: 4ms, render: 25ms)
+ POST /login 200 in 2.0s (compile: 4ms, proxy.ts: 4ms, render: 2.0s)
+ GET /login 200 in 21ms (compile: 4ms, proxy.ts: 3ms, render: 15ms)
+ POST /login 200 in 1615ms (compile: 4ms, proxy.ts: 3ms, render: 1608ms)
+ POST /login 200 in 1430ms (compile: 5ms, proxy.ts: 3ms, render: 1422ms)
+ GET /?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired 200 in 66ms (compile: 4ms, proxy.ts: 3ms, render: 59ms)
+ GET /login 200 in 27ms (compile: 6ms, proxy.ts: 4ms, render: 17ms)
+ POST /login 200 in 1125ms (compile: 6ms, proxy.ts: 4ms, render: 1115ms)
+ GET /login 200 in 57ms (compile: 4ms, proxy.ts: 3ms, render: 50ms)
+ POST /login 200 in 1325ms (compile: 4ms, proxy.ts: 3ms, render: 1317ms)
+ GET /?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired 200 in 63ms (compile: 5ms, proxy.ts: 3ms, render: 56ms)
+鉁?Compiled in 559ms
+ GET /login 200 in 359ms (compile: 9ms, proxy.ts: 6ms, render: 344ms)
+ GET /login 200 in 157ms (compile: 23ms, proxy.ts: 15ms, render: 120ms)
+ GET /login 200 in 79ms (compile: 12ms, proxy.ts: 11ms, render: 56ms)
+ GET /?demo=case-audio-scam 200 in 365ms (compile: 130ms, proxy.ts: 7ms, render: 228ms)
+ GET /?demo=case-audio-scam 200 in 146ms (compile: 27ms, proxy.ts: 11ms, render: 108ms)
+ GET /?demo=case-audio-scam 200 in 82ms (compile: 27ms, proxy.ts: 12ms, render: 43ms)
+ GET /login 200 in 199ms (compile: 7ms, proxy.ts: 5ms, render: 187ms)
+ GET /?demo=case-audio-scam 200 in 200ms (compile: 103ms, proxy.ts: 5ms, render: 91ms)
+鉁?Compiled in 111ms
+ GET /login 200 in 66ms (compile: 6ms, proxy.ts: 5ms, render: 54ms)
+ GET /?demo=case-audio-scam 200 in 68ms (compile: 21ms, proxy.ts: 6ms, render: 41ms)
+鉁?Compiled in 37ms
+ GET /login 200 in 56ms (compile: 8ms, proxy.ts: 4ms, render: 44ms)
+ GET /?demo=case-audio-scam 200 in 57ms (compile: 22ms, proxy.ts: 4ms, render: 30ms)
+鉁?Compiled in 73ms
+鉁?Compiled in 444ms
+猕?./truthseeker-web/app/layout.tsx:39:7
+Parsing ecmascript source code failed
+  37 |   )
+  38 | }
+> 39 |       </body >
+     |       ^
+  40 |     </html >
+  41 |   )
+  42 | }
+
+Expression expected
+
+
+
+./truthseeker-web/app/layout.tsx:39:8
+Parsing ecmascript source code failed
+  37 |   )
+  38 | }
+> 39 |       </body >
+     |        ^^^^^^^
+  40 |     </html >
+  41 |   )
+  42 | }
+
+Unterminated regexp literal
+
+
+ GET /login 500 in 1013ms (compile: 880ms, proxy.ts: 5ms, render: 128ms)
+ GET /?demo=case-audio-scam 200 in 519ms (compile: 37ms, proxy.ts: 39ms, render: 443ms)
+ GET /?demo=case-audio-scam 200 in 193ms (compile: 27ms, proxy.ts: 109ms, render: 57ms)
+ GET /?demo=case-audio-scam 200 in 732ms (compile: 103ms, proxy.ts: 5ms, render: 623ms)
+ GET /login 200 in 568ms (compile: 259ms, proxy.ts: 36ms, render: 274ms)
+ GET /?demo=case-audio-scam 200 in 611ms (compile: 16ms, proxy.ts: 38ms, render: 556ms)
+ POST /login 200 in 1377ms (compile: 4ms, proxy.ts: 4ms, render: 1369ms)
+ GET /signup 200 in 110ms (compile: 75ms, proxy.ts: 6ms, render: 29ms)
+ GET / 200 in 831ms (compile: 5ms, proxy.ts: 409ms, render: 416ms)
+ POST /signup 303 in 2.7s (compile: 4ms, proxy.ts: 4ms, render: 2.7s)
+ GET /api/auth/signout 404 in 1165ms (compile: 100ms, proxy.ts: 1018ms, render: 47ms)
+ GET /api/auth/signout 404 in 529ms (compile: 8ms, proxy.ts: 434ms, render: 87ms)
+ GET /api/auth/signout 404 in 420ms (compile: 10ms, proxy.ts: 376ms, render: 33ms)
+ GET /dashboard 200 in 651ms (compile: 339ms, proxy.ts: 5ms, render: 307ms)
+ GET /login 200 in 1202ms (compile: 7ms, proxy.ts: 1130ms, render: 66ms)
+ GET / 200 in 932ms (compile: 5ms, proxy.ts: 394ms, render: 533ms)
+ POST /login 303 in 1809ms (compile: 7ms, proxy.ts: 376ms, render: 1426ms)
+ GET /cases 200 in 1066ms (compile: 177ms, proxy.ts: 383ms, render: 506ms)
+ GET /cases 200 in 2.2s (compile: 7ms, proxy.ts: 1446ms, render: 768ms)
+ GET /dashboard 200 in 5.1s (compile: 6ms, proxy.ts: 4.4s, render: 616ms)
+ GET /cases 200 in 317ms (compile: 14ms, proxy.ts: 14ms, render: 289ms)
+ GET / 200 in 3.2s (compile: 7ms, proxy.ts: 2.7s, render: 475ms)
+ GET /login 200 in 81ms (compile: 9ms, proxy.ts: 5ms, render: 67ms)
+ POST /login 200 in 1540ms (compile: 13ms, proxy.ts: 4ms, render: 1523ms)
+ POST /login 200 in 1026ms (compile: 10ms, proxy.ts: 6ms, render: 1010ms)
+ POST /login 200 in 1063ms (compile: 9ms, proxy.ts: 8ms, render: 1045ms)
+ GET /cases 200 in 101ms (compile: 6ms, proxy.ts: 8ms, render: 86ms)
+ GET /?demo=case-audio-scam 200 in 55ms (compile: 6ms, proxy.ts: 4ms, render: 45ms)
+ GET /cases 200 in 1429ms (compile: 6ms, proxy.ts: 926ms, render: 498ms)
+ GET /dashboard 200 in 1363ms (compile: 6ms, proxy.ts: 905ms, render: 452ms)
+ GET / 200 in 1560ms (compile: 5ms, proxy.ts: 1072ms, render: 483ms)
+ GET /cases 200 in 1617ms (compile: 4ms, proxy.ts: 1198ms, render: 415ms)
+ GET /dashboard 200 in 1552ms (compile: 4ms, proxy.ts: 1137ms, render: 412ms)
+ GET / 200 in 1801ms (compile: 5ms, proxy.ts: 1376ms, render: 420ms)
+ GET /detect/e7401bbd-212b-4199-8160-4886fa5e04b0?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 627ms (compile: 186ms, proxy.ts: 380ms, render: 61ms)
+ GET /detect/e7401bbd-212b-4199-8160-4886fa5e04b0?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1187ms (compile: 14ms, proxy.ts: 903ms, render: 270ms)
+ GET / 200 in 2.1s (compile: 4ms, proxy.ts: 1630ms, render: 503ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1404ms (compile: 17ms, proxy.ts: 1367ms, render: 20ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1090ms (compile: 12ms, proxy.ts: 1032ms, render: 46ms)
+鉁?Compiled in 97ms
+鉁?Compiled in 192ms
+ GET /?demo=case-audio-scam 200 in 193ms (compile: 19ms, proxy.ts: 50ms, render: 124ms)
+ GET /?demo=case-audio-scam 200 in 85ms (compile: 9ms, proxy.ts: 16ms, render: 60ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1407ms (compile: 100ms, proxy.ts: 1249ms, render: 58ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1631ms (compile: 7ms, proxy.ts: 1599ms, render: 25ms)
+ GET /cases 200 in 78ms (compile: 11ms, proxy.ts: 5ms, render: 62ms)
+ GET /?demo=case-audio-scam 200 in 63ms (compile: 7ms, proxy.ts: 5ms, render: 50ms)
+ GET /cases 200 in 107ms (compile: 6ms, proxy.ts: 6ms, render: 95ms)
+ GET /?demo=case-audio-scam 200 in 54ms (compile: 6ms, proxy.ts: 5ms, render: 43ms)
+ GET /cases 200 in 92ms (compile: 5ms, proxy.ts: 3ms, render: 84ms)
+ GET /?demo=case-audio-scam 200 in 71ms (compile: 10ms, proxy.ts: 6ms, render: 55ms)
+ GET /cases 200 in 151ms (compile: 10ms, proxy.ts: 6ms, render: 135ms)
+ GET /?demo=case-audio-scam 200 in 79ms (compile: 9ms, proxy.ts: 6ms, render: 63ms)
+ GET /cases 200 in 109ms (compile: 8ms, proxy.ts: 4ms, render: 97ms)
+ GET /?demo=case-audio-scam 200 in 72ms (compile: 9ms, proxy.ts: 8ms, render: 56ms)
+ GET /cases 200 in 108ms (compile: 7ms, proxy.ts: 4ms, render: 97ms)
+ GET /?demo=case-audio-scam 200 in 66ms (compile: 10ms, proxy.ts: 5ms, render: 50ms)
+ GET /dashboard 200 in 128ms (compile: 6ms, proxy.ts: 4ms, render: 118ms)
+ GET /detect/case-audio-scam 200 in 543ms (compile: 23ms, proxy.ts: 6ms, render: 513ms)
+ GET /detect/demo-ceo-voice?type=audio 200 in 138ms (compile: 17ms, proxy.ts: 7ms, render: 114ms)
+ GET /cases 200 in 36ms (compile: 5ms, proxy.ts: 3ms, render: 28ms)
+ GET /dashboard 200 in 33ms (compile: 5ms, proxy.ts: 3ms, render: 25ms)
+鉁?Compiled in 141ms
+ GET /dashboard 200 in 472ms (compile: 119ms, proxy.ts: 78ms, render: 275ms)
+ GET /dashboard 200 in 197ms (compile: 6ms, proxy.ts: 6ms, render: 184ms)
+ GET /dashboard 200 in 188ms (compile: 6ms, proxy.ts: 5ms, render: 176ms)
+ GET /dashboard 200 in 181ms (compile: 10ms, proxy.ts: 32ms, render: 140ms)
+ GET /dashboard 200 in 139ms (compile: 6ms, proxy.ts: 5ms, render: 128ms)
+ GET /dashboard 200 in 141ms (compile: 5ms, proxy.ts: 5ms, render: 130ms)
+ GET /dashboard 200 in 168ms (compile: 6ms, proxy.ts: 8ms, render: 155ms)
+ GET /dashboard 200 in 180ms (compile: 5ms, proxy.ts: 5ms, render: 170ms)
+ GET /dashboard 200 in 178ms (compile: 9ms, proxy.ts: 6ms, render: 163ms)
+ GET /dashboard 200 in 168ms (compile: 8ms, proxy.ts: 10ms, render: 150ms)
+ GET /dashboard 200 in 150ms (compile: 5ms, proxy.ts: 8ms, render: 138ms)
+ GET /dashboard 200 in 136ms (compile: 6ms, proxy.ts: 5ms, render: 125ms)
+ GET /dashboard 200 in 143ms (compile: 5ms, proxy.ts: 5ms, render: 132ms)
+ GET /dashboard 200 in 144ms (compile: 10ms, proxy.ts: 5ms, render: 129ms)
+ GET /dashboard 200 in 111ms (compile: 4ms, proxy.ts: 8ms, render: 98ms)
+ GET /dashboard 200 in 78ms (compile: 4ms, proxy.ts: 4ms, render: 69ms)
+ GET /dashboard 200 in 41ms (compile: 5ms, proxy.ts: 6ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1501ms (compile: 78ms, proxy.ts: 1365ms, render: 58ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1599ms (compile: 6ms, proxy.ts: 1567ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 393ms (compile: 6ms, proxy.ts: 356ms, render: 31ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 421ms (compile: 11ms, proxy.ts: 385ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 404ms (compile: 5ms, proxy.ts: 369ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 612ms (compile: 10ms, proxy.ts: 579ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 393ms (compile: 5ms, proxy.ts: 365ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 634ms (compile: 13ms, proxy.ts: 597ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 384ms (compile: 7ms, proxy.ts: 348ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 862ms (compile: 11ms, proxy.ts: 823ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 379ms (compile: 5ms, proxy.ts: 351ms, render: 22ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 641ms (compile: 10ms, proxy.ts: 572ms, render: 60ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 863ms (compile: 14ms, proxy.ts: 823ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 404ms (compile: 6ms, proxy.ts: 374ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 620ms (compile: 10ms, proxy.ts: 580ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 402ms (compile: 5ms, proxy.ts: 369ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 388ms (compile: 7ms, proxy.ts: 349ms, render: 32ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 384ms (compile: 10ms, proxy.ts: 349ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 838ms (compile: 5ms, proxy.ts: 810ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 422ms (compile: 5ms, proxy.ts: 389ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 394ms (compile: 10ms, proxy.ts: 362ms, render: 22ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 397ms (compile: 5ms, proxy.ts: 366ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 386ms (compile: 10ms, proxy.ts: 354ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 633ms (compile: 5ms, proxy.ts: 605ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 378ms (compile: 5ms, proxy.ts: 350ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 403ms (compile: 10ms, proxy.ts: 370ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 379ms (compile: 5ms, proxy.ts: 348ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 393ms (compile: 6ms, proxy.ts: 363ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 391ms (compile: 10ms, proxy.ts: 354ms, render: 27ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 453ms (compile: 6ms, proxy.ts: 422ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 388ms (compile: 6ms, proxy.ts: 362ms, render: 20ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 406ms (compile: 11ms, proxy.ts: 366ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 403ms (compile: 6ms, proxy.ts: 373ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 389ms (compile: 10ms, proxy.ts: 361ms, render: 18ms)
+鉁?Compiled in 178ms
+ GET /dashboard 200 in 263ms (compile: 107ms, proxy.ts: 13ms, render: 143ms)
+ GET /dashboard 200 in 45ms (compile: 5ms, proxy.ts: 5ms, render: 35ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1461ms (compile: 12ms, proxy.ts: 1396ms, render: 54ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1460ms (compile: 10ms, proxy.ts: 1425ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 417ms (compile: 6ms, proxy.ts: 358ms, render: 54ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 448ms (compile: 11ms, proxy.ts: 415ms, render: 22ms)
+鉁?Compiled in 110ms
+鉁?Compiled in 137ms
+鉁?Compiled in 93ms
+鉁?Compiled in 108ms
+鉁?Compiled in 93ms
+鉁?Compiled in 126ms
+ GET /dashboard 404 in 775ms (compile: 125ms, proxy.ts: 54ms, render: 596ms)
+ GET /dashboard 200 in 92ms (compile: 28ms, proxy.ts: 16ms, render: 48ms)
+ GET /dashboard 200 in 522ms (compile: 89ms, proxy.ts: 8ms, render: 425ms)
+ GET /dashboard 200 in 550ms (compile: 160ms, proxy.ts: 10ms, render: 380ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1273ms (compile: 20ms, proxy.ts: 1218ms, render: 36ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1351ms (compile: 7ms, proxy.ts: 1313ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 671ms (compile: 18ms, proxy.ts: 616ms, render: 37ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 662ms (compile: 8ms, proxy.ts: 617ms, render: 37ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 400ms (compile: 7ms, proxy.ts: 362ms, render: 31ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 423ms (compile: 6ms, proxy.ts: 382ms, render: 35ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 426ms (compile: 12ms, proxy.ts: 381ms, render: 33ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 434ms (compile: 8ms, proxy.ts: 389ms, render: 36ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 399ms (compile: 7ms, proxy.ts: 364ms, render: 27ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 406ms (compile: 11ms, proxy.ts: 362ms, render: 33ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 391ms (compile: 6ms, proxy.ts: 359ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 400ms (compile: 7ms, proxy.ts: 363ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 412ms (compile: 10ms, proxy.ts: 376ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 408ms (compile: 6ms, proxy.ts: 373ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 410ms (compile: 6ms, proxy.ts: 379ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 635ms (compile: 10ms, proxy.ts: 594ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 390ms (compile: 6ms, proxy.ts: 359ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 402ms (compile: 6ms, proxy.ts: 369ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 530ms (compile: 12ms, proxy.ts: 494ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 398ms (compile: 6ms, proxy.ts: 362ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 387ms (compile: 7ms, proxy.ts: 355ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 414ms (compile: 11ms, proxy.ts: 372ms, render: 31ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 408ms (compile: 6ms, proxy.ts: 376ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 395ms (compile: 6ms, proxy.ts: 360ms, render: 30ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 460ms (compile: 10ms, proxy.ts: 424ms, render: 26ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 410ms (compile: 6ms, proxy.ts: 376ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 425ms (compile: 6ms, proxy.ts: 395ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 400ms (compile: 10ms, proxy.ts: 362ms, render: 28ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 398ms (compile: 6ms, proxy.ts: 368ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 400ms (compile: 5ms, proxy.ts: 366ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 399ms (compile: 10ms, proxy.ts: 364ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 396ms (compile: 6ms, proxy.ts: 364ms, render: 27ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 404ms (compile: 5ms, proxy.ts: 373ms, render: 25ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 395ms (compile: 10ms, proxy.ts: 355ms, render: 29ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 398ms (compile: 6ms, proxy.ts: 371ms, render: 20ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 656ms (compile: 12ms, proxy.ts: 617ms, render: 26ms)
+鉁?Compiled in 94ms
+鉁?Compiled in 108ms
+鉁?Compiled in 120ms
+鉁?Compiled in 122ms
+鉁?Compiled in 135ms
+鉁?Compiled in 103ms
+鉁?Compiled in 94ms
+ GET /detect 200 in 692ms (compile: 630ms, proxy.ts: 4ms, render: 58ms)
+ GET / 200 in 371ms (compile: 337ms, proxy.ts: 3ms, render: 31ms)
+ GET / 200 in 28ms (compile: 6ms, proxy.ts: 3ms, render: 19ms)
+ GET / 200 in 34ms (compile: 5ms, proxy.ts: 4ms, render: 25ms)
+ GET / 200 in 32ms (compile: 4ms, proxy.ts: 3ms, render: 25ms)
+ GET / 200 in 26ms (compile: 4ms, proxy.ts: 5ms, render: 18ms)
+ GET / 200 in 28ms (compile: 4ms, proxy.ts: 3ms, render: 20ms)
+ GET / 200 in 23ms (compile: 3ms, proxy.ts: 3ms, render: 17ms)
+ GET /detect 200 in 47ms (compile: 5ms, proxy.ts: 7ms, render: 35ms)
+ GET /detect 200 in 51ms (compile: 6ms, proxy.ts: 5ms, render: 40ms)
+ GET /cases 200 in 273ms (compile: 105ms, proxy.ts: 3ms, render: 165ms)
+ GET /?demo=case-audio-scam 200 in 26ms (compile: 4ms, proxy.ts: 4ms, render: 19ms)
+ GET /detect 200 in 45ms (compile: 4ms, proxy.ts: 4ms, render: 37ms)
+ GET / 200 in 38ms (compile: 5ms, proxy.ts: 4ms, render: 29ms)
+ GET / 200 in 27ms (compile: 6ms, proxy.ts: 3ms, render: 17ms)
+ GET /detect?demo=audio-ceo-fraud 200 in 41ms (compile: 4ms, proxy.ts: 3ms, render: 34ms)
+ GET /detect 200 in 49ms (compile: 6ms, proxy.ts: 4ms, render: 39ms)
+ GET / 200 in 29ms (compile: 4ms, proxy.ts: 3ms, render: 22ms)
+ GET /detect 200 in 44ms (compile: 5ms, proxy.ts: 4ms, render: 36ms)
+ GET / 200 in 26ms (compile: 4ms, proxy.ts: 3ms, render: 19ms)
+ GET /detect 200 in 46ms (compile: 4ms, proxy.ts: 4ms, render: 38ms)
+ GET /detect/936ead49-fec3-4993-9b0d-62d8681bc3b7?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 42ms (compile: 14ms, proxy.ts: 4ms, render: 24ms)
+ GET / 200 in 32ms (compile: 5ms, proxy.ts: 4ms, render: 22ms)
+ GET /detect 200 in 54ms (compile: 6ms, proxy.ts: 5ms, render: 42ms)
+ GET /cases 200 in 40ms (compile: 5ms, proxy.ts: 4ms, render: 30ms)
+ GET /dashboard 200 in 38ms (compile: 6ms, proxy.ts: 4ms, render: 28ms)
+ GET / 200 in 35ms (compile: 6ms, proxy.ts: 4ms, render: 24ms)
+ GET / 200 in 34ms (compile: 6ms, proxy.ts: 4ms, render: 24ms)
+鉁?Compiled in 236ms
+鉁?Compiled in 59ms
+鉁?Compiled in 49ms
+鉁?Compiled in 118ms
+ GET / 200 in 206ms (compile: 120ms, proxy.ts: 23ms, render: 63ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 2.1s (compile: 15ms, proxy.ts: 1976ms, render: 68ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 2.1s (compile: 11ms, proxy.ts: 2.0s, render: 28ms)
+鉁?Compiled in 58ms
+鉁?Compiled in 54ms
+鉁?Compiled in 52ms
+鉁?Compiled in 50ms
+鉁?Compiled in 61ms
+鉁?Compiled in 48ms
+ GET / 200 in 453ms (compile: 106ms, proxy.ts: 5ms, render: 342ms)
+ GET / 200 in 49ms (compile: 11ms, proxy.ts: 6ms, render: 32ms)
+鉁?Compiled in 187ms
+ GET / 200 in 310ms (compile: 191ms, proxy.ts: 8ms, render: 111ms)
+ GET / 200 in 357ms (compile: 300ms, proxy.ts: 17ms, render: 40ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1868ms (compile: 15ms, proxy.ts: 1816ms, render: 37ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 3.4s (compile: 16ms, proxy.ts: 3.4s, render: 36ms)
+鉁?Compiled in 137ms
+鉁?Compiled in 111ms
+ GET / 200 in 184ms (compile: 108ms, proxy.ts: 24ms, render: 53ms)
+ GET / 200 in 156ms (compile: 18ms, proxy.ts: 11ms, render: 127ms)
+ GET / 200 in 360ms (compile: 7ms, proxy.ts: 5ms, render: 348ms)
+ GET / 200 in 194ms (compile: 11ms, proxy.ts: 40ms, render: 143ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1407ms (compile: 13ms, proxy.ts: 1337ms, render: 57ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1407ms (compile: 8ms, proxy.ts: 1375ms, render: 24ms)
+鉁?Compiled in 158ms
+鉁?Compiled in 54ms
+ GET / 200 in 246ms (compile: 78ms, proxy.ts: 4ms, render: 163ms)
+ GET / 200 in 27ms (compile: 5ms, proxy.ts: 8ms, render: 15ms)
+鉁?Compiled in 52ms
+鈿?Fast Refresh had to perform a full reload due to a runtime error.
+鈿?Fast Refresh had to perform a full reload due to a runtime error.
+鉁?Compiled in 45ms
+ GET / 200 in 427ms (compile: 86ms, proxy.ts: 6ms, render: 335ms)
+ GET / 200 in 161ms (compile: 14ms, proxy.ts: 7ms, render: 140ms)
+ GET / 200 in 186ms (compile: 4ms, proxy.ts: 3ms, render: 179ms)
+ GET / 200 in 114ms (compile: 5ms, proxy.ts: 5ms, render: 103ms)
+ GET / 200 in 97ms (compile: 5ms, proxy.ts: 4ms, render: 88ms)
+鉁?Compiled in 49ms
+鉁?Compiled in 53ms
+鈿?Fast Refresh had to perform a full reload due to a runtime error.
+鈿?Fast Refresh had to perform a full reload due to a runtime error.
+鈿?Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 566ms (compile: 104ms, proxy.ts: 23ms, render: 439ms)
+ GET / 200 in 289ms (compile: 9ms, proxy.ts: 11ms, render: 269ms)
+ GET / 200 in 188ms (compile: 10ms, proxy.ts: 15ms, render: 162ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1857ms (compile: 15ms, proxy.ts: 1819ms, render: 23ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 2.6s (compile: 12ms, proxy.ts: 2.6s, render: 27ms)
+鉁?Compiled in 68ms
+ GET / 200 in 287ms (compile: 100ms, proxy.ts: 5ms, render: 182ms)
+鉁?Compiled in 258ms
+鉁?Compiled in 150ms
+鉁?Compiled in 263ms
+ GET / 200 in 389ms (compile: 155ms, proxy.ts: 16ms, render: 218ms)
+ GET / 200 in 40ms (compile: 8ms, proxy.ts: 8ms, render: 24ms)
+ GET / 200 in 31ms (compile: 6ms, proxy.ts: 5ms, render: 20ms)
+ GET / 200 in 28ms (compile: 6ms, proxy.ts: 5ms, render: 17ms)
+ GET / 200 in 25ms (compile: 4ms, proxy.ts: 5ms, render: 16ms)
+ GET /detect 200 in 70ms (compile: 18ms, proxy.ts: 4ms, render: 49ms)
+ GET / 200 in 31ms (compile: 4ms, proxy.ts: 4ms, render: 23ms)
+ GET /detect 200 in 47ms (compile: 6ms, proxy.ts: 3ms, render: 37ms)
+ GET / 200 in 33ms (compile: 5ms, proxy.ts: 4ms, render: 23ms)
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/cases/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/detect/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+猕?./truthseeker-web/components/layout/Header.tsx:3:1
+Module not found: Can't resolve './HeaderClient'
+  1 | import Link from "next/link"
+  2 | import { createClient } from "@/lib/supabase/server"
+> 3 | import { HeaderClient } from "./HeaderClient"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 |
+  5 | export default async function Header() {
+  6 |     const supabase = await createClient()
+
+
+
+Import trace:
+  Server Component:
+    ./truthseeker-web/components/layout/Header.tsx
+    ./truthseeker-web/app/dashboard/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+鉁?Compiled in 534ms
+鉁?Compiled in 303ms
+ GET / 200 in 300ms (compile: 40ms, proxy.ts: 42ms, render: 219ms)
+ GET / 200 in 300ms (compile: 63ms, proxy.ts: 48ms, render: 188ms)
+ GET / 200 in 167ms (compile: 11ms, proxy.ts: 8ms, render: 149ms)
+ GET / 200 in 198ms (compile: 38ms, proxy.ts: 9ms, render: 152ms)
+ GET / 200 in 175ms (compile: 15ms, proxy.ts: 12ms, render: 148ms)
+ GET / 200 in 172ms (compile: 34ms, proxy.ts: 14ms, render: 124ms)
+ GET / 200 in 180ms (compile: 9ms, proxy.ts: 4ms, render: 166ms)
+ GET / 200 in 146ms (compile: 9ms, proxy.ts: 6ms, render: 131ms)
+ GET / 200 in 142ms (compile: 9ms, proxy.ts: 11ms, render: 123ms)
+ GET / 200 in 130ms (compile: 11ms, proxy.ts: 8ms, render: 111ms)
+ GET / 200 in 93ms (compile: 14ms, proxy.ts: 4ms, render: 74ms)
+ GET / 200 in 55ms (compile: 10ms, proxy.ts: 4ms, render: 40ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1405ms (compile: 39ms, proxy.ts: 1293ms, render: 74ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1403ms (compile: 64ms, proxy.ts: 1290ms, render: 49ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 438ms (compile: 9ms, proxy.ts: 354ms, render: 75ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 434ms (compile: 13ms, proxy.ts: 381ms, render: 39ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 395ms (compile: 13ms, proxy.ts: 356ms, render: 27ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 412ms (compile: 9ms, proxy.ts: 375ms, render: 28ms)
+鉁?Compiled in 122ms
+ GET / 200 in 363ms (compile: 144ms, proxy.ts: 13ms, render: 206ms)
+ GET / 200 in 360ms (compile: 156ms, proxy.ts: 24ms, render: 180ms)
+ GET / 200 in 156ms (compile: 13ms, proxy.ts: 6ms, render: 137ms)
+ GET / 200 in 84ms (compile: 14ms, proxy.ts: 7ms, render: 63ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1018ms (compile: 16ms, proxy.ts: 970ms, render: 32ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1128ms (compile: 9ms, proxy.ts: 1097ms, render: 23ms)
+鉁?Compiled in 59ms
+ GET / 200 in 183ms (compile: 47ms, proxy.ts: 27ms, render: 108ms)
+ GET / 200 in 187ms (compile: 20ms, proxy.ts: 26ms, render: 141ms)
+ GET / 200 in 86ms (compile: 7ms, proxy.ts: 5ms, render: 74ms)
+ GET / 200 in 49ms (compile: 10ms, proxy.ts: 5ms, render: 34ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 968ms (compile: 17ms, proxy.ts: 890ms, render: 61ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 976ms (compile: 43ms, proxy.ts: 900ms, render: 33ms)
+鉁?Compiled in 56ms
+ GET / 200 in 157ms (compile: 27ms, proxy.ts: 8ms, render: 122ms)
+ GET / 200 in 145ms (compile: 43ms, proxy.ts: 5ms, render: 97ms)
+ GET / 200 in 81ms (compile: 5ms, proxy.ts: 4ms, render: 72ms)
+ GET / 200 in 53ms (compile: 6ms, proxy.ts: 5ms, render: 42ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 905ms (compile: 12ms, proxy.ts: 870ms, render: 24ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 1055ms (compile: 8ms, proxy.ts: 1022ms, render: 26ms)
+鉁?Compiled in 148ms
+鉁?Compiled in 166ms
+鉁?Compiled in 618ms
+ GET / 200 in 1222ms (compile: 590ms, proxy.ts: 12ms, render: 620ms)
+ GET / 200 in 565ms (compile: 343ms, proxy.ts: 18ms, render: 204ms)
+ GET / 200 in 1353ms (compile: 482ms, proxy.ts: 10ms, render: 861ms)
+ GET / 200 in 972ms (compile: 323ms, proxy.ts: 15ms, render: 634ms)
+ GET / 200 in 581ms (compile: 107ms, proxy.ts: 6ms, render: 467ms)
+ GET / 200 in 617ms (compile: 149ms, proxy.ts: 24ms, render: 444ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 2.1s (compile: 306ms, proxy.ts: 1091ms, render: 739ms)
+ GET / 200 in 1340ms (compile: 72ms, proxy.ts: 24ms, render: 1245ms)
+ GET / 200 in 1194ms (compile: 127ms, proxy.ts: 27ms, render: 1040ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 2.5s (compile: 362ms, proxy.ts: 1133ms, render: 983ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 938ms (compile: 204ms, proxy.ts: 598ms, render: 135ms)
+ GET / 200 in 1391ms (compile: 23ms, proxy.ts: 22ms, render: 1346ms)
+ GET / 200 in 1013ms (compile: 43ms, proxy.ts: 24ms, render: 946ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 2.4s (compile: 438ms, proxy.ts: 1143ms, render: 785ms)
+ GET / 200 in 417ms (compile: 32ms, proxy.ts: 18ms, render: 367ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock://%E5%A4%B4%E5%83%8F1.jpg 200 in 2.0s (compile: 172ms, proxy.ts: 1601ms, render: 261ms)
+鉁?Compiled in 133ms
+鉁?Compiled in 54ms
+ GET / 200 in 337ms (compile: 103ms, proxy.ts: 13ms, render: 221ms)
+ GET / 200 in 264ms (compile: 10ms, proxy.ts: 6ms, render: 248ms)
+ GET / 200 in 272ms (compile: 9ms, proxy.ts: 6ms, render: 257ms)
+ GET / 200 in 267ms (compile: 10ms, proxy.ts: 11ms, render: 246ms)
+ GET / 200 in 241ms (compile: 11ms, proxy.ts: 9ms, render: 221ms)
+ GET / 200 in 190ms (compile: 12ms, proxy.ts: 8ms, render: 170ms)
+ GET / 200 in 176ms (compile: 11ms, proxy.ts: 8ms, render: 157ms)
+ GET / 200 in 184ms (compile: 8ms, proxy.ts: 9ms, render: 167ms)
+ GET / 200 in 181ms (compile: 7ms, proxy.ts: 8ms, render: 166ms)
+ GET / 200 in 148ms (compile: 9ms, proxy.ts: 7ms, render: 131ms)
+ GET / 200 in 105ms (compile: 8ms, proxy.ts: 10ms, render: 88ms)
+ GET / 200 in 61ms (compile: 9ms, proxy.ts: 7ms, render: 46ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 975ms (compile: 21ms, proxy.ts: 918ms, render: 36ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 1048ms (compile: 8ms, proxy.ts: 1002ms, render: 37ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 389ms (compile: 7ms, proxy.ts: 347ms, render: 35ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 398ms (compile: 9ms, proxy.ts: 349ms, render: 41ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg&role=expert 200 in 402ms (compile: 17ms, proxy.ts: 347ms, render: 38ms)
+ GET /detect/f422d950-3865-4f1d-9f31-584b276d6f81?type=image&url=mock%3A%2F%2F%E5%A4%B4%E5%83%8F1.jpg 200 in 437ms (compile: 10ms, proxy.ts: 387ms, render: 40ms)
+ GET / 200 in 200ms (compile: 13ms, proxy.ts: 14ms, render: 173ms)
+ GET /detect 200 in 322ms (compile: 172ms, proxy.ts: 6ms, render: 144ms)
+ GET /cases 200 in 386ms (compile: 127ms, proxy.ts: 7ms, render: 253ms)
+ GET /login 200 in 293ms (compile: 117ms, proxy.ts: 5ms, render: 171ms)
+ GET /dashboard 200 in 473ms (compile: 89ms, proxy.ts: 3ms, render: 381ms)
+ GET /signup 200 in 337ms (compile: 151ms, proxy.ts: 11ms, render: 175ms)
+鉁?Compiled in 156ms
+ GET /detect 200 in 133ms (compile: 63ms, proxy.ts: 3ms, render: 67ms)
+ GET /cases 200 in 156ms (compile: 83ms, proxy.ts: 5ms, render: 69ms)
+ GET /dashboard 200 in 169ms (compile: 70ms, proxy.ts: 4ms, render: 95ms)
+ GET / 200 in 298ms (compile: 83ms, proxy.ts: 10ms, render: 204ms)
+ GET /detect 200 in 53ms (compile: 6ms, proxy.ts: 4ms, render: 44ms)
+ GET / 200 in 109ms (compile: 6ms, proxy.ts: 7ms, render: 97ms)
+ GET /detect 200 in 70ms (compile: 8ms, proxy.ts: 5ms, render: 58ms)
+鉁?Compiled in 118ms
+鉁?Compiled in 84ms
+ GET / 200 in 134ms (compile: 14ms, proxy.ts: 8ms, render: 112ms)
+ GET /detect 200 in 272ms (compile: 65ms, proxy.ts: 4ms, render: 204ms)
+ GET / 200 in 31ms (compile: 8ms, proxy.ts: 4ms, render: 19ms)
+ GET /detect 200 in 50ms (compile: 6ms, proxy.ts: 4ms, render: 40ms)
+ GET /dashboard 200 in 122ms (compile: 58ms, proxy.ts: 6ms, render: 59ms)
+ GET /cases 200 in 161ms (compile: 72ms, proxy.ts: 9ms, render: 80ms)
+ GET /detect 200 in 59ms (compile: 7ms, proxy.ts: 6ms, render: 47ms)
+ GET /dashboard 200 in 51ms (compile: 9ms, proxy.ts: 5ms, render: 37ms)
+ GET /cases 200 in 50ms (compile: 8ms, proxy.ts: 6ms, render: 36ms)
+ GET /dashboard 200 in 38ms (compile: 6ms, proxy.ts: 3ms, render: 29ms)
+ GET / 200 in 32ms (compile: 6ms, proxy.ts: 4ms, render: 22ms)
+ GET / 200 in 228ms (compile: 27ms, proxy.ts: 34ms, render: 167ms)
+ GET / 200 in 110ms (compile: 8ms, proxy.ts: 6ms, render: 96ms)
+ GET / 200 in 29ms (compile: 6ms, proxy.ts: 4ms, render: 18ms)
+ GET / 200 in 32ms (compile: 5ms, proxy.ts: 4ms, render: 23ms)
+ GET /detect 200 in 51ms (compile: 6ms, proxy.ts: 4ms, render: 41ms)
+ GET / 200 in 30ms (compile: 5ms, proxy.ts: 4ms, render: 21ms)

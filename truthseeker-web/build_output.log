@@ -1,0 +1,107 @@
+
+> truthseeker-web@0.1.0 build
+> next build
+
+鈿?Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of D:\a311\绯荤粺璧沑2026绯荤粺璧沑淇″畨\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * D:\a311\绯荤粺璧沑2026绯荤粺璧沑淇″畨\truthseeker-web\package-lock.json
+
+鈻?Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+- Experiments (use with caution):
+  路 serverActions
+
+鈿?The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+
+> Build error occurred
+Error: Turbopack build failed with 3 errors:
+./truthseeker-web/lib/supabase/server.ts:2:1
+Ecmascript file had an error
+  1 | import { createServerClient } from '@supabase/ssr'
+> 2 | import { cookies } from 'next/headers'
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  3 |
+  4 | export async function createClient() {
+  5 |     const cookieStore = await cookies()
+
+You're importing a component that needs "next/headers". That only works in a Server Component which is not supported in the pages/ directory. Read more: https://nextjs.org/docs/app/building-your-application/rendering/server-components
+
+
+
+Import traces:
+  #1 [Server Component]:
+    ./truthseeker-web/lib/supabase/server.ts
+    ./truthseeker-web/app/page.tsx
+
+  #2 [Server Component]:
+    ./truthseeker-web/lib/supabase/server.ts
+    ./truthseeker-web/lib/supabase/auth-actions.ts
+
+  #3 [Client Component Browser]:
+    ./truthseeker-web/lib/supabase/server.ts [Client Component Browser]
+    ./truthseeker-web/components/layout/Header.tsx [Client Component Browser]
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component Browser]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+  #4 [Client Component SSR]:
+    ./truthseeker-web/lib/supabase/server.ts [Client Component SSR]
+    ./truthseeker-web/components/layout/Header.tsx [Client Component SSR]
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component SSR]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+
+./truthseeker-web/app/dashboard/page.tsx:4:1
+Export Header doesn't exist in target module
+  2 |
+  3 | import { useRef } from "react"
+> 4 | import { Header } from "@/components/layout/Header"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { motion, useScroll, useTransform } from "motion/react"
+  6 | import { StatsOverview } from "@/components/dashboard/StatsOverview"
+  7 | import { NetworkGraphUI } from "@/components/dashboard/NetworkGraphUI"
+
+The export Header was not found in module [project]/truthseeker-web/components/layout/Header.tsx [app-client] (ecmascript).
+Did you mean to import default?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component Browser]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component SSR]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+
+./truthseeker-web/app/dashboard/page.tsx:4:1
+Export Header doesn't exist in target module
+  2 |
+  3 | import { useRef } from "react"
+> 4 | import { Header } from "@/components/layout/Header"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { motion, useScroll, useTransform } from "motion/react"
+  6 | import { StatsOverview } from "@/components/dashboard/StatsOverview"
+  7 | import { NetworkGraphUI } from "@/components/dashboard/NetworkGraphUI"
+
+The export Header was not found in module [project]/truthseeker-web/components/layout/Header.tsx [app-ssr] (ecmascript).
+Did you mean to import default?
+All exports of the module are statically known (It doesn't have dynamic exports). So it's known statically that the requested export doesn't exist.
+
+Import traces:
+  Client Component Browser:
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component Browser]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./truthseeker-web/app/dashboard/page.tsx [Client Component SSR]
+    ./truthseeker-web/app/dashboard/page.tsx [Server Component]
+
+
+    at <unknown> (./truthseeker-web/lib/supabase/server.ts:2:1)
+    at <unknown> (./truthseeker-web/app/dashboard/page.tsx:4:1)
+    at <unknown> (./truthseeker-web/app/dashboard/page.tsx:4:1)

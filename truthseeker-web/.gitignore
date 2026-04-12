@@ -1,0 +1,36 @@
+# ============================================
+# 前端项目特定的 .gitignore（补充规则）
+# 大部分通用规则已在根目录 .gitignore 中定义
+# ============================================
+
+# Next.js
+/.next/
+/out/
+
+# Dependencies
+/node_modules
+
+# Testing
+/coverage
+
+# Production
+/build
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files (重要：环境变量不应提交)
+.env*.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts

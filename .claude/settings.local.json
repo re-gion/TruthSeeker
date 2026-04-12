@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__exa__get_code_context_exa",
+      "Bash(python:*)",
+      "mcp__exa__web_search_exa",
+      "mcp__exa__crawling_exa",
+      "Bash(curl -L -o \"C:/Users/user/.claude/notification.mp3\" \"https://raw.githubusercontent.com/ryparker/claude-code-sounds/main/themes/portal/sounds/test-chamber-complete.mp3\" --max-time 30)",
+      "Bash(powershell -Command \"Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ryparker/claude-code-sounds/main/themes/portal/sounds/test-chamber-complete.mp3' -OutFile 'C:/Users/user/.claude/notification.mp3' -TimeoutSec 30\")",
+      "Bash(powershell:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase",
+    "shadcn"
+  ],
+  "outputStyle": "default"
+}
