@@ -3,6 +3,56 @@
 import { motion, useInView } from "motion/react"
 import { useEffect, useRef, useState } from "react"
 import { ShieldAlert, Zap, CloudLightning, Activity, Server, FileVideo2 } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+
+interface DashboardStats {
+    totalTasks: number
+    deepfakeDetected: number
+    avgResponseMs: number
+    activeSessions: number
+}
+
+function useDashboardStats() {
+    const [stats, setStats] = useState<DashboardStats>({
+        totalTasks: 0,
+        deepfakeDetected: 0,
+        avgResponseMs: 89,
+        activeSessions: 1,
+    })
+
+    useEffect(() => {
+        const supabase = createClient()
+
+        async function fetchStats() {
+            const { count: total } = await supabase
+                .from("tasks")
+                .select("*", { count: "exact", head: true })
+
+            const { count: flagged } = await supabase
+                .from("tasks")
+                .select("*", { count: "exact", head: true })
+                .not("result", "is", null)
+
+            setStats({
+                totalTasks: total ?? 0,
+                deepfakeDetected: flagged ?? 0,
+                avgResponseMs: 89,
+                activeSessions: 1,
+            })
+        }
+
+        fetchStats()
+
+        const channel = supabase
+            .channel("tasks-stats")
+            .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, fetchStats)
+            .subscribe()
+
+        return () => { supabase.removeChannel(channel) }
+    }, [])
+
+    return stats
+}
 
 function AnimatedNumber({ value }: { value: number }) {
     const [displayValue, setDisplayValue] = useState(0)
@@ -31,12 +81,13 @@ function AnimatedNumber({ value }: { value: number }) {
 
 export function StatsOverview() {
     const containerRef = useRef(null)
+    const dbStats = useDashboardStats()
 
     const stats = [
-        { label: "累计检测总量", value: 142857, icon: <Activity className="w-5 h-5" />, color: "from-blue-500 to-cyan-400" },
-        { label: "深度伪造拦截", value: 38402, icon: <ShieldAlert className="w-5 h-5" />, color: "from-red-500 to-orange-400" },
-        { label: "平均响应延时 (ms)", value: 89, icon: <Zap className="w-5 h-5" />, color: "from-emerald-400 to-green-500" },
-        { label: "活跃节点并发", value: 504, icon: <Server className="w-5 h-5" />, color: "from-[#6366F1] to-[#A855F7]" },
+        { label: "累计检测总量", value: dbStats.totalTasks, icon: <Activity className="w-5 h-5" />, color: "from-blue-500 to-cyan-400" },
+        { label: "深度伪造拦截", value: dbStats.deepfakeDetected, icon: <ShieldAlert className="w-5 h-5" />, color: "from-red-500 to-orange-400" },
+        { label: "平均响应延时 (ms)", value: dbStats.avgResponseMs, icon: <Zap className="w-5 h-5" />, color: "from-emerald-400 to-green-500" },
+        { label: "活跃节点并发", value: dbStats.activeSessions, icon: <Server className="w-5 h-5" />, color: "from-[#6366F1] to-[#A855F7]" },
     ]
 
     const threatDistribution = [
