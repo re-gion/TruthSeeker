@@ -24,6 +24,9 @@ app = FastAPI(
 
 # ─── Middleware ───
 app.add_middleware(RateLimitMiddleware, limit=30, window=60)
+from app.middleware.auth import AuthMiddleware
+if settings.SUPABASE_JWT_SECRET:
+    app.add_middleware(AuthMiddleware, supabase_jwt_secret=settings.SUPABASE_JWT_SECRET)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL, "http://localhost:3000"],
