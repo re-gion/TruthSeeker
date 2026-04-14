@@ -1,5 +1,6 @@
 """SSE 检测端点 - Layer 2: 四 Agent 完整事件流"""
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter
@@ -8,6 +9,9 @@ from pydantic import BaseModel
 from typing import Optional, AsyncGenerator
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
+from app.utils.supabase_client import supabase
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -53,6 +57,8 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
     # 发送开始事件
     yield f"data: {json.dumps({'type': 'start', 'task_id': task_id, 'timestamp': datetime.now(timezone.utc).isoformat(), 'max_rounds': initial_state['max_rounds']})}\\n\\n"
 
+    final_verdict_data = None  # 追踪最终裁决，用于更新任务状态
+
     # 流式执行 LangGraph
     async for chunk in compiled_graph.astream(initial_state, stream_mode="updates"):
         for node_name, updates in chunk.items():
@@ -95,10 +101,22 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
 
             # 最终裁决
             if updates.get("final_verdict"):
+                final_verdict_data = updates["final_verdict"]
                 yield f"data: {json.dumps({'type': 'final_verdict', 'verdict': updates['final_verdict']})}\\n\\n"
 
             # 节点完成
             yield f"data: {json.dumps({'type': 'node_complete', 'node': node_name})}\\n\\n"
+
+    # 更新任务状态到 Supabase
+    if final_verdict_data:
+        try:
+            supabase.table("tasks").update({
+                "status": "completed",
+                "result": final_verdict_data,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+        except Exception as e:
+            logger.warning("Failed to update task status: %s", e)
 
     # 完成
     yield f"data: {json.dumps({'type': 'complete', 'task_id': task_id, 'timestamp': datetime.now(timezone.utc).isoformat()})}\\n\\n"
