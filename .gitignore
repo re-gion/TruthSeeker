@@ -6,6 +6,8 @@
 # Node.js / Next.js（前端项目）
 # ============================================
 
+.mcp.json
+
 # Dependencies
 node_modules/
 .pnp/

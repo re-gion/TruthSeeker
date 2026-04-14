@@ -1,30 +1,59 @@
-"""Supabase JWT 验证中间件"""
+"""JWT 认证中间件 — 验证 Supabase 签发的 token"""
+import logging
+
 import jwt
-from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-# 不需要鉴权的路由前缀（前缀匹配，有意为之）
-PUBLIC_PATHS = {"/health", "/api/v1/detect", "/api/v1/tasks", "/api/v1/upload"}
+logger = logging.getLogger(__name__)
+
+# 精确匹配的公开路径（A-1 修复：避免 startswith 前缀绕过）
+PUBLIC_PATHS: frozenset[str] = frozenset({
+    "/health",
+    "/api/v1/detect/stream",
+    "/api/v1/tasks",
+    "/api/v1/upload/",
+})
+
+# 需要前缀匹配的公开路径（必须以 / 结尾）
+PUBLIC_PREFIXES: frozenset[str] = frozenset({
+    "/api/v1/upload/",
+})
+
+
+def _is_public(path: str) -> bool:
+    """判断路径是否为公开路由（A-1 修复：精确 + 受控前缀匹配）"""
+    if path in PUBLIC_PATHS:
+        return True
+    for prefix in PUBLIC_PREFIXES:
+        if path.startswith(prefix):
+            return True
+    return False
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """验证 Supabase JWT，将 user_id 注入 request.state"""
+    """可选 JWT 认证：有 token 则提取 user_id，无 token 则为匿名"""
 
     def __init__(self, app, supabase_jwt_secret: str):
         super().__init__(app)
         self.jwt_secret = supabase_jwt_secret
 
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        # 公开路由跳过鉴权
-        if any(path.startswith(p) for p in PUBLIC_PATHS):
-            request.state.user_id = None
+        # 公开路径：仍然尝试提取 user_id 用于追踪（X-4 修复）
+        if _is_public(request.url.path):
+            request.state.user_id = "anonymous"
+            request.state.is_authenticated = False
+            self._try_extract_user(request)
             return await call_next(request)
 
+        # 受保护路径：必须认证
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return JSONResponse({"detail": "Missing authorization token"}, status_code=401)
+            return JSONResponse(
+                {"detail": "未提供认证令牌"},
+                status_code=401,
+            )
 
         token = auth_header[7:]
         try:
@@ -32,15 +61,44 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 token,
                 self.jwt_secret,
                 algorithms=["HS256"],
-                options={"verify_aud": False},
+                audience="authenticated",  # A-2 修复：校验 audience
             )
-            user_id = payload.get("sub")
-            if not user_id:
-                return JSONResponse({"detail": "Invalid token: missing sub"}, status_code=401)
-            request.state.user_id = user_id
-        except jwt.ExpiredSignatureError:
-            return JSONResponse({"detail": "Token expired"}, status_code=401)
-        except jwt.InvalidTokenError:
-            return JSONResponse({"detail": "Invalid token"}, status_code=401)
+            sub = payload.get("sub")
+            if not sub:
+                return JSONResponse(
+                    {"detail": "令牌缺少用户标识"},
+                    status_code=401,
+                )
+            request.state.user_id = sub
+            request.state.is_authenticated = True
 
-        return await call_next(request)
+        except jwt.ExpiredSignatureError:
+            return JSONResponse({"detail": "令牌已过期"}, status_code=401)
+        except jwt.InvalidTokenError as e:
+            logger.warning("Invalid JWT: %s", e)
+            return JSONResponse({"detail": "无效的认证令牌"}, status_code=401)
+
+        try:
+            return await call_next(request)
+        except Exception as e:
+            logger.error("Request processing error after auth: %s", e)
+            return JSONResponse({"detail": "服务器内部错误"}, status_code=500)
+
+    def _try_extract_user(self, request: Request) -> None:
+        """尝试从公开路由的请求中提取 user_id（X-4 修复）"""
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return
+        token = auth_header[7:]
+        try:
+            payload = jwt.decode(
+                token, self.jwt_secret,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+            sub = payload.get("sub")
+            if sub:
+                request.state.user_id = sub
+                request.state.is_authenticated = True
+        except jwt.InvalidTokenError:
+            pass  # 公开路由，token 无效不影响访问

@@ -10,4 +10,5 @@ python-dotenv>=1.0.0
 httpx>=0.28.0
 aiofiles>=24.1.0
 supabase>=2.15.0
-PyJWT>=2.8.0
+PyJWT>=2.8.0,<3.0.0
+filetype>=1.2.0

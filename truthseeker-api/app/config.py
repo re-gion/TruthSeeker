@@ -9,12 +9,13 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_ANON_KEY: str = ""
-    SUPABASE_JWT_SECRET: str = ""
+    SUPABASE_JWT_SECRET: str = "NOT_SET"
 
     # AI APIs
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
     REALITY_DEFENDER_API_KEY: str = ""
+    VIRUSTOTAL_API_KEY: str = ""
 
     # App
     FRONTEND_URL: str = "http://localhost:3000"

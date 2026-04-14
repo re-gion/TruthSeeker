@@ -1,6 +1,6 @@
 "use client"
 
-import { motion, useInView } from "motion/react"
+import { motion } from "motion/react"
 import { useEffect, useRef, useState } from "react"
 import { ShieldAlert, Zap, CloudLightning, Activity, Server, FileVideo2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -16,26 +16,45 @@ function useDashboardStats() {
     const [stats, setStats] = useState<DashboardStats>({
         totalTasks: 0,
         deepfakeDetected: 0,
-        avgResponseMs: 89,
-        activeSessions: 1,
+        avgResponseMs: 89,   // TODO: 从 tasks 计算平均耗时
+        activeSessions: 1,   // TODO: 接入 Supabase Presence
     })
 
     useEffect(() => {
         const supabase = createClient()
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
         async function fetchStats() {
             const { count: total } = await supabase
                 .from("tasks")
                 .select("*", { count: "exact", head: true })
 
-            const { count: flagged } = await supabase
+            // S-1: 仅统计 verdict 标记为伪造的任务
+            const { data: completedTasks } = await supabase
                 .from("tasks")
-                .select("*", { count: "exact", head: true })
+                .select("result")
                 .not("result", "is", null)
+
+            let flagged = 0
+            if (completedTasks) {
+                for (const task of completedTasks) {
+                    try {
+                        const result = typeof task.result === "string"
+                            ? JSON.parse(task.result)
+                            : task.result
+                        const label = result?.verdict?.label || result?.label || ""
+                        if (["FAKE", "SUSPICIOUS", "DEEPFAKE", "伪造", "疑似"].includes(label)) {
+                            flagged++
+                        }
+                    } catch {
+                        // result 无法解析，跳过
+                    }
+                }
+            }
 
             setStats({
                 totalTasks: total ?? 0,
-                deepfakeDetected: flagged ?? 0,
+                deepfakeDetected: flagged,
                 avgResponseMs: 89,
                 activeSessions: 1,
             })
@@ -43,12 +62,19 @@ function useDashboardStats() {
 
         fetchStats()
 
+        // Debounce: 避免频繁 Realtime 事件导致冗余查询
         const channel = supabase
             .channel("tasks-stats")
-            .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, fetchStats)
+            .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
+                if (debounceTimer) clearTimeout(debounceTimer)
+                debounceTimer = setTimeout(fetchStats, 3000)
+            })
             .subscribe()
 
-        return () => { supabase.removeChannel(channel) }
+        return () => {
+            if (debounceTimer) clearTimeout(debounceTimer)
+            supabase.removeChannel(channel)
+        }
     }, [])
 
     return stats

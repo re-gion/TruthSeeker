@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "motion/react"
+import { createClient } from "@/lib/supabase/client"
 
 const ACCEPTED_TYPES = ["video/mp4", "video/webm", "audio/mpeg", "audio/wav", "image/jpeg", "image/png", "image/webp", "text/plain"]
 const ACCEPTED_EXT = ".mp4,.webm,.mp3,.wav,.jpg,.jpeg,.png,.webp,.txt"
@@ -17,12 +18,24 @@ function getInputType(file: File | null, textPrompt: string): string {
     if (file?.type.startsWith("video/")) return "video"
     if (file?.type.startsWith("audio/")) return "audio"
     if (file?.type.startsWith("image/")) return "image"
-    return textPrompt.trim() ? "text" : "image"
+    // F-5 修复：无文件时默认 text 而非 image
+    return textPrompt.trim() ? "text" : "text"
 }
 
 function formatSize(bytes: number): string {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** F-1 修复：从 Supabase session 获取 access_token */
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+    } catch {
+        return null
+    }
 }
 
 export function FileUploader() {
@@ -59,15 +72,21 @@ export function FileUploader() {
         try {
             let fileUrl: string | null = null
             const inputType = getInputType(file, prompt)
+            const authToken = await getAuthToken()
 
             // Step 1: 上传文件（如果有）
             if (file) {
                 setProgress(10)
                 const formData = new FormData()
                 formData.append("file", file)
-                const uploadResp = await fetch(`${apiBase}/api/v1/upload`, {
+                // F-1 修复：携带认证 token
+                const uploadHeaders: Record<string, string> = {}
+                if (authToken) uploadHeaders["Authorization"] = `Bearer ${authToken}`
+
+                const uploadResp = await fetch(`${apiBase}/api/v1/upload/`, {
                     method: "POST",
                     body: formData,
+                    headers: uploadHeaders,
                 })
                 if (!uploadResp.ok) {
                     const err = await uploadResp.json().catch(() => ({}))
@@ -80,9 +99,12 @@ export function FileUploader() {
 
             // Step 2: 创建任务
             const title = file?.name || prompt.slice(0, 18) || "文本分析任务"
+            const taskHeaders: Record<string, string> = { "Content-Type": "application/json" }
+            if (authToken) taskHeaders["Authorization"] = `Bearer ${authToken}`
+
             const resp = await fetch(`${apiBase}/api/v1/tasks`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: taskHeaders,
                 body: JSON.stringify({
                     title,
                     input_type: inputType,
@@ -93,10 +115,15 @@ export function FileUploader() {
                         has_file: Boolean(file),
                     },
                 }),
-            }).catch(() => null)
+            })
 
-            setProgress(90)
-            const taskId = resp?.ok ? (await resp.json()).id : crypto.randomUUID()
+            // F-3 修复：任务创建失败时显示错误而非静默降级
+            if (!resp.ok) {
+                const errBody = await resp.json().catch(() => ({}))
+                throw new Error(errBody.detail || "任务创建失败，请重试")
+            }
+            const taskData = await resp.json()
+            const taskId = taskData.id
             setProgress(100)
             await new Promise((r) => setTimeout(r, 350))
 

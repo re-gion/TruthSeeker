@@ -1,90 +1,173 @@
-"""文件上传端点 - 接收文件并存储到 Supabase Storage"""
-import uuid
-import re
-import os
+"""文件上传端点 — Supabase Storage + 签名 URL"""
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
-from typing import Optional
-from app.utils.supabase_client import supabase
-from app.config import settings
+import os
+import re
+import tempfile
+from pathlib import Path
 
-router = APIRouter()
+import filetype
+from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.responses import JSONResponse
+
+from app.utils.supabase_client import supabase
+
 logger = logging.getLogger(__name__)
 
-ALLOWED_MIME = {
+router = APIRouter()
+
+# 安全：MIME 白名单（不可变集合）
+ALLOWED_MIME = frozenset({
     "video/mp4", "video/webm",
     "audio/mpeg", "audio/wav",
     "image/jpeg", "image/png", "image/webp",
     "text/plain",
+})
+
+# Magic bytes → 真实 MIME 映射（仅校验二进制格式，text/plain 无固定 magic）
+MAGIC_MIME_MAP: dict[bytes, str] = {
+    b"\xff\xd8\xff": "image/jpeg",
+    b"\x89PNG": "image/png",
+    b"RIFF": "audio/wav",       # RIFF...WAVE
+    b"\x1a\x45\xdf\xa5": "video/webm",  # EBML/Matroska/WebM
 }
-MAX_SIZE = 500 * 1024 * 1024  # 500MB
-CHUNK_SIZE = 1 * 1024 * 1024  # 1MB
 
 
-def _sanitize_folder(user_id: Optional[str]) -> str:
-    """验证并清理 user_id，防止路径遍历攻击"""
-    if not user_id:
-        return "anon"
-    if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', user_id):
-        raise HTTPException(status_code=400, detail="无效的 user_id 格式")
-    return user_id
+def _magic_mime(header: bytes) -> str | None:
+    """通过文件头 magic bytes 推断真实 MIME 类型"""
+    for magic, mime in MAGIC_MIME_MAP.items():
+        if header.startswith(magic):
+            return mime
+    return None
 
 
-def _safe_ext(filename: Optional[str]) -> str:
-    """从文件名安全提取扩展名，只保留字母数字"""
-    raw_ext = os.path.splitext(filename or "")[1].lstrip(".")
-    return re.sub(r'[^a-zA-Z0-9]', '', raw_ext)[:10] or "bin"
+def _sanitize_folder(name: str) -> str:
+    """清理 user_id 防止路径穿越"""
+    clean = re.sub(r"[^a-zA-Z0-9_-]", "", name)
+    if not clean or len(clean) > 64:
+        return "anonymous"
+    return clean
 
 
-@router.post("")
+def _safe_ext(filename: str) -> str:
+    """提取安全文件扩展名"""
+    raw_ext = Path(filename).suffix.lstrip(".")
+    safe = re.sub(r"[^a-zA-Z0-9]", "", raw_ext)[:10]
+    return safe or "bin"
+
+
+def _verify_file_type(tmp_path: str, declared_mime: str) -> str | None:
+    """
+    校验文件真实类型。优先用 filetype 库，回退到 magic bytes。
+    返回真实 MIME，若不匹配白名单则返回 None。
+    """
+    # filetype 库仅读取头部，不会加载整个文件
+    kind = filetype.guess(tmp_path)
+    if kind is not None:
+        return kind.mime if kind.mime in ALLOWED_MIME else None
+
+    # 回退：手动 magic bytes 检测
+    with open(tmp_path, "rb") as f:
+        header = f.read(32)
+    if not header:
+        # 空文件 — 仅允许 text/plain
+        return "text/plain" if declared_mime == "text/plain" else None
+
+    detected = _magic_mime(header)
+    if detected:
+        return detected if detected in ALLOWED_MIME else None
+
+    # 无法识别的二进制文件 — 拒绝
+    # 纯文本文件无固定 magic，信任声明但限制为 text/plain
+    if declared_mime == "text/plain":
+        return "text/plain"
+
+    return None
+
+
+MAX_SIZE = 500 * 1024 * 1024  # 500 MB
+
+
+@router.post("/")
 async def upload_file(
     file: UploadFile = File(...),
-    user_id: Optional[str] = Form(None),
+    user_id: str = Form("anonymous"),
 ):
-    """上传媒体文件到 Supabase Storage，返回可访问 URL"""
-    # 验证 MIME 类型（基于客户端声明，服务端白名单过滤）
-    content_type = file.content_type or ""
-    if content_type not in ALLOWED_MIME:
-        raise HTTPException(status_code=415, detail=f"不支持的文件类型: {content_type}")
-
-    # 分块读取，防止 OOM
-    chunks = []
-    total = 0
-    while True:
-        chunk = await file.read(CHUNK_SIZE)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > MAX_SIZE:
-            raise HTTPException(status_code=413, detail="文件大小超过 500MB 限制")
-        chunks.append(chunk)
-    content = b"".join(chunks)
-
-    # 构建存储路径（sanitized）
-    folder = _sanitize_folder(user_id)
-    ext = _safe_ext(file.filename)
-    storage_path = f"{folder}/{uuid.uuid4()}.{ext}"
-
-    try:
-        supabase.storage.from_("media").upload(
-            path=storage_path,
-            file=content,
-            file_options={"content-type": content_type},
+    # 1. 客户端声明 MIME 校验
+    if file.content_type not in ALLOWED_MIME:
+        return JSONResponse(
+            {"detail": f"不支持的文件类型：{file.content_type}"},
+            status_code=400,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"存储上传失败: {str(e)}")
 
-    # 生成签名 URL（1小时有效）
+    # 2. 写入临时文件（流式，内存友好）
+    folder = _sanitize_folder(user_id)
+    ext = _safe_ext(file.filename or "upload")
+    tmp_path: str | None = None
+
     try:
-        signed = supabase.storage.from_("media").create_signed_url(storage_path, 3600)
-        file_url = signed["signedURL"]
-    except Exception as e:
-        logger.warning("签名 URL 生成失败，降级为公开 URL: %s", e)
-        file_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/media/{storage_path}"
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{ext}", delete=False, dir=tempfile.gettempdir(),
+        ) as tmp:
+            tmp_path = tmp.name
+            total = 0
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_SIZE:
+                    # 超限立即中止
+                    os.unlink(tmp_path)
+                    tmp_path = None
+                    return JSONResponse(
+                        {"detail": "文件大小不能超过 500MB"},
+                        status_code=400,
+                    )
+                tmp.write(chunk)
 
-    return {
-        "file_url": file_url,
-        "storage_path": storage_path,
-        "content_type": content_type,
-        "size": total,
-    }
+        # 3. Magic bytes 校验（U-1 修复）
+        real_mime = _verify_file_type(tmp_path, file.content_type)
+        if real_mime is None:
+            logger.warning(
+                "File type mismatch: declared=%s, real=unknown, user=%s",
+                file.content_type, folder,
+            )
+            return JSONResponse(
+                {"detail": "文件真实类型与声明不符或不被支持"},
+                status_code=400,
+            )
+
+        # 4. 上传到 Supabase Storage
+        storage_path = f"{folder}/{os.path.basename(tmp_path)}"
+        with open(tmp_path, "rb") as f:
+            supabase.storage.from_("media").upload(
+                storage_path, f, content_type=real_mime,
+            )
+
+        # 5. 生成签名 URL（有效 24 小时，U-5 修复）
+        try:
+            signed = supabase.storage.from_("media").create_signed_url(
+                storage_path, 86400,
+            )
+            file_url = signed.get("signedURL") or signed.get("signedUrl")
+            if not file_url:
+                raise ValueError("Empty signed URL response")
+        except Exception as e:
+            logger.error("Failed to create signed URL: %s", e)
+            return JSONResponse(
+                {"detail": "文件已存储但无法生成访问链接，请稍后重试"},
+                status_code=500,
+            )
+
+        return {"file_url": file_url, "storage_path": storage_path}
+
+    except Exception as e:
+        logger.error("Upload failed: %s", e)
+        # U-6 修复：不泄露内部错误
+        return JSONResponse(
+            {"detail": "文件上传失败，请稍后重试"},
+            status_code=500,
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
