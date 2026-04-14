@@ -54,12 +54,32 @@ export function FileUploader() {
         }
         setUploading(true)
         setProgress(0)
-        const progressInterval = setInterval(() => setProgress((p) => Math.min(p + Math.random() * 15, 90)), 180)
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+
         try {
-            const taskId = crypto.randomUUID()
+            let fileUrl: string | null = null
             const inputType = getInputType(file, prompt)
+
+            // Step 1: 上传文件（如果有）
+            if (file) {
+                setProgress(10)
+                const formData = new FormData()
+                formData.append("file", file)
+                const uploadResp = await fetch(`${apiBase}/api/v1/upload`, {
+                    method: "POST",
+                    body: formData,
+                })
+                if (!uploadResp.ok) {
+                    const err = await uploadResp.json().catch(() => ({}))
+                    throw new Error(err.detail || "文件上传失败")
+                }
+                const uploadData = await uploadResp.json()
+                fileUrl = uploadData.file_url
+                setProgress(50)
+            }
+
+            // Step 2: 创建任务
             const title = file?.name || prompt.slice(0, 18) || "文本分析任务"
-            const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
             const resp = await fetch(`${apiBase}/api/v1/tasks`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -67,19 +87,28 @@ export function FileUploader() {
                     title,
                     input_type: inputType,
                     description: prompt.trim() || `上传文件: ${file?.name}`,
-                    metadata: { share_to_casebase: shareToCasebase, analysis_focus: selectedFocus, has_file: Boolean(file) },
+                    metadata: {
+                        share_to_casebase: shareToCasebase,
+                        analysis_focus: selectedFocus,
+                        has_file: Boolean(file),
+                    },
                 }),
             }).catch(() => null)
-            clearInterval(progressInterval)
+
+            setProgress(90)
+            const taskId = resp?.ok ? (await resp.json()).id : crypto.randomUUID()
             setProgress(100)
-            const finalTaskId = resp?.ok ? (await resp.json()).id : taskId
-            await new Promise((r) => setTimeout(r, 450))
-            const query = new URLSearchParams({ type: inputType, url: file ? `mock://${file.name}` : "mock://text-input" })
+            await new Promise((r) => setTimeout(r, 350))
+
+            const query = new URLSearchParams({ type: inputType })
+            if (fileUrl) query.set("url", fileUrl)
+            else query.set("url", "mock://text-input")
             if (prompt.trim()) query.set("prompt", prompt.trim())
-            router.push(`/detect/${finalTaskId}?${query.toString()}`)
-        } catch {
-            clearInterval(progressInterval)
-            setError("上传失败，请重试")
+
+            router.push(`/detect/${taskId}?${query.toString()}`)
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "上传失败，请重试"
+            setError(msg)
             setUploading(false)
             setProgress(0)
         }
