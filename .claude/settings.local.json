@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__exa__get_code_context_exa",
+      "Bash(python:*)",
+      "mcp__exa__web_search_exa",
+      "mcp__exa__crawling_exa",
+      "Bash(curl -L -o \"C:/Users/user/.claude/notification.mp3\" \"https://raw.githubusercontent.com/ryparker/claude-code-sounds/main/themes/portal/sounds/test-chamber-complete.mp3\" --max-time 30)",
+      "Bash(powershell -Command \"Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ryparker/claude-code-sounds/main/themes/portal/sounds/test-chamber-complete.mp3' -OutFile 'C:/Users/user/.claude/notification.mp3' -TimeoutSec 30\")",
+      "Bash(powershell:*)",
+      "Bash(ls -la /d/a311/系统赛/2026系统赛/信安/*.md)",
+      "Bash(wc -l /d/a311/系统赛/2026系统赛/信安/docs/*.md /d/a311/系统赛/2026系统赛/信安/*.md)",
+      "Bash(grep -n \"LangGraph\\\\|TypedDict\\\\|Pydantic\" /d/a311/系统赛/2026系统赛/信安/docs/*.md /d/a311/系统赛/2026系统赛/信安/*.md)",
+      "Bash(grep -n \"版本\\\\|version\\\\|v1.0\\\\|v15\\\\|React 19\\\\|Next.js\" /d/a311/系统赛/2026系统赛/信安/docs/*.md /d/a311/系统赛/2026系统赛/信安/*.md)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
+      "Bash(python3:*)",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__execute_sql",
+      "Bash(venv_new/Scripts/pip install:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase",
+    "shadcn"
+  ],
+  "outputStyle": "default"
+}

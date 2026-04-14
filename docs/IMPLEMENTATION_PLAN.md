@@ -176,11 +176,11 @@ export function createClient() {
 
 - [ ] 安装LangGraph、LangChain依赖
 - [ ] 设计基础State结构（**必须使用TypedDict**）
-- [ ] 实现视听鉴伪AgentAgent
+- [ ] 实现视听鉴伪Agent
   - 视频抽帧逻辑
   - 调用Deepfake检测API（ 请先利用Exa MCP搜索Deepfake检测API，如果有可用API请使用，后期我去申请API并配置，否则请模拟实现）
   - 输出结构化证据
-- [ ] 实现研判指挥AgentAgent
+- [ ] 实现研判指挥Agent
   - 接收法医报告
   - 生成最终判定
 
@@ -283,7 +283,7 @@ async def detect_stream(request: DetectRequest):
 
 ---
 
-#### Day20-21: 情报溯源AgentAgent
+#### Day20-21: 情报溯源Agent
 
 - [ ] 实现OSINT分析逻辑
 - [ ] 集成VirusTotal API
@@ -293,7 +293,7 @@ async def detect_stream(request: DetectRequest):
 
 ### Week4: 质询官与收敛机制
 
-#### Day22-24: 逻辑质询AgentAgent
+#### Day22-24: 逻辑质询Agent
 
 - [ ] 设计质疑策略（置信度阈值、矛盾检测）
 - [ ] 实现条件边逻辑（打回重审）

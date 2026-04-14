@@ -302,3 +302,4 @@ truthseeker-api/**/*.pyc
 docs/~$*.doc*
 docs/~$*.xls*
 docs/~$*.ppt*
+.mcp.json
