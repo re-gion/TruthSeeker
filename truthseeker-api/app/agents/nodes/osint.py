@@ -3,7 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
-from app.agents.tools.fallback import fallback_osint_analysis, minimal_osint_result, sharedshared_degradation
+from app.agents.tools.fallback import fallback_osint_analysis, minimal_osint_result, shared_degradation
 from app.agents.tools.threat_intel import analyze_urls, check_domain_reputation, scan_file_hash, extract_media_metadata
 from app.agents.tools.llm_client import osint_interpret
 from app.agents.tools.text_detection import extract_urls_from_text
@@ -66,7 +66,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             else:
                 log("finding", "📋 文本中未发现 URL，OSINT 情报贡献有限")
 
-    degradation_status = shared_degradation.getshared_degradation_level("virustotal")
+    degradation_status = shared_degradation.get_degradation_level("virustotal")
 
     threat_score = 0.0
     threat_indicators = []
@@ -80,10 +80,10 @@ async def osint_node(state: TruthSeekerState) -> dict:
         try:
             intel_result = await analyze_urls(urls_to_check)
             shared_degradation.report_success("virustotal")
-            degradation_status = shared_degradation.getshared_degradation_level("virustotal")
+            degradation_status = shared_degradation.get_degradation_level("virustotal")
         except Exception as e:
             shared_degradation.report_failure("virustotal", e)
-            degradation_status = shared_degradation.getshared_degradation_level("virustotal")
+            degradation_status = shared_degradation.get_degradation_level("virustotal")
             log("action", f"❌ VirusTotal API 调用异常: {type(e).__name__}: {e}")
             log("action", f"🔄 降级策略: degradation_level={degradation_status}")
 
@@ -135,7 +135,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             # scan_file_hash succeeded (even if no VT key — it returned a result)
             shared_degradation.report_success("virustotal")
 
-        degradation_status = shared_degradation.getshared_degradation_level("virustotal")
+        degradation_status = shared_degradation.get_degradation_level("virustotal")
 
         if isinstance(metadata_result, Exception):
             log("warning", f"⚠️  元数据提取失败: {metadata_result}")

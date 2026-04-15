@@ -7,7 +7,7 @@ import httpx
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.deepfake_api import analyze_media
-from app.agents.tools.fallback import fallback_metadata_analysis, minimal_forensics_result, sharedshared_degradation
+from app.agents.tools.fallback import fallback_metadata_analysis, minimal_forensics_result, shared_degradation
 from app.agents.tools.llm_client import forensics_interpret
 from app.agents.tools.text_detection import analyze_text
 from app.utils.supabase_client import supabase as supabase_client
@@ -127,12 +127,12 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     # ================================================================
     else:
         log("action", "📡 正在连接 Reality Defender 深度鉴伪服务...")
-        degradation_status = shared_degradation.getshared_degradation_level("reality_defender")
+        degradation_status = shared_degradation.get_degradation_level("reality_defender")
 
         try:
             result = await analyze_media(primary_url, input_type)
             shared_degradation.report_success("reality_defender")
-            degradation_status = shared_degradation.getshared_degradation_level("reality_defender")
+            degradation_status = shared_degradation.get_degradation_level("reality_defender")
 
             model_used = result.get("model", "unknown")
             if model_used.startswith("mock"):
@@ -167,7 +167,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
         except Exception as e:
             shared_degradation.report_failure("reality_defender", e)
-            degradation_status = shared_degradation.getshared_degradation_level("reality_defender")
+            degradation_status = shared_degradation.get_degradation_level("reality_defender")
             log("action", f"❌ Reality Defender API 调用异常: {type(e).__name__}: {e}")
             log("action", f"🔄 降级策略: degradation_level={degradation_status}")
 

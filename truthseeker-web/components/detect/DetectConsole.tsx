@@ -211,6 +211,25 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 PDF 报告
                             </button>
                         )}
+                        {isComplete && (
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/api/v1/share/${taskId}`, { method: "POST" })
+                                        if (!res.ok) throw new Error("分享失败")
+                                        const { share_url } = await res.json()
+                                        const url = new URL(share_url, window.location.origin)
+                                        await navigator.clipboard.writeText(url.toString())
+                                        alert("分享链接已复制到剪贴板！")
+                                    } catch {
+                                        alert("生成分享链接失败，请稍后重试")
+                                    }
+                                }}
+                                className="text-xs text-[#6366F1] border border-[#6366F1]/30 px-3 py-1.5 rounded-full hover:bg-[#6366F1]/10 transition-colors"
+                            >
+                                分享报告
+                            </button>
+                        )}
                         <PresenceAvatars users={onlineUsers} />
                     </div>
 

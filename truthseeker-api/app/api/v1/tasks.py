@@ -1,10 +1,13 @@
 """任务管理 API - 已对接 Supabase"""
+import logging
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from app.utils.supabase_client import supabase
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -48,10 +51,11 @@ async def create_task(req: CreateTaskRequest):
         if not response.data:
             raise HTTPException(status_code=500, detail="Failed to create task in database")
         return TaskResponse(**response.data[0])
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error creating task: {e}")
-        # Fallback to simplified response if DB fails (for development safety)
-        return TaskResponse(**task_data)
+        logger.error("Error creating task: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to create task")
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -62,9 +66,11 @@ async def get_task(task_id: str):
         if not response.data:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**response.data[0])
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error fetching task: {e}")
-        raise HTTPException(status_code=404, detail="Task not found or database error")
+        logger.error("Error fetching task: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch task")
 
 
 @router.get("", response_model=List[TaskResponse])
@@ -74,5 +80,5 @@ async def list_tasks(limit: int = 20):
         response = supabase.table("tasks").select("*").order("created_at", desc=True).limit(limit).execute()
         return [TaskResponse(**t) for t in response.data]
     except Exception as e:
-        print(f"Error listing tasks: {e}")
+        logger.error("Error listing tasks: %s", e)
         return []

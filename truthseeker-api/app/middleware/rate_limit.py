@@ -1,7 +1,8 @@
 """Simple Rate Limiting Middleware for FastAPI"""
 import time
-from fastapi import Request, HTTPException
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from typing import Dict, List
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -14,16 +15,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         client_ip = request.client.host
         now = time.time()
-        
+
         # Clean up old requests
         if client_ip not in self.requests:
             self.requests[client_ip] = []
-        
+
         self.requests[client_ip] = [t for t in self.requests[client_ip] if now - t < self.window]
-        
+
         if len(self.requests[client_ip]) >= self.limit:
-            raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
-        
+            return JSONResponse(
+                {"error": True, "status_code": 429, "detail": "Too many requests. Please try again later."},
+                status_code=429,
+            )
+
         self.requests[client_ip].append(now)
         response = await call_next(request)
         return response
