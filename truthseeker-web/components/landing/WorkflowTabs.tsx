@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { motion, AnimatePresence } from "motion/react"
+import Image from "next/image"
 import { Download, Settings, Scale, ClipboardCheck, Film, Mic } from "lucide-react"
 
 export function WorkflowTabs() {
@@ -76,16 +77,16 @@ export function WorkflowTabs() {
                             <line x1="75%" y1="25%" x2="25%" y2="75%" strokeWidth="2" />
                         </svg>
                         <div className="rounded-xl bg-white border border-indigo-500/20 flex items-center justify-center flex-col shadow-[0_2px_15px_rgba(99,102,241,0.06)] relative z-10 transition-transform hover:scale-105">
-                            <span className="mb-1"><img src="/agent-icons-v2/forensics.svg" alt="Forensics" className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Forensics</span>
+                            <span className="mb-1"><Image src="/agent-icons-v2/forensics.svg" alt="Forensics" width={20} height={20} className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Forensics</span>
                         </div>
                         <div className="rounded-xl bg-white border border-emerald-500/20 flex items-center justify-center flex-col shadow-[0_2px_15px_rgba(16,185,129,0.06)] relative z-10 transition-transform hover:scale-105">
-                            <span className="mb-1"><img src="/agent-icons-v2/osint.svg" alt="OSINT" className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">OSINT</span>
+                            <span className="mb-1"><Image src="/agent-icons-v2/osint.svg" alt="OSINT" width={20} height={20} className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">OSINT</span>
                         </div>
                         <div className="rounded-xl bg-white border border-amber-500/20 flex items-center justify-center flex-col shadow-[0_2px_15px_rgba(245,158,11,0.06)] relative z-10 transition-transform hover:scale-105">
-                            <span className="mb-1"><img src="/agent-icons-v2/challenger.svg" alt="Challenger" className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Challenger</span>
+                            <span className="mb-1"><Image src="/agent-icons-v2/challenger.svg" alt="Challenger" width={20} height={20} className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Challenger</span>
                         </div>
                         <div className="rounded-xl bg-white border border-cyan-500/20 flex items-center justify-center flex-col shadow-[0_2px_15px_rgba(6,182,212,0.06)] relative z-10 transition-transform hover:scale-105">
-                            <span className="mb-1"><img src="/agent-icons-v2/commander.svg" alt="Commander" className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Commander</span>
+                            <span className="mb-1"><Image src="/agent-icons-v2/commander.svg" alt="Commander" width={20} height={20} className="w-5 h-5" /></span><span className="text-[10px] text-black/70 font-semibold">Commander</span>
                         </div>
                     </div>
                 </div>

@@ -49,9 +49,9 @@ export function LandingFooter() {
                         <h4 className="font-semibold mb-4 text-foreground"></h4>
                         <ul className="space-y-2">
                             <li><Link href="/detect" className="text-sm text-[#D4FF12] hover:text-[#D4FF12]/80 transition-colors dark:text-[#D4FF12] text-emerald-600 font-medium">进入工作台 →</Link></li>
-                            <li><a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">项目文档</a></li>
-                            <li><a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">技术架构图</a></li>
-                            <li><a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">联系我们</a></li>
+                            <li><Link href="/detect" className="text-sm text-muted-foreground hover:text-primary transition-colors">项目文档</Link></li>
+                            <li><Link href="/dashboard" className="text-sm text-muted-foreground hover:text-primary transition-colors">技术架构图</Link></li>
+                            <li><Link href="/cases" className="text-sm text-muted-foreground hover:text-primary transition-colors">联系我们</Link></li>
                         </ul>
                     </div>
                 </div>

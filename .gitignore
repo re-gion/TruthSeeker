@@ -229,6 +229,13 @@ test_*.py
 dev.log
 build_output.log
 typescript_errors.log
+*.stackdump
+truthseeker-api/=1.2.0
+
+# 明确列出本轮清理的临时脚本
+truthseeker-web/tmp_pixel_blast*.jsx
+truthseeker-web/test_detect_page.py
+truthseeker-api/test_graph.py
 
 # 字体文件（如果是从外部获取的大型字体）
 # truthseeker-web/public/fonts/*.otf

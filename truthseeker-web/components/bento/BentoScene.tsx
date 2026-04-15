@@ -2,10 +2,23 @@
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Float, MeshTransmissionMaterial, Stars } from '@react-three/drei'
-import { ReactNode, useRef, useMemo, useState, useEffect } from 'react'
+import { ReactNode, useRef, useMemo } from 'react'
 import * as THREE from 'three'
 
 /* ─── Floating 3D glass shard decorations behind each agent ───────────── */
+const SHARD_GEOMETRIES = [
+    new THREE.IcosahedronGeometry(1, 0),
+    new THREE.DodecahedronGeometry(1, 0),
+    new THREE.OctahedronGeometry(1, 0),
+]
+
+function hashNumbers(values: number[]) {
+    return values.reduce((acc, value) => {
+        const next = Math.imul(acc ^ Math.floor(value * 1000), 16777619)
+        return next >>> 0
+    }, 2166136261)
+}
+
 function GlassShard({ position, scale, color, speed }: {
     position: [number, number, number]
     scale: [number, number, number] | number
@@ -14,13 +27,9 @@ function GlassShard({ position, scale, color, speed }: {
 }) {
     const ref = useRef<THREE.Mesh>(null)
     const geometry = useMemo(() => {
-        const types = [
-            new THREE.IcosahedronGeometry(1, 0),
-            new THREE.DodecahedronGeometry(1, 0),
-            new THREE.OctahedronGeometry(1, 0)
-        ]
-        return types[Math.floor(Math.random() * types.length)]
-    }, [])
+        const seed = hashNumbers([...position, speed])
+        return SHARD_GEOMETRIES[seed % SHARD_GEOMETRIES.length]
+    }, [position, speed])
 
     useFrame((state) => {
         if (!ref.current) return
@@ -76,14 +85,19 @@ function EnergyRing({ activeAgent }: { activeAgent: string | null }) {
 }
 
 /* ─── Animated particle field ─────────────────────────────────────────── */
+function pseudoRandom(seed: number) {
+    const value = Math.sin(seed * 12.9898) * 43758.5453
+    return value - Math.floor(value)
+}
+
 function ParticleField() {
     const count = 200
     const positions = useMemo(() => {
         const arr = new Float32Array(count * 3)
         for (let i = 0; i < count; i++) {
-            arr[i * 3] = (Math.random() - 0.5) * 20
-            arr[i * 3 + 1] = (Math.random() - 0.5) * 14
-            arr[i * 3 + 2] = (Math.random() - 0.5) * 10 - 3
+            arr[i * 3] = (pseudoRandom(i + 1) - 0.5) * 20
+            arr[i * 3 + 1] = (pseudoRandom(i + 101) - 0.5) * 14
+            arr[i * 3 + 2] = (pseudoRandom(i + 201) - 0.5) * 10 - 3
         }
         return arr
     }, [])

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentPropsWithoutRef } from "react";
 import { Renderer, Program, Mesh, Color, Triangle } from 'ogl';
 import { useEffect, useRef } from 'react';
 
@@ -171,7 +172,7 @@ void main() {
 }
 `;
 
-interface StarBackgroundProps {
+interface StarBackgroundProps extends ComponentPropsWithoutRef<"div"> {
   focal?: [number, number];
   rotation?: [number, number];
   starSpeed?: number;
@@ -189,7 +190,6 @@ interface StarBackgroundProps {
   autoCenterRepulsion?: number;
   transparent?: boolean;
   className?: string;
-  [key: string]: any;
 }
 
 export default function StarBackground({
@@ -239,25 +239,8 @@ export default function StarBackground({
       gl.clearColor(0, 0, 0, 1);
     }
 
-    let program: Program;
-
-    function resize() {
-      if (!ctn || !renderer) return;
-      const scale = 1;
-      renderer.setSize(ctn.offsetWidth * scale, ctn.offsetHeight * scale);
-      if (program) {
-        program.uniforms.uResolution.value = new Color(
-          gl.canvas.width,
-          gl.canvas.height,
-          gl.canvas.width / gl.canvas.height
-        );
-      }
-    }
-    window.addEventListener('resize', resize, false);
-    resize();
-
     const geometry = new Triangle(gl);
-    program = new Program(gl, {
+    const program = new Program(gl, {
       vertex: vertexShader,
       fragment: fragmentShader,
       uniforms: {
@@ -285,6 +268,21 @@ export default function StarBackground({
         uTransparent: { value: transparent }
       }
     });
+
+    function resize() {
+      if (!ctn || !renderer) return;
+      const scale = 1;
+      renderer.setSize(ctn.offsetWidth * scale, ctn.offsetHeight * scale);
+      if (program) {
+        program.uniforms.uResolution.value = new Color(
+          gl.canvas.width,
+          gl.canvas.height,
+          gl.canvas.width / gl.canvas.height
+        );
+      }
+    }
+    window.addEventListener('resize', resize, false);
+    resize();
 
     const mesh = new Mesh(gl, { geometry, program });
     let animateId: number;

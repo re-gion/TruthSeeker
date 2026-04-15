@@ -2,9 +2,11 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, List, Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,9 @@ class CreateTaskRequest(BaseModel):
     input_type: str = "video"
     description: Optional[str] = None
     user_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    priority_focus: str = "balanced"
+    storage_paths: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskResponse(BaseModel):
@@ -26,13 +31,20 @@ class TaskResponse(BaseModel):
     input_type: str
     created_at: str
     description: Optional[str] = None
+    user_id: Optional[str] = None
+    priority_focus: str = "balanced"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    storage_paths: dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[str] = None
 
 
 @router.post("", response_model=TaskResponse)
-async def create_task(req: CreateTaskRequest):
+async def create_task(req: CreateTaskRequest, request: Request):
     """创建检测任务并持久化到 Supabase"""
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    request_user_id = getattr(request.state, "user_id", None)
+    effective_user_id = req.user_id or request_user_id
     
     task_data = {
         "id": task_id,
@@ -41,8 +53,11 @@ async def create_task(req: CreateTaskRequest):
         "input_type": req.input_type,
         "description": req.description,
         "created_at": now,
-        "user_id": req.user_id,
-        "updated_at": now
+        "user_id": effective_user_id,
+        "updated_at": now,
+        "metadata": req.metadata,
+        "priority_focus": req.priority_focus,
+        "storage_paths": req.storage_paths,
     }
     
     try:

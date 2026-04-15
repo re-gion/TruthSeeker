@@ -1,10 +1,13 @@
 """报告生成服务 — Markdown + PDF 报告"""
 import asyncio
-import io
+import importlib
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import HTTPException
+
+from app.services.analysis_persistence import normalize_final_verdict
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -15,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def _fetch_task_data(task_id: str) -> dict:
-    """从 Supabase 获取任务的完整数据（task + analysis_states + agent_logs）"""
+    """从 Supabase 获取任务的完整数据（task + reports + analysis_states + agent_logs）"""
     return await asyncio.to_thread(_sync_fetch_task_data, task_id)
 
 
@@ -41,13 +44,23 @@ def _sync_fetch_task_data(task_id: str) -> dict:
         supabase.table("agent_logs")
         .select("*")
         .eq("task_id", task_id)
-        .order("created_at", desc=False)
+        .order("timestamp", desc=False)
         .execute()
     )
     agent_logs = logs_resp.data or []
 
+    report_resp = (
+        supabase.table("reports")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("generated_at", desc=True)
+        .execute()
+    )
+    report = report_resp.data[0] if report_resp.data else None
+
     return {
         "task": task,
+        "report": report,
         "analysis_states": analysis_states,
         "agent_logs": agent_logs,
     }
@@ -61,6 +74,7 @@ async def generate_markdown_report(task_id: str) -> str:
     """生成 Markdown 格式的鉴伪与溯源分析报告"""
     data = await _fetch_task_data(task_id)
     task = data["task"]
+    report = data["report"]
     analysis_states = data["analysis_states"]
     agent_logs = data["agent_logs"]
 
@@ -84,8 +98,8 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append("")
 
     # ---- 最终裁决 ----
-    result = task.get("result")
-    if result and isinstance(result, dict):
+    result = _resolve_final_result(task, report)
+    if result:
         lines.append("## 二、最终裁决")
         lines.append("")
         verdict = result.get("verdict", "N/A")
@@ -97,7 +111,8 @@ async def generate_markdown_report(task_id: str) -> str:
             lines.append("- **关键证据**:")
             for ev in key_evidence:
                 if isinstance(ev, dict):
-                    lines.append(f"  - [{ev.get('type', '?')}] {ev.get('description', ev)}")
+                    description = ev.get("description") or ev.get("source") or str(ev)
+                    lines.append(f"  - [{ev.get('type', '?')}] {description}")
                 else:
                     lines.append(f"  - {ev}")
         lines.append("")
@@ -135,17 +150,17 @@ async def generate_markdown_report(task_id: str) -> str:
             lines.append(f"### 第 {round_num} 轮")
             lines.append("")
             for log in logs:
-                agent = log.get("agent", "unknown")
-                log_type = log.get("type", "info")
+                agent = log.get("agent", log.get("agent_name", "unknown"))
+                log_type = log.get("type", log.get("log_type", "info"))
                 content = log.get("content", "")
-                ts = _fmt_time(log.get("created_at"))
+                ts = _fmt_time(log.get("timestamp", log.get("created_at")))
                 lines.append(f"- **[{ts}] {agent}** ({log_type}): {content}")
             lines.append("")
 
     # ---- 建议 ----
     lines.append("## 七、建议与说明")
     lines.append("")
-    if result and isinstance(result, dict):
+    if result:
         recommendations = result.get("recommendations", [])
         if recommendations:
             for rec in recommendations:
@@ -188,16 +203,16 @@ async def generate_pdf_report(task_id: str) -> bytes:
 
     # HTML -> PDF
     try:
-        from weasyprint import HTML
+        HTML = importlib.import_module("weasyprint").HTML
 
         pdf_bytes = HTML(string=html_full).write_pdf()
         return pdf_bytes
-    except ImportError:
-        logger.warning("weasyprint not installed, falling back to HTML bytes")
-        return html_full.encode("utf-8")
+    except ImportError as exc:
+        logger.warning("weasyprint not installed: %s", exc)
+        raise HTTPException(status_code=503, detail="PDF 生成服务不可用，请稍后重试")
     except Exception as e:
         logger.error("weasyprint PDF generation failed: %s", e)
-        return html_full.encode("utf-8")
+        raise HTTPException(status_code=500, detail="PDF 生成失败")
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +239,10 @@ def _fmt_confidence(value) -> str:
 
 def _extract_agent_result(analysis_states: list, agent_name: str) -> Optional[dict]:
     """从 analysis_states 中提取指定 agent 的结果"""
-    for state in analysis_states:
+    for state in reversed(analysis_states):
+        result_snapshot = state.get("result_snapshot") or {}
+        if result_snapshot.get(agent_name):
+            return result_snapshot[agent_name]
         if state.get("agent_name") == agent_name or state.get("agent") == agent_name:
             return state.get("result") or state.get("data")
     return None
@@ -254,9 +272,18 @@ def _group_logs_by_round(logs: list) -> dict:
     """按轮次分组 agent_logs"""
     grouped: dict[int, list] = {}
     for log in logs:
-        round_num = log.get("round", 0)
+        round_num = log.get("round", log.get("round_number", 0))
         grouped.setdefault(round_num, []).append(log)
     return dict(sorted(grouped.items()))
+
+
+def _resolve_final_result(task: dict, report: dict | None) -> Optional[dict]:
+    if report and isinstance(report.get("verdict_payload"), dict):
+        return normalize_final_verdict(report["verdict_payload"])
+    task_result = task.get("result")
+    if isinstance(task_result, dict):
+        return normalize_final_verdict(task_result)
+    return None
 
 
 def _wrap_html_template(body: str) -> str:

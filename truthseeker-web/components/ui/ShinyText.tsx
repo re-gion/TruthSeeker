@@ -110,7 +110,7 @@ export default function ShinyText({
             className={`cursor-default inline-block relative ${className}`}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            style={{ position: 'relative' }}
+            style={{ position: 'relative', color }}
         >
             {/* Base Text */}
             <span style={{ opacity: disabled ? 1 : 0.6 }}>{text}</span>

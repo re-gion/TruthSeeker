@@ -2,14 +2,17 @@
 
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react"
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import Image from "next/image"
+import { useEffect } from "react"
 import ShinyText from "@/components/ui/ShinyText"
 import FluidGlassButton from "@/components/ui/FluidGlassButton"
 import Orb from "@/components/ui/Orb"
 import GradientText from "@/components/ui/GradientText"
+import { useDocumentTheme } from "@/hooks/useDocumentTheme"
+import { useHasMounted } from "@/hooks/useHasMounted"
 
 export function HeroSection() {
-    const [mounted, setMounted] = useState(false)
+    const mounted = useHasMounted()
     const titleText = "TruthSeeker"
     const mouseX = useMotionValue(0)
     const mouseY = useMotionValue(0)
@@ -43,23 +46,7 @@ export function HeroSection() {
         }
     }, [mounted, mouseX, mouseY])
 
-    const [isDark, setIsDark] = useState(true)
-
-    useEffect(() => {
-        setMounted(true)
-        // Check initial theme from document class
-        setIsDark(document.documentElement.classList.contains("dark"))
-
-        // Observe theme changes
-        const observer = new MutationObserver(() => {
-            setIsDark(document.documentElement.classList.contains("dark"))
-        })
-        observer.observe(document.documentElement, {
-            attributes: true,
-            attributeFilter: ["class"]
-        })
-        return () => observer.disconnect()
-    }, [])
+    const isDark = useDocumentTheme() === "dark"
 
     const orbBgColor = isDark ? '#000000' : '#ffffff'
     const orbHue = isDark ? 0 : 347
@@ -112,7 +99,7 @@ export function HeroSection() {
                         className="absolute left-[3%] top-[7%] hidden md:flex items-center gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-60 min-h-[110px] pointer-events-auto hover:border-indigo-500/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-indigo-500/20 flex items-center justify-center self-start mt-0.5">
-                            <img src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            <Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0">
                             <div className="text-[11px] text-indigo-500 dark:text-indigo-300 font-mono font-bold tracking-[0.18em] uppercase">Forensics</div>
@@ -127,7 +114,7 @@ export function HeroSection() {
                         className="absolute right-[3%] top-[7%] hidden md:flex items-center gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-60 min-h-[110px] pointer-events-auto hover:border-emerald-500/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center self-start mt-0.5">
-                            <img src="/agent-icons/osint.svg" alt="情报溯源Agent" className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            <Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0">
                             <div className="text-[11px] text-emerald-500 dark:text-emerald-300 font-mono font-bold tracking-[0.18em] uppercase">OSINT</div>
@@ -142,7 +129,7 @@ export function HeroSection() {
                         className="absolute left-[4%] bottom-[13%] hidden md:flex items-center gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-60 min-h-[110px] pointer-events-auto hover:border-[#D4FF12]/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-[#D4FF12]/20 flex items-center justify-center self-start mt-0.5">
-                            <img src="/agent-icons/challenger.svg" alt="逻辑质询Agent" className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            <Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0">
                             <div className="text-[11px] text-gray-800 dark:text-[#D4FF12]/80 font-mono font-bold tracking-[0.18em] uppercase">Challenge</div>
@@ -157,7 +144,7 @@ export function HeroSection() {
                         className="absolute right-[4%] bottom-[15%] hidden md:flex items-center gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-60 min-h-[110px] pointer-events-auto hover:border-indigo-500/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-indigo-500/20 flex items-center justify-center self-start mt-0.5">
-                            <img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            <Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0">
                             <div className="text-[11px] text-indigo-500 dark:text-indigo-300 font-mono font-bold tracking-[0.18em] uppercase">Commander</div>

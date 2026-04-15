@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 import filetype
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from storage3.types import FileOptions
 
@@ -90,6 +90,7 @@ MAX_SIZE = 500 * 1024 * 1024  # 500 MB
 
 @router.post("/")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     user_id: str = Form("anonymous"),
 ):
@@ -101,7 +102,9 @@ async def upload_file(
         )
 
     # 2. 写入临时文件（流式，内存友好）
-    folder = _sanitize_folder(user_id)
+    request_user_id = getattr(request.state, "user_id", None)
+    effective_user_id = request_user_id if request_user_id and user_id == "anonymous" else user_id
+    folder = _sanitize_folder(effective_user_id)
     ext = _safe_ext(file.filename or "upload")
     tmp_path: str | None = None
 

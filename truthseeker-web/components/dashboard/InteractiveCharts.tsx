@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react"
 import { TrendingUp, ShieldAlert, Activity } from "lucide-react"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Pie, PieChart, Cell, Tooltip } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Pie, PieChart, Cell } from "recharts"
 
 import {
     Card,
@@ -22,6 +22,14 @@ import {
 } from "@/components/ui/chart"
 
 // --- Mock Data ---
+
+type PieActiveShapeProps = {
+    cx?: number
+    cy?: number
+    outerRadius?: number
+    fill?: string
+    sector?: string
+}
 
 const areaChartData = [
     { month: "Jan", deepfakes: 186, authentic: 80, intercepted: 110 },
@@ -256,7 +264,7 @@ export function InteractiveCharts() {
                                     strokeWidth={5}
                                     stroke="#1F2937"
                                     activeIndex={0}
-                                    activeShape={({ outerRadius = 0, ...props }: any) => (
+                                    activeShape={({ outerRadius = 0, ...props }: PieActiveShapeProps) => (
                                         <g>
                                             <circle cx={props.cx} cy={props.cy} r={outerRadius + 10} fill={props.fill} opacity={0.2} className="animate-pulse" />
                                             <path d={props.sector} fill={props.fill} />

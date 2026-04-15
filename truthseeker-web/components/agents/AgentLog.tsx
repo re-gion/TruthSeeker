@@ -43,24 +43,10 @@ function TypewriterText({ text, speed = 20 }: { text: string; speed?: number }) 
     const indexRef = useRef(0)
     const textRef = useRef(text)
 
-    // 使用useCallback优化性能
-    const scheduleNextChar = useCallback(() => {
-        if (!mountedRef.current) return
-
-        if (indexRef.current < textRef.current.length) {
-            setDisplayed(textRef.current.slice(0, indexRef.current + 1))
-            indexRef.current++
-
-            // 修复2: 明确类型赋值
-            timeoutRef.current = setTimeout(scheduleNextChar, speed)
-        }
-    }, [speed])
-
     useEffect(() => {
         mountedRef.current = true
         textRef.current = text
         indexRef.current = 0
-        setDisplayed("")
 
         // 清理之前的定时器
         if (timeoutRef.current) {
@@ -68,7 +54,16 @@ function TypewriterText({ text, speed = 20 }: { text: string; speed?: number }) 
             timeoutRef.current = null
         }
 
-        // 开始打字效果
+        const scheduleNextChar = () => {
+            if (!mountedRef.current) return
+
+            if (indexRef.current < textRef.current.length) {
+                setDisplayed(textRef.current.slice(0, indexRef.current + 1))
+                indexRef.current++
+                timeoutRef.current = setTimeout(scheduleNextChar, speed)
+            }
+        }
+
         timeoutRef.current = setTimeout(scheduleNextChar, speed)
 
         // 清理函数
@@ -79,7 +74,7 @@ function TypewriterText({ text, speed = 20 }: { text: string; speed?: number }) 
                 timeoutRef.current = null
             }
         }
-    }, [text, speed, scheduleNextChar])
+    }, [text, speed])
 
     // 如果文本很短或已经完成，不显示光标
     if (displayed.length === text.length) {

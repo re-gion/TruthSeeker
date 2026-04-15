@@ -38,6 +38,8 @@ async def download_pdf_report(task_id: str):
         pdf_bytes = await generate_pdf_report(task_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to generate pdf report for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="报告生成失败")

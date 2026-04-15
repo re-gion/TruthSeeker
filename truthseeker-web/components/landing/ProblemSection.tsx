@@ -9,29 +9,21 @@ export function ProblemSection() {
             icon: <Ban className="w-10 h-10 text-red-400" />,
             title: "单一模型局限",
             description: "传统检测仅依赖单一维度，易被针对性对抗攻击绕过。",
-            color: "from-red-500/20 to-orange-500/5",
-            borderColor: "border-red-500/30"
         },
         {
             icon: <Unplug className="w-10 h-10 text-purple-400" />,
             title: "跨模态关联缺失",
             description: "音视频分离检测，无法捕捉唇形不同步、环境音与画面的逻辑冲突。",
-            color: "from-purple-500/20 to-blue-500/5",
-            borderColor: "border-purple-500/30"
         },
         {
             icon: <EyeOff className="w-10 h-10 text-gray-400" />,
             title: "黑盒不可解释",
             description: "仅输出概率分数，缺乏具体的篡改依据和证据链。",
-            color: "from-gray-500/20 to-gray-400/5",
-            borderColor: "border-gray-500/30"
         },
         {
             icon: <Unlink className="w-10 h-10 text-cyan-400" />,
             title: "溯源能力不足",
             description: "只能判断真伪，无法追踪病毒源头、分析扩散网络，治标不治本。",
-            color: "from-cyan-500/20 to-teal-500/5",
-            borderColor: "border-cyan-500/30"
         }
     ]
 
@@ -45,7 +37,7 @@ export function ProblemSection() {
 
     const itemVars = {
         hidden: { opacity: 0, y: 20 },
-        show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } as any }
+        show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
     }
 
     return (
@@ -82,7 +74,7 @@ export function ProblemSection() {
                                     <span className="text-primary">✦</span> 破局之道
                                 </h3>
                                 <p className="text-[15px] font-medium leading-relaxed text-black/70">
-                                    TruthSeeker ：不能仅仅作为一个"检测工具"，相反我们需要建立一个具备
+                                    TruthSeeker ：不能仅仅作为一个“检测工具”，相反我们需要建立一个具备
                                     <strong className="text-primary mx-1 font-bold">专家团队思维</strong>
                                     的智能研判中枢。
                                 </p>

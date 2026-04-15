@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { motion } from "motion/react"
+import Image from "next/image"
 import { ScanFace, AlertTriangle, ShieldCheck } from "lucide-react"
 
 export function ComparisonView() {
@@ -75,30 +75,33 @@ export function ComparisonView() {
                         <div className="absolute inset-0 mix-blend-overlay opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.65\' numOctaves=\'3\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }}></div>
                     </div>
 
-                    <img
+                    <Image
                         src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=1200"
                         alt="Authentic content"
-                        className="w-full h-full object-cover opacity-80"
+                        fill
+                        sizes="(max-width: 1024px) 100vw, 1200px"
+                        className="object-cover opacity-80"
                         draggable={false}
                     />
                 </div>
 
                 {/* Forged Image (Foreground, clipped) */}
                 <div
-                    className="absolute top-0 left-0 bottom-0 h-full bg-[#2A1A1A] flex items-center justify-center object-cover"
+                    className="absolute top-0 left-0 bottom-0 h-full bg-[#2A1A1A] flex items-center justify-center overflow-hidden"
                     style={{ width: `${sliderPosition}%` }}
                 >
                     {/* Mock content for forged */}
-                    <div className="text-center absolute z-10 w-full" style={{ width: containerRef.current?.getBoundingClientRect().width }}>
+                    <div className="absolute inset-0 z-10 flex items-center justify-center text-center">
                         <AlertTriangle className="w-16 h-16 text-[#EF4444]/20 mx-auto mb-4" />
                         <span className="text-[#EF4444]/30 font-mono tracking-widest">SYNTHETIC ARTIFACTS</span>
                     </div>
 
-                    <img
+                    <Image
                         src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=1200"
                         alt="Forged content"
-                        className="h-full object-cover max-w-none opacity-80 mix-blend-lighten filter sepia-[.3] hue-rotate-15 contrast-125 saturate-150"
-                        style={{ width: containerRef.current?.getBoundingClientRect().width || '100vw' }}
+                        fill
+                        sizes="(max-width: 1024px) 100vw, 1200px"
+                        className="absolute inset-0 object-cover opacity-80 mix-blend-lighten filter sepia-[.3] hue-rotate-15 contrast-125 saturate-150"
                         draggable={false}
                     />
 

@@ -1,6 +1,4 @@
 import { FileUploader } from "@/components/upload/FileUploader"
-import { createClient } from "@/lib/supabase/server"
-import Link from "next/link"
 import Header from "@/components/layout/Header"
 import { HomeClientWidgets } from "./HomeClientWidgets"
 import { LandingFooter } from "@/components/landing/LandingFooter"
@@ -10,9 +8,6 @@ import GradientText from "@/components/ui/GradientText"
 import { DetectBackground } from "./DetectBackground"
 
 export default async function Home() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
   return (
     <main className="min-h-screen grid-bg flex flex-col pt-16 bg-background text-foreground relative overflow-hidden" style={{ isolation: 'isolate' }}>
       {/* PixelBlast Background */}

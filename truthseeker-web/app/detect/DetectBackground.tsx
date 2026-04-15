@@ -1,22 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import DotGrid from "@/components/ui/DotGrid"
+import { useDocumentTheme } from "@/hooks/useDocumentTheme"
 
 export function DetectBackground() {
-  const [isDark, setIsDark] = useState(true)
-
-  useEffect(() => {
-    setIsDark(document.documentElement.classList.contains("dark"))
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains("dark"))
-    })
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"]
-    })
-    return () => observer.disconnect()
-  }, [])
+  const isDark = useDocumentTheme() === "dark"
 
   const dotGridConfig = isDark
     ? {

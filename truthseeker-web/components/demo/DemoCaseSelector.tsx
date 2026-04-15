@@ -3,7 +3,7 @@
 import { motion } from "motion/react"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Music, Film, Image, Newspaper } from "lucide-react"
+import { Music, Film, Image as ImageIcon, Newspaper } from "lucide-react"
 
 const DEMO_CASES = [
     {
@@ -38,7 +38,7 @@ const DEMO_CASES = [
         id: "case-mixed-phishing",
         title: "钓鱼链接+伪造截图",
         type: "图文混合",
-        icon: <Image className="w-8 h-8 text-amber-400" />,
+        icon: <ImageIcon className="w-8 h-8 text-amber-400" />,
         color: "from-amber-500/20 to-amber-500/5",
         borderColor: "border-amber-500/30",
         glow: "shadow-[0_0_20px_rgba(245,158,11,0.3)]",

@@ -1,12 +1,12 @@
 """专家会诊 API — 注入专家意见到 Agent 状态"""
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.config import settings
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ class InjectMessageRequest(BaseModel):
     message: str
     role: str = "expert"  # "expert" | "admin" | "viewer"
     expert_name: Optional[str] = None
+    invite_token: Optional[str] = None
 
 
 class ConsultationMessage(BaseModel):
@@ -29,6 +30,13 @@ class ConsultationMessage(BaseModel):
     message: str
     expert_name: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class InviteResponse(BaseModel):
+    task_id: str
+    token: str
+    invite_url: str
+    expires_at: str
 
 
 @router.post("/{task_id}/inject")
@@ -49,6 +57,8 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest):
             status_code=400,
             detail=f"任务状态为 {task_status}，不接受新的专家意见"
         )
+    if req.role == "expert":
+        _validate_invite_token(task_id, req.invite_token)
 
     # 写入 consultation_messages 表
     message_record = {
@@ -65,6 +75,62 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest):
     except Exception as e:
         logger.error("Failed to insert consultation message: %s", e)
         raise HTTPException(status_code=500, detail="消息注入失败，请稍后重试")
+
+
+@router.post("/{task_id}/invite", response_model=InviteResponse)
+async def create_consultation_invite(task_id: str):
+    """创建专家邀请链接。"""
+    task_resp = supabase.table("tasks").select("id").eq("id", task_id).execute()
+    if not task_resp.data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    token = secrets.token_urlsafe(24)
+    expires_at = "2999-01-01T00:00:00+00:00"
+    invite_record = {
+        "task_id": task_id,
+        "token": token,
+        "status": "pending",
+        "expires_at": expires_at,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        supabase.table("consultation_invites").insert(invite_record).execute()
+    except Exception as e:
+        logger.error("Failed to create invite: %s", e)
+        raise HTTPException(status_code=500, detail="邀请创建失败")
+
+    return InviteResponse(
+        task_id=task_id,
+        token=token,
+        expires_at=expires_at,
+        invite_url=f"/detect/{task_id}?role=expert&invite_token={token}",
+    )
+
+
+@router.get("/invite/{token}")
+async def validate_consultation_invite(token: str):
+    """校验邀请令牌并返回任务上下文。"""
+    resp = (
+        supabase.table("consultation_invites")
+        .select("*")
+        .eq("token", token)
+        .execute()
+    )
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="邀请链接无效")
+
+    invite = resp.data[0]
+    if invite.get("status") == "expired":
+        raise HTTPException(status_code=410, detail="邀请链接已过期")
+
+    return {
+        "task_id": invite.get("task_id"),
+        "role": "expert",
+        "invite_token": token,
+        "status": invite.get("status", "pending"),
+        "expires_at": invite.get("expires_at"),
+    }
 
 
 @router.get("/{task_id}/messages")
@@ -84,3 +150,17 @@ async def get_unread_messages(task_id: str, after: Optional[str] = None):
         query = query.gt("created_at", after)
     resp = query.order("created_at", desc=False).execute()
     return {"messages": resp.data}
+
+
+def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
+    if not invite_token:
+        raise HTTPException(status_code=401, detail="专家会诊需要有效邀请令牌")
+    resp = (
+        supabase.table("consultation_invites")
+        .select("*")
+        .eq("token", invite_token)
+        .eq("task_id", task_id)
+        .execute()
+    )
+    if not resp.data:
+        raise HTTPException(status_code=403, detail="邀请令牌无效")

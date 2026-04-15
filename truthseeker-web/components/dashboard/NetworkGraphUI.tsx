@@ -50,7 +50,7 @@ export function NetworkGraphUI() {
         return () => {
             globe.destroy()
         }
-    }, [resolvedTheme]) // Re-run effect map creation whenever the theme changes
+    }, [isLight]) // Re-run effect map creation whenever the theme changes
 
     return (
         <motion.div

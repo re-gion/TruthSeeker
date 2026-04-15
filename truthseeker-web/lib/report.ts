@@ -17,6 +17,103 @@ interface ReportData {
     currentRound?: number
 }
 
+type UnknownRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is UnknownRecord {
+    return typeof value === "object" && value !== null
+}
+
+function readValue(record: UnknownRecord, keys: string[]): unknown {
+    for (const key of keys) {
+        if (key in record) return record[key]
+    }
+    return undefined
+}
+
+function readString(record: UnknownRecord, keys: string[], fallback = ""): string {
+    const value = readValue(record, keys)
+    if (typeof value === "string" && value.trim()) return value
+    if (typeof value === "number" || typeof value === "boolean") return String(value)
+    return fallback
+}
+
+function readNumber(record: UnknownRecord, keys: string[], fallback = 0): number {
+    const value = readValue(record, keys)
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    if (typeof value === "string" && value.trim() !== "") {
+        const parsed = Number(value)
+        if (Number.isFinite(parsed)) return parsed
+    }
+    return fallback
+}
+
+function readBoolean(record: UnknownRecord, keys: string[], fallback = false): boolean {
+    const value = readValue(record, keys)
+    if (typeof value === "boolean") return value
+    if (typeof value === "string") return value === "true"
+    return fallback
+}
+
+function normalizeTextList(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+
+    return value
+        .map((item) => {
+            if (typeof item === "string") return item
+            if (typeof item === "number" || typeof item === "boolean") return String(item)
+            if (isRecord(item)) {
+                const label = readString(item, ["label", "text", "content", "title", "summary", "source", "name"], "")
+                const confidence = readValue(item, ["confidence", "score"])
+                const confidenceText = typeof confidence === "number" ? ` (${(confidence * 100).toFixed(1)}%)` : ""
+                if (label) return `${label}${confidenceText}`
+                try {
+                    return JSON.stringify(item)
+                } catch {
+                    return ""
+                }
+            }
+            return ""
+        })
+        .filter((item): item is string => item.trim().length > 0)
+}
+
+export function extractVerdictSnapshot(value: unknown) {
+    const record = isRecord(value) ? value : {}
+    const verdict = readString(record, ["verdict", "verdict_value", "label"], "inconclusive")
+    const verdictLabel = readString(record, ["verdict_label", "verdict_cn", "label", "title"], verdict)
+    const confidence = readNumber(record, ["confidence_overall", "confidence", "score"], 0)
+    const evidence = normalizeTextList(readValue(record, ["key_evidence", "evidence", "keyEvidence"]))
+
+    return {
+        verdict,
+        verdictLabel,
+        confidence,
+        evidence,
+    }
+}
+
+export function extractAnalysisSnapshot(value: unknown) {
+    const record = isRecord(value) ? value : {}
+    return {
+        verdict: readString(record, ["verdict", "result", "label"], "unknown"),
+        analysisSummary: readString(record, ["analysis_summary", "llm_analysis", "summary", "analysis"], ""),
+        confidence: readNumber(record, ["confidence_overall", "confidence", "score"], 0),
+    }
+}
+
+export function extractChallengerSnapshot(value: unknown) {
+    const record = isRecord(value) ? value : {}
+    return {
+        qualityScore: readNumber(record, ["quality_score", "confidence", "score"], 0),
+        requiresMoreEvidence: readBoolean(record, ["requires_more_evidence", "needs_more_evidence"], false),
+        challenges: normalizeTextList(readValue(record, ["challenges", "issues_found", "issues", "findings"])),
+    }
+}
+
+function formatSectionItemList(items: string[]) {
+    return items.map((item, index) => `${index + 1}. ${item}`).join("\n")
+}
+
 export function generateMarkdownReport(data: ReportData): string {
     const now = new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
     const verdictEmoji: Record<string, string> = {
@@ -35,17 +132,14 @@ export function generateMarkdownReport(data: ReportData): string {
     // ── 最终裁决 ──
     md += `---\n\n## 📋 最终裁决\n\n`
     if (data.finalVerdict) {
-        const v = data.finalVerdict
-        const emoji = verdictEmoji[(v.verdict as string) || "inconclusive"] || "❓"
+        const verdict = extractVerdictSnapshot(data.finalVerdict)
+        const emoji = verdictEmoji[verdict.verdict] || "❓"
         md += `**结论**: ${emoji}  \n`
-        md += `**判定标签**: ${v.verdict_label || "-"}  \n`
-        md += `**中文说明**: ${v.verdict_cn || "-"}  \n`
-        md += `**综合置信度**: ${(((v.confidence_overall as number) || 0) * 100).toFixed(1)}%  \n\n`
-        if (Array.isArray(v.key_evidence) && v.key_evidence.length > 0) {
+        md += `**判定标签**: ${verdict.verdictLabel || "-"}  \n`
+        md += `**综合置信度**: ${(verdict.confidence * 100).toFixed(1)}%  \n\n`
+        if (verdict.evidence.length > 0) {
             md += `### 关键证据\n\n`
-                ; (v.key_evidence as string[]).forEach((e, i) => {
-                    md += `${i + 1}. ${e}\n`
-                })
+            md += `${formatSectionItemList(verdict.evidence)}\n`
             md += `\n`
         }
     } else {
@@ -55,10 +149,10 @@ export function generateMarkdownReport(data: ReportData): string {
     // ── 各 Agent 分析结果 ──
     md += `---\n\n## 🔬 视听鉴伪Agent (Forensics Agent)\n\n`
     if (data.forensicsResult) {
-        const f = data.forensicsResult
-        md += `- **置信度**: ${(((f.confidence as number) || 0) * 100).toFixed(1)}%\n`
-        md += `- **判定**: ${f.verdict || "-"}\n`
-        if (f.analysis_summary) md += `- **摘要**: ${f.analysis_summary}\n`
+        const forensics = extractAnalysisSnapshot(data.forensicsResult)
+        md += `- **置信度**: ${(forensics.confidence * 100).toFixed(1)}%\n`
+        md += `- **判定**: ${forensics.verdict || "-"}\n`
+        if (forensics.analysisSummary) md += `- **摘要**: ${forensics.analysisSummary}\n`
         md += `\n`
     } else {
         md += `_暂无结果_\n\n`
@@ -66,10 +160,10 @@ export function generateMarkdownReport(data: ReportData): string {
 
     md += `## 🕵️ 情报溯源Agent (OSINT Agent)\n\n`
     if (data.osintResult) {
-        const o = data.osintResult
-        md += `- **置信度**: ${(((o.confidence as number) || 0) * 100).toFixed(1)}%\n`
-        md += `- **判定**: ${o.verdict || "-"}\n`
-        if (o.analysis_summary) md += `- **摘要**: ${o.analysis_summary}\n`
+        const osint = extractAnalysisSnapshot(data.osintResult)
+        md += `- **置信度**: ${(osint.confidence * 100).toFixed(1)}%\n`
+        md += `- **判定**: ${osint.verdict || "-"}\n`
+        if (osint.analysisSummary) md += `- **摘要**: ${osint.analysisSummary}\n`
         md += `\n`
     } else {
         md += `_暂无结果_\n\n`
@@ -77,14 +171,12 @@ export function generateMarkdownReport(data: ReportData): string {
 
     md += `## ⚖️ 逻辑质询Agent (Challenger Agent)\n\n`
     if (data.challengerFeedback) {
-        const c = data.challengerFeedback
-        md += `- **质量评分**: ${(((c.quality_score as number) || 0) * 100).toFixed(1)}%\n`
-        md += `- **需要补充证据**: ${c.requires_more_evidence ? "是" : "否"}\n`
-        if (Array.isArray(c.challenges) && c.challenges.length > 0) {
+        const challenger = extractChallengerSnapshot(data.challengerFeedback)
+        md += `- **质量评分**: ${(challenger.qualityScore * 100).toFixed(1)}%\n`
+        md += `- **需要补充证据**: ${challenger.requiresMoreEvidence ? "是" : "否"}\n`
+        if (challenger.challenges.length > 0) {
             md += `- **质疑点**:\n`
-                ; (c.challenges as string[]).forEach((ch) => {
-                    md += `  - ${ch}\n`
-                })
+            md += `${challenger.challenges.map((challenge) => `  - ${challenge}`).join("\n")}\n`
         }
         md += `\n`
     } else {

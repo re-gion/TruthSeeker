@@ -5,6 +5,7 @@ import secrets
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.services.analysis_persistence import normalize_final_verdict
 from app.services.report_generator import generate_markdown_report
 from app.utils.supabase_client import supabase
 
@@ -58,6 +59,7 @@ async def get_shared_report(token: str):
     return {
         "report": {
             "verdict": report.get("verdict"),
+            "confidence": report.get("confidence_overall"),
             "confidence_overall": report.get("confidence_overall"),
             "summary": report.get("summary"),
             "generated_at": report.get("generated_at"),
@@ -69,4 +71,5 @@ async def get_shared_report(token: str):
             "status": task.get("status"),
         },
         "markdown": md_content,
+        "verdict_payload": normalize_final_verdict(report.get("verdict_payload") or task.get("result") or {}),
     }

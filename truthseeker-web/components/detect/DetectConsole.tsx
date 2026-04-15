@@ -1,7 +1,8 @@
 "use client"
 
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "motion/react"
+import Image from "next/image"
 import { useAgentStream } from "@/hooks/useAgentStream"
 import { useRealtimeSession, UserRole } from "@/hooks/useRealtimeSession"
 import { AgentLog } from "@/components/agents/AgentLog"
@@ -12,22 +13,32 @@ import { ExpertPanel } from "@/components/collaboration/ExpertPanel"
 import { EvidenceTimeline } from "@/components/detect/EvidenceTimeline"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
-import { generateMarkdownReport, downloadMarkdownReport, downloadPdfReport } from "@/lib/report"
+import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, generateMarkdownReport, downloadMarkdownReport, downloadPdfReport } from "@/lib/report"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import StarBackground from "@/components/ui/StarBackground"
+import { createClient } from "@/lib/supabase/client"
+
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+    } catch {
+        return null
+    }
+}
 
 function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
-    const v = verdict.verdict as string
+    const normalized = extractVerdictSnapshot(verdict)
     const configs: Record<string, { color: string; bg: string; border: string; emoji: string }> = {
         forged: { color: "#EF4444", bg: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.3)", emoji: "🚨" },
         suspicious: { color: "#F59E0B", bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.3)", emoji: "⚠️" },
         authentic: { color: "#10B981", bg: "rgba(16,185,129,0.1)", border: "rgba(16,185,129,0.3)", emoji: "✅" },
         inconclusive: { color: "#6B7280", bg: "rgba(107,114,128,0.1)", border: "rgba(107,114,128,0.3)", emoji: "❓" },
     }
-    const cfg = configs[v] || configs.inconclusive
-    const confidence = verdict.confidence as number
+    const cfg = configs[normalized.verdict] || configs.inconclusive
 
     return (
         <motion.div
@@ -38,14 +49,14 @@ function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
         >
             <div className="text-2xl mb-1">{cfg.emoji}</div>
             <div className="font-bold text-lg" style={{ color: cfg.color }}>
-                {verdict.verdict as string}
+                {normalized.verdict}
             </div>
-            <div className="text-sm text-[#C0C0C0] mt-1">{verdict.verdict_cn as string}</div>
+            <div className="text-sm text-[#C0C0C0] mt-1">{normalized.verdictLabel}</div>
             <div className="mt-2 font-mono text-xs" style={{ color: cfg.color }}>
-                综合置信度 {((confidence || 0) * 100).toFixed(1)}%
+                综合置信度 {(normalized.confidence * 100).toFixed(1)}%
             </div>
-            {(verdict.key_evidence as Array<{type?: string; source?: string; confidence?: number}>)?.map((e, i) => (
-                <div key={i} className="mt-1 text-xs text-[#C0C0C0]">· [{e.type || '?'}] {e.source || ''} ({((e.confidence || 0) * 100).toFixed(0)}%)</div>
+            {normalized.evidence.map((e, i) => (
+                <div key={i} className="mt-1 text-xs text-[#C0C0C0]">· {e}</div>
             ))}
         </motion.div>
     )
@@ -92,10 +103,13 @@ function DebateStats({ currentRound, maxRounds, weights }: { currentRound: numbe
 }
 
 export function DetectConsole({ taskId }: { taskId: string }) {
+    const router = useRouter()
     const searchParams = useSearchParams()
     const inputType = searchParams.get("type") || "video"
     const fileUrl = searchParams.get("url") || `mock://${taskId}`
+    const priorityFocus = searchParams.get("focus") || "balanced"
     const role = (searchParams.get("role") || "host") as UserRole
+    const inviteToken = searchParams.get("invite_token")
     const [showExpertPanel, setShowExpertPanel] = useState(false)
     const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline">("3d")
 
@@ -105,10 +119,46 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         logs, forensicsResult, osintResult, challengerFeedback,
         agentWeights, finalVerdict, isRunning, isComplete,
         currentNode, currentRound, maxRounds
-    } = useAgentStream({ taskId, inputType, fileUrl, autoStart: true, role, channel })
+    } = useAgentStream({ taskId, inputType, fileUrl, priorityFocus, autoStart: true, role, channel })
+    const forensicsSnapshot = forensicsResult ? extractAnalysisSnapshot(forensicsResult) : null
+    const osintSnapshot = osintResult ? extractAnalysisSnapshot(osintResult) : null
+    const challengerSnapshot = challengerFeedback ? extractChallengerSnapshot(challengerFeedback) : null
+    const verdictSnapshot = finalVerdict ? extractVerdictSnapshot(finalVerdict) : null
+    const timelineLogs = logs.map(log => ({
+        round: log.round ?? currentRound,
+        agent: log.agent,
+        type: log.type ?? "action",
+        content: log.content,
+        timestamp: log.timestamp ?? new Date(0).toISOString(),
+    }))
 
     const agentStatus = (key: string, hasResult: boolean) =>
         currentNode === key ? "analyzing" : hasResult ? "complete" : "idle"
+
+    useEffect(() => {
+        if (role !== "expert" || !inviteToken) return
+
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        let cancelled = false
+
+        void fetch(`${apiBase}/api/v1/consultation/invite/${inviteToken}`)
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error("invite invalid")
+                }
+                return response.json()
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    alert("专家邀请链接无效或已失效")
+                    router.replace(`/detect/${taskId}`)
+                }
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [inviteToken, role, router, taskId])
 
     return (
         <div className="min-h-screen relative flex flex-col bg-black overflow-hidden">
@@ -215,7 +265,13 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             <button
                                 onClick={async () => {
                                     try {
-                                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/api/v1/share/${taskId}`, { method: "POST" })
+                                        const authToken = await getAuthToken()
+                                        const headers: Record<string, string> = {}
+                                        if (authToken) headers.Authorization = `Bearer ${authToken}`
+                                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/api/v1/share/${taskId}`, {
+                                            method: "POST",
+                                            headers,
+                                        })
                                         if (!res.ok) throw new Error("分享失败")
                                         const { share_url } = await res.json()
                                         const url = new URL(share_url, window.location.origin)
@@ -267,20 +323,20 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     <BentoScene
                         osintNode={
                             <>
-                                <AgentCard name="情报溯源Agent" agentKey="osint" icon={<img src="/agent-icons/osint.svg" alt="情报溯源Agent" className="w-5 h-5" />} status={agentStatus("osint", !!osintResult)} confidence={osintResult ? (osintResult.confidence as number) : undefined} description="网络威胁情报 · 路由追踪" />
+                                <AgentCard name="情报溯源Agent" agentKey="osint" icon={<Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("osint", !!osintResult)} confidence={osintSnapshot ? osintSnapshot.confidence : undefined} description="网络威胁情报 · 路由追踪" />
                                 <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" /></div>
                             </>
                         }
                         forensicsNode={
                             <>
-                                <AgentCard name="视听鉴伪Agent" agentKey="forensics" icon={<img src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsResult?.confidence as number | undefined} description="Deepfake 模型检测 · 异常提取" />
+                                <AgentCard name="视听鉴伪Agent" agentKey="forensics" icon={<Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined} description="Deepfake 模型检测 · 异常提取" />
                                 <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" /></div>
                             </>
                         }
                         challengerNode={
                             <>
-                                <AgentCard name="逻辑质询Agent" agentKey="challenger" icon={<img src="/agent-icons/challenger.svg" alt="逻辑质询Agent" className="w-5 h-5" />} status={agentStatus("challenger", !!challengerFeedback)} confidence={challengerFeedback ? (challengerFeedback.quality_score as number) : undefined} description="跨模态矛盾检测 · 置信校验" />
-                                {!!challengerFeedback?.requires_more_evidence && (
+                                <AgentCard name="逻辑质询Agent" agentKey="challenger" icon={<Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("challenger", !!challengerFeedback)} confidence={challengerSnapshot ? challengerSnapshot.qualityScore : undefined} description="跨模态矛盾检测 · 置信校验" />
+                                {!!challengerSnapshot?.requiresMoreEvidence && (
                                     <div className="bg-[#F59E0B]/20 border border-[#F59E0B]/50 rounded-lg p-2 text-xs text-[#F59E0B]">🔄 发现矛盾，触发重审</div>
                                 )}
                                 <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" /></div>
@@ -288,7 +344,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         }
                         commanderNode={
                             <>
-                                <AgentCard name="研判指挥Agent" agentKey="commander" icon={<img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={finalVerdict?.confidence as number | undefined} description="多维向量收敛中心 · 最终判决" />
+                                <AgentCard name="研判指挥Agent" agentKey="commander" icon={<Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={verdictSnapshot ? verdictSnapshot.confidence : undefined} description="多维向量收敛中心 · 最终判决" />
                                 <div className="flex-1 overflow-auto min-h-0 flex flex-col">
                                     {finalVerdict ? <VerdictBadge verdict={finalVerdict} /> : <div className="rounded-xl liquid-glass p-2 border border-white/10 flex-1"><AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" /></div>}
                                 </div>
@@ -307,9 +363,9 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <AgentCard
                             name="情报溯源Agent"
                             agentKey="osint"
-                            icon={<img src="/agent-icons/osint.svg" alt="情报溯源Agent" className="w-5 h-5" />}
+                            icon={<Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={20} height={20} className="w-5 h-5" />}
                             status={agentStatus("osint", !!osintResult)}
-                            confidence={osintResult ? (osintResult.confidence as number) : undefined}
+                            confidence={osintSnapshot ? osintSnapshot.confidence : undefined}
                             description="网络威胁情报 · 路由追踪 · 元数据校验"
                         />
                         <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden">
@@ -325,9 +381,9 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <AgentCard
                             name="视听鉴伪Agent"
                             agentKey="forensics"
-                            icon={<img src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" className="w-5 h-5" />}
+                            icon={<Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={20} height={20} className="w-5 h-5" />}
                             status={agentStatus("forensics", !!forensicsResult)}
-                            confidence={forensicsResult?.confidence as number | undefined}
+                            confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined}
                             description="Deepfake 模型检测 · 像素级异常提取"
                         />
                         <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden">
@@ -343,15 +399,15 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <AgentCard
                             name="逻辑质询Agent"
                             agentKey="challenger"
-                            icon={<img src="/agent-icons/challenger.svg" alt="逻辑质询Agent" className="w-5 h-5" />}
+                            icon={<Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={20} height={20} className="w-5 h-5" />}
                             status={agentStatus("challenger", !!challengerFeedback)}
-                            confidence={challengerFeedback ? (challengerFeedback.quality_score as number) : undefined}
+                            confidence={challengerSnapshot ? challengerSnapshot.qualityScore : undefined}
                             description="跨模态矛盾检测 · 置信度自适应校验"
                         />
 
                         {/* 重审提示条 */}
                         <AnimatePresence>
-                            {!!challengerFeedback?.requires_more_evidence && (
+                            {!!challengerSnapshot?.requiresMoreEvidence && (
                                 <motion.div
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
@@ -377,9 +433,9 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <AgentCard
                             name="研判指挥Agent"
                             agentKey="commander"
-                            icon={<img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-5 h-5" />}
+                            icon={<Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={20} height={20} className="w-5 h-5" />}
                             status={agentStatus("commander", !!finalVerdict)}
-                            confidence={finalVerdict?.confidence as number | undefined}
+                            confidence={verdictSnapshot ? verdictSnapshot.confidence : undefined}
                             description="多维向量收敛中心 · 最终判决生成"
                         />
                         <div className="flex-1 min-h-[120px] overflow-hidden flex flex-col">
@@ -411,7 +467,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
             {/* Timeline View */}
             {viewMode === "timeline" && (
                 <div className="flex-1 overflow-auto">
-                    <EvidenceTimeline logs={logs as any} isComplete={isComplete} />
+                    <EvidenceTimeline logs={timelineLogs} isComplete={isComplete} />
                 </div>
             )}
 
@@ -431,7 +487,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         exit={{ x: 400, opacity: 0 }}
                         className="fixed right-4 top-20 bottom-4 w-80 z-40 hidden lg:block"
                     >
-                        <ExpertPanel channel={channel} currentRole={role} />
+                        <ExpertPanel taskId={taskId} inviteToken={inviteToken} currentRole={role} />
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -1,35 +1,21 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { motion } from "motion/react"
+import { applyDocumentTheme, useDocumentTheme, type DocumentTheme } from "@/hooks/useDocumentTheme"
+import { useHasMounted } from "@/hooks/useHasMounted"
 
 export function ThemeToggle() {
-    const [theme, setTheme] = useState<"dark" | "light">("dark")
-    const [mounted, setMounted] = useState(false)
+    const theme = useDocumentTheme()
+    const mounted = useHasMounted()
 
     useEffect(() => {
-        setMounted(true)
-        const storedTheme = localStorage.getItem("truthseeker-theme") as "dark" | "light"
-        if (storedTheme) {
-            setTheme(storedTheme)
-            if (storedTheme === "light") {
-                document.documentElement.classList.remove("dark")
-            } else {
-                document.documentElement.classList.add("dark")
-            }
-        }
-    }, [])
+        applyDocumentTheme(theme)
+    }, [theme])
 
     const toggleTheme = () => {
-        const newTheme = theme === "dark" ? "light" : "dark"
-        setTheme(newTheme)
-        localStorage.setItem("truthseeker-theme", newTheme)
-
-        if (newTheme === "dark") {
-            document.documentElement.classList.add("dark")
-        } else {
-            document.documentElement.classList.remove("dark")
-        }
+        const newTheme: DocumentTheme = theme === "dark" ? "light" : "dark"
+        applyDocumentTheme(newTheme)
     }
 
     if (!mounted) {

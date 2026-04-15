@@ -4,6 +4,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { signUp } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
+import Image from "next/image"
 import { ThemeToggle } from "@/components/landing/ThemeToggle"
 
 export default function SignupPage() {
@@ -28,11 +29,12 @@ export default function SignupPage() {
         <main className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[#020107] dark:bg-[#020107] selection:bg-[#6366F1]/30">
             {/* ─── Background Art ─── */}
             <div className="absolute inset-0 z-0 pointer-events-none">
-                <img
+                <Image
                     src="/auth-bg.png"
                     alt=""
-                    className="absolute w-[113.75%] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -scale-y-100 object-cover opacity-90 dark:opacity-90 max-w-none"
-                    style={{ height: '102%' }}
+                    fill
+                    sizes="100vw"
+                    className="absolute left-1/2 top-1/2 h-[102%] w-[113.75%] max-w-none -translate-x-1/2 -translate-y-1/2 -scale-y-100 object-cover opacity-90 dark:opacity-90"
                     draggable={false}
                 />
                 <div className="absolute inset-0 bg-gradient-to-b from-[#6366F1]/5 via-transparent to-[#020107]/60" />

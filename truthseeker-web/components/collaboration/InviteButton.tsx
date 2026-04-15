@@ -6,15 +6,24 @@ import { motion, AnimatePresence } from "motion/react"
 export function InviteButton({ taskId }: { taskId: string }) {
     const [copied, setCopied] = useState(false)
 
-    const handleInvite = () => {
-        let baseUrl = window.location.origin
-        // Try to construct URL respecting original query params if possible
-        const url = new URL(window.location.href)
-        url.searchParams.set("role", "expert")
+    const handleInvite = async () => {
+        try {
+            const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+            const response = await fetch(`${apiBase}/api/v1/consultation/${taskId}/invite`, {
+                method: "POST",
+            })
+            if (!response.ok) {
+                throw new Error("invite creation failed")
+            }
+            const { invite_url: inviteUrl } = await response.json()
+            const absoluteUrl = new URL(inviteUrl, window.location.origin)
 
-        navigator.clipboard.writeText(url.toString())
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
+            await navigator.clipboard.writeText(absoluteUrl.toString())
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 2000)
+        } catch (error) {
+            console.error("Failed to copy invite link:", error)
+        }
     }
 
     return (

@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import Image from "next/image"
 import { motion, AnimatePresence } from "motion/react"
 import { createClient } from "@/lib/supabase/client"
 
@@ -13,6 +14,13 @@ const promptTemplates = [
     "请优先识别是否涉及诈骗、舆情操纵或深度伪造传播链，并输出处置建议。"
 ]
 const aspectOptions = ["多模态取证优先", "跨模态一致性", "传播链溯源", "高风险案件"]
+
+const focusMapping: Record<string, "balanced" | "visual" | "audio" | "text"> = {
+    "多模态取证优先": "balanced",
+    "跨模态一致性": "visual",
+    "传播链溯源": "text",
+    "高风险案件": "balanced",
+}
 
 function getInputType(file: File | null, textPrompt: string): string {
     if (file?.type.startsWith("video/")) return "video"
@@ -73,6 +81,7 @@ export function FileUploader() {
             let fileUrl: string | null = null
             const inputType = getInputType(file, prompt)
             const authToken = await getAuthToken()
+            const priorityFocus = focusMapping[selectedFocus] || "balanced"
 
             // Step 1: 上传文件（如果有）
             if (file) {
@@ -109,6 +118,7 @@ export function FileUploader() {
                     title,
                     input_type: inputType,
                     description: prompt.trim() || `上传文件: ${file?.name}`,
+                    priority_focus: priorityFocus,
                     metadata: {
                         share_to_casebase: shareToCasebase,
                         analysis_focus: selectedFocus,
@@ -131,6 +141,7 @@ export function FileUploader() {
             if (fileUrl) query.set("url", fileUrl)
             else query.set("url", "mock://text-input")
             if (prompt.trim()) query.set("prompt", prompt.trim())
+            query.set("focus", priorityFocus)
 
             router.push(`/detect/${taskId}?${query.toString()}`)
         } catch (err: unknown) {
@@ -201,7 +212,7 @@ export function FileUploader() {
                             <AnimatePresence mode="wait">
                                 {uploading ? (
                                     <motion.div key="uploading" initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-5">
-                                        <div className="flex justify-center"><img src="/loading-icon.svg" alt="uploading" className="h-16 w-16 animate-pulse" /></div>
+                                        <div className="flex justify-center"><Image src="/loading-icon.svg" alt="uploading" width={64} height={64} className="h-16 w-16 animate-pulse" /></div>
                                         <div className="text-center">
                                             <p className="text-[#1F1F23] font-semibold text-lg dark:text-white">{selectedFile?.name || "文本分析任务"}</p>
                                             <p className="text-black/45 text-sm mt-1 dark:text-white/45">{selectedFile ? formatSize(selectedFile.size) : "已提交文本提示词"}</p>
@@ -211,7 +222,7 @@ export function FileUploader() {
                                     </motion.div>
                                 ) : (
                                     <motion.div key="idle" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-[1.5rem] border border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.62)_0%,rgba(244,241,236,0.72)_100%)] px-6 py-10 text-center dark:border-white/10 dark:bg-black/20">
-                                        <div className="mx-auto mb-5 flex items-center justify-center"><img src="/loading-icon.svg" alt="upload" className="h-20 w-20" /></div>
+                                        <div className="mx-auto mb-5 flex items-center justify-center"><Image src="/loading-icon.svg" alt="upload" width={80} height={80} className="h-20 w-20" /></div>
                                         <p className="text-[#1E1E22] text-xl font-semibold dark:text-white">拖拽或点击上传多媒体检材</p>
                                         <p className="mt-2 text-sm text-black/55 leading-relaxed dark:text-white/50">适合提交视频、音频、图片与截图证据，也可补充原始文本文件。系统会自动进入鉴伪、溯源与证据链建模流程。</p>
                                         <div className="mt-5 flex flex-wrap justify-center gap-2">{["VIDEO", "AUDIO", "IMAGE", "TEXT"].map((type) => <span key={type} className="rounded-full border border-black/8 bg-black/[0.04] px-3 py-1 text-[11px] font-mono text-black/45 dark:border-white/10 dark:bg-white/5 dark:text-white/45">{type}</span>)}</div>

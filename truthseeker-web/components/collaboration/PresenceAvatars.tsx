@@ -15,7 +15,8 @@ export function PresenceAvatars({ users }: { users: PresenceState[] }) {
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
                         key={u.user_id + i}
-                        className={`w-7 h-7 rounded-full border-2 border-[#111828] flex items-center justify-center shadow-lg z-${10 - i}
+                        style={{ zIndex: 10 - i }}
+                        className={`w-7 h-7 rounded-full border-2 border-[#111828] flex items-center justify-center shadow-lg
                             ${u.role === 'host' ? 'bg-gradient-to-br from-[#6366F1] to-[#A855F7] text-white shadow-[0_0_8px_rgba(99,102,241,0.5)]'
                                 : 'bg-gradient-to-br from-[#D4FF12] to-[#10B981] text-black shadow-[0_0_8px_rgba(212,255,18,0.5)]'}
                         `}

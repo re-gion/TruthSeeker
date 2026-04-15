@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { RealtimeChannel } from "@supabase/supabase-js"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "motion/react"
+import { createClient } from "@/lib/supabase/client"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import Image from "next/image"
 
@@ -14,7 +14,18 @@ export interface ExpertComment {
     timestamp: string
 }
 
-const ROLE_CONFIG: Record<string, any> = {
+interface RoleConfig {
+    label: string
+    shortLabel: string
+    avatar: string
+    bubbleBg: string
+    bubbleBorder: string
+    bubbleText: string
+    dotColor: string
+    nameColor: string
+}
+
+const ROLE_CONFIG: Record<UserRole, RoleConfig> = {
     host: {
         label: "主持人",
         shortLabel: "主",
@@ -56,17 +67,38 @@ function formatTime(timestamp: string) {
     }
 }
 
+function getTempUserId() {
+    if (typeof window === "undefined") return "anon"
+
+    const storedUserId = window.localStorage.getItem("temp_user_id")
+    if (storedUserId) return storedUserId
+
+    const userId = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(7)
+    window.localStorage.setItem("temp_user_id", userId)
+    return userId
+}
+
 export function ExpertPanel({
-    channel,
+    taskId,
+    inviteToken,
     currentRole
 }: {
-    channel: RealtimeChannel | null
+    taskId: string
+    inviteToken?: string | null
     currentRole: UserRole
 }) {
     const [comments, setComments] = useState<ExpertComment[]>([])
     const [inputValue, setInputValue] = useState("")
     const sentIdsRef = useRef<Set<string>>(new Set())
     const scrollRef = useRef<HTMLDivElement>(null)
+    const broadcastChannel = useMemo(() => {
+        if (typeof window === "undefined") {
+            return null
+        }
+
+        const supabase = createClient()
+        return supabase.channel(`task:${taskId}`)
+    }, [taskId])
 
     // 自动滚动到底部
     useEffect(() => {
@@ -76,26 +108,29 @@ export function ExpertPanel({
     }, [comments])
 
     useEffect(() => {
+        const channel = broadcastChannel
         if (!channel) return
 
-        const subscription = channel.on('broadcast', { event: 'expert_comment' }, (payload: any) => {
-            const comment = payload.payload as ExpertComment
-            if (sentIdsRef.current.has(comment.id)) return
+        channel.on('broadcast', { event: 'expert_comment' }, (payload: { payload?: unknown }) => {
+            const comment = payload.payload as ExpertComment | undefined
+            if (!comment || sentIdsRef.current.has(comment.id)) return
             setComments(prev => [...prev, comment])
         })
 
+        void channel.subscribe()
+
         return () => {
-            channel.unsubscribe()
+            void channel.unsubscribe()
         }
-    }, [channel])
+    }, [broadcastChannel])
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
-        if (!inputValue.trim() || !channel) return
+        if (!inputValue.trim() || !broadcastChannel) return
 
         const newComment: ExpertComment = {
             id: Math.random().toString(36).substring(7),
-            authorId: localStorage.getItem('temp_user_id') || 'anon',
+            authorId: getTempUserId(),
             role: currentRole,
             text: inputValue.trim(),
             timestamp: new Date().toISOString()
@@ -105,7 +140,7 @@ export function ExpertPanel({
         setComments(prev => [...prev, newComment])
 
         // Realtime broadcast for other clients
-        channel.send({
+        void broadcastChannel.send({
             type: 'broadcast',
             event: 'expert_comment',
             payload: newComment
@@ -113,7 +148,6 @@ export function ExpertPanel({
 
         // Inject into backend agent state via consultation API
         const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
-        const taskId = channel.topic.replace("task:", "")
         fetch(`${apiBase}/api/v1/consultation/${taskId}/inject`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -121,6 +155,7 @@ export function ExpertPanel({
                 message: newComment.text,
                 role: newComment.role,
                 expert_name: newComment.authorId,
+                invite_token: inviteToken ?? undefined,
             }),
         }).catch(err => console.error("Failed to inject expert message:", err))
 
@@ -142,7 +177,7 @@ export function ExpertPanel({
                 <AnimatePresence>
                     {comments.map(comment => {
                         const isMe = comment.role === currentRole &&
-                            comment.authorId === (typeof window !== 'undefined' ? localStorage.getItem('temp_user_id') : '')
+                            comment.authorId === getTempUserId()
                         const cfg = ROLE_CONFIG[comment.role] || ROLE_CONFIG.expert
 
                         return (

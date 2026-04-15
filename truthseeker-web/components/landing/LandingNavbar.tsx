@@ -8,22 +8,15 @@ import { useEffect, useState } from "react"
 
 export function LandingNavbar() {
     const scrollProgress = useScrollProgress()
-    const [isScrolled, setIsScrolled] = useState(false)
-
-    // Wait until hydration to avoid hydration mismatch if needed
-    const [mounted, setMounted] = useState(false)
-    useEffect(() => {
-        setMounted(true)
-    }, [])
+    const [isScrolled, setIsScrolled] = useState(
+        () => typeof window !== "undefined" && window.scrollY > 50
+    )
 
     useEffect(() => {
-        setIsScrolled(window.scrollY > 50)
         const handleScroll = () => setIsScrolled(window.scrollY > 50)
         window.addEventListener("scroll", handleScroll, { passive: true })
         return () => window.removeEventListener("scroll", handleScroll)
     }, [])
-
-    if (!mounted) return null
 
     return (
         <motion.header

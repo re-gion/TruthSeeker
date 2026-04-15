@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { motion } from "motion/react"
 import { PlayCircle, Zap } from "lucide-react"
 import { AdversarialToolkit } from "@/components/demo/AdversarialToolkit"
@@ -23,14 +24,13 @@ export function HomeClientWidgets() {
                     实时对抗演示工具箱
                 </motion.button>
 
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white font-medium flex items-center gap-2 shadow-[0_4px_14px_rgba(99,102,241,0.39)]"
+                <Link
+                    href="/detect"
+                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white font-medium flex items-center gap-2 shadow-[0_4px_14px_rgba(99,102,241,0.39)] transition-transform hover:scale-105 active:scale-95"
                 >
                     <PlayCircle className="w-5 h-5" />
                     观看完整工作流演示
-                </motion.button>
+                </Link>
             </div>
 
             {/* Comparison View Section */}

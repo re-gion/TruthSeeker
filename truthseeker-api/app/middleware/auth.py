@@ -24,6 +24,12 @@ PUBLIC_PREFIXES: frozenset[str] = frozenset({
 # GET-only 公开前缀（POST/PUT/DELETE 仍需认证）
 PUBLIC_GET_PREFIXES: frozenset[str] = frozenset({
     "/api/v1/share/",
+    "/api/v1/consultation/invite/",
+})
+
+PUBLIC_POST_PATH_SUFFIXES: frozenset[str] = frozenset({
+    "/inject",
+    "/invite",
 })
 
 
@@ -38,6 +44,10 @@ def _is_public(path: str, method: str = "GET") -> bool:
     if method.upper() == "GET":
         for prefix in PUBLIC_GET_PREFIXES:
             if path.startswith(prefix):
+                return True
+    if method.upper() == "POST":
+        for suffix in PUBLIC_POST_PATH_SUFFIXES:
+            if path.startswith("/api/v1/consultation/") and path.endswith(suffix):
                 return True
     return False
 

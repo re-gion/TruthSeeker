@@ -20,7 +20,7 @@ export default function CasesPage() {
                         全模态演示案例库
                     </h1>
                     <p className="text-muted-foreground text-lg max-w-3xl mx-auto leading-relaxed">
-                        涵盖"音、视、图、文"四大高危场景，体验真实业务环境下多智能体协同辩论流程。针对新型深度伪造攻击，一键体验溯源侦查的魅力。
+                        涵盖“音、视、图、文”四大高危场景，体验真实业务环境下多智能体协同辩论流程。针对新型深度伪造攻击，一键体验溯源侦查的魅力。
                     </p>
                 </div>
 

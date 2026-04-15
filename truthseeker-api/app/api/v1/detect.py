@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import Optional, AsyncGenerator, Literal
+from typing import AsyncGenerator, Literal, Optional
 
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
+from app.services.analysis_persistence import AnalysisPersistenceService, normalize_final_verdict
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
     task_id = request.task_id or str(uuid.uuid4())
     queue: asyncio.Queue[str] = asyncio.Queue()
     stop_heartbeat = asyncio.Event()
+    persistence = AnalysisPersistenceService()
 
     # 初始化 State
     initial_state: TruthSeekerState = {
@@ -90,6 +92,11 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "max_rounds": initial_state["max_rounds"],
     }))
+    persistence.mark_task_started(
+        task_id,
+        input_files=initial_state["input_files"],
+        priority_focus=initial_state["priority_focus"],
+    )
 
     final_verdict_data = None
 
@@ -131,8 +138,10 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
                         await queue.put(_sse({"type": "round_update", "round": updates["current_round"]}))
 
                     if updates.get("final_verdict"):
-                        final_verdict_data = updates["final_verdict"]
-                        await queue.put(_sse({"type": "final_verdict", "verdict": updates["final_verdict"]}))
+                        final_verdict_data = normalize_final_verdict(updates["final_verdict"])
+                        await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
+
+                    persistence.persist_update(task_id, node_name, updates)
 
                     await queue.put(_sse({"type": "node_complete", "node": node_name}))
         except Exception as e:
@@ -169,10 +178,12 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
             supabase.table("tasks").update({
                 "status": "completed",
                 "result": final_verdict_data,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", task_id).execute()
         except Exception as e:
             logger.warning("Failed to update task status: %s", e)
+        persistence.mark_task_completed(task_id, final_verdict_data)
 
     # 完成
     yield _sse({

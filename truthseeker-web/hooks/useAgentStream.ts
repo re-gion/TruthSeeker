@@ -1,11 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import type { RealtimeChannel } from "@supabase/supabase-js"
 
 export type AgentEvent =
     | { type: "start"; task_id: string; max_rounds?: number }
     | { type: "node_start"; node: string }
     | { type: "agent_log"; node: string; log: AgentLogEntry }
+    | { type: "timeline_update"; entry?: AgentLogEntry; log?: AgentLogEntry; events?: unknown[]; node?: string; round?: number }
     | { type: "evidence_update"; evidence: unknown[]; node?: string }
     | { type: "challenges_update"; challenges: unknown[] }
     | { type: "forensics_result"; result: Record<string, unknown> }
@@ -15,6 +17,7 @@ export type AgentEvent =
     | { type: "round_update"; round: number }
     | { type: "final_verdict"; verdict: Record<string, unknown> }
     | { type: "node_complete"; node: string }
+    | { type: "error"; message: string; detail?: unknown }
     | { type: "complete"; task_id: string }
 
 export interface AgentLogEntry {
@@ -29,10 +32,11 @@ interface UseAgentStreamOptions {
     taskId: string
     inputType?: string
     fileUrl?: string
+    priorityFocus?: string
     autoStart?: boolean
     maxRounds?: number
     role?: 'host' | 'expert' | 'viewer'
-    channel?: any
+    channel?: RealtimeChannel | null
 }
 
 interface UseAgentStreamReturn {
@@ -53,10 +57,52 @@ interface UseAgentStreamReturn {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null
+}
+
+function readLogEntry(value: unknown): AgentLogEntry | null {
+    if (!isObject(value)) return null
+
+    const agent = typeof value.agent === "string" ? value.agent : typeof value.node === "string" ? value.node : "system"
+    const content =
+        typeof value.content === "string"
+            ? value.content
+            : typeof value.message === "string"
+                ? value.message
+                : typeof value.text === "string"
+                    ? value.text
+                    : ""
+
+    return {
+        agent,
+        type: typeof value.type === "string" ? value.type : "timeline_update",
+        content,
+        timestamp: typeof value.timestamp === "string" ? value.timestamp : new Date().toISOString(),
+        round: typeof value.round === "number" ? value.round : undefined,
+    }
+}
+
+function readTimelineEntry(event: Extract<AgentEvent, { type: "timeline_update" }>): AgentLogEntry | null {
+    return readLogEntry(event.entry ?? event.log ?? event)
+}
+
+function readTimelineEntries(event: Extract<AgentEvent, { type: "timeline_update" }>): AgentLogEntry[] {
+    if (Array.isArray(event.events) && event.events.length > 0) {
+        return event.events
+            .map((entry) => readLogEntry(entry))
+            .filter((entry): entry is AgentLogEntry => entry !== null)
+    }
+
+    const singleEntry = readTimelineEntry(event)
+    return singleEntry ? [singleEntry] : []
+}
+
 export function useAgentStream({
     taskId,
     inputType = "video",
     fileUrl,
+    priorityFocus = "balanced",
     autoStart = true,
     maxRounds = 3,
     role = 'host',
@@ -86,6 +132,11 @@ export function useAgentStream({
             setCurrentNode(event.node)
         } else if (event.type === "agent_log") {
             setLogs(prev => [...prev, event.log])
+        } else if (event.type === "timeline_update") {
+            const timelineEntries = readTimelineEntries(event)
+            if (timelineEntries.length > 0) {
+                setLogs(prev => [...prev, ...timelineEntries])
+            }
         } else if (event.type === "forensics_result") {
             setForensicsResult(event.result)
         } else if (event.type === "osint_result") {
@@ -98,6 +149,18 @@ export function useAgentStream({
             setCurrentRound(event.round)
         } else if (event.type === "final_verdict") {
             setFinalVerdict(event.verdict)
+        } else if (event.type === "error") {
+            setLogs(prev => [
+                ...prev,
+                {
+                    agent: "system",
+                    type: "error",
+                    content: event.message,
+                    timestamp: new Date().toISOString(),
+                },
+            ])
+            setIsRunning(false)
+            setCurrentNode(null)
         } else if (event.type === "complete") {
             setIsComplete(true)
             setIsRunning(false)
@@ -118,6 +181,7 @@ export function useAgentStream({
                 task_id: taskId,
                 input_type: inputType,
                 file_url: fileUrl || `mock://${taskId}`,
+                priority_focus: priorityFocus,
                 max_rounds: maxRounds,
             })
 
@@ -152,11 +216,11 @@ export function useAgentStream({
 
                         // Broadcast via Supabase if host
                         if (role === 'host' && channel) {
-                            channel.send({
+                            void channel.send({
                                 type: 'broadcast',
                                 event: 'agent_stream',
-                                payload: event
-                            }).catch((err: any) => {
+                                payload: event,
+                            }).catch((err: unknown) => {
                                 console.error('Failed to broadcast event:', err)
                             })
                         }
@@ -172,20 +236,19 @@ export function useAgentStream({
         } finally {
             setIsRunning(false)
         }
-    }, [taskId, inputType, fileUrl, maxRounds])
+    }, [taskId, inputType, fileUrl, priorityFocus, maxRounds, channel, role, processEvent])
 
     useEffect(() => {
         if (role === 'expert') {
             setIsRunning(true)
             // Expert just listens to broadcast channel
             if (channel) {
-                const subscription = channel.on('broadcast', { event: 'agent_stream' }, (payload: any) => {
-                    const event = payload.payload as AgentEvent
+                channel.on('broadcast', { event: 'agent_stream' }, (payload: { payload?: unknown }) => {
+                    const event = payload.payload as AgentEvent | undefined
+                    if (!event) return
                     processEvent(event)
                 })
-                return () => {
-                    // unsubscribe handled by channel wrapper
-                }
+                return
             }
         } else {
             // Host starts the execution stream
