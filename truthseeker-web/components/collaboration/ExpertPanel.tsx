@@ -84,7 +84,9 @@ export function ExpertPanel({
             setComments(prev => [...prev, comment])
         })
 
-        return () => { }
+        return () => {
+            channel.unsubscribe()
+        }
     }, [channel])
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -102,11 +104,25 @@ export function ExpertPanel({
         sentIdsRef.current.add(newComment.id)
         setComments(prev => [...prev, newComment])
 
+        // Realtime broadcast for other clients
         channel.send({
             type: 'broadcast',
             event: 'expert_comment',
             payload: newComment
         })
+
+        // Inject into backend agent state via consultation API
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        const taskId = channel.topic.replace("task:", "")
+        fetch(`${apiBase}/api/v1/consultation/${taskId}/inject`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: newComment.text,
+                role: newComment.role,
+                expert_name: newComment.authorId,
+            }),
+        }).catch(err => console.error("Failed to inject expert message:", err))
 
         setInputValue("")
     }

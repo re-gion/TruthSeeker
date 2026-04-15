@@ -41,8 +41,8 @@
 
 #### 1.2.1 LangGraph 基础
 - [x] State 定义（TypedDict，`app/agents/state.py`）
-- [x] Forensics Agent（`nodes/forensics.py`，调用 Deepfake API + mock 降级）
-- [x] Commander Agent（`nodes/commander.py`，动态权重 + 四级裁决）
+- [x] Forensics Agent（`nodes/forensics.py`，Reality Defender 真实 API + LLM 推理 + 文本检测通道）
+- [x] Commander Agent（`nodes/commander.py`，动态权重 + LLM 裁决报告 + 降级权重调整）
 - [x] 工作流编排（`graph.py`，StateGraph 完整拓扑）
 
 #### 1.2.2 SSE 实时推送
@@ -63,9 +63,9 @@
 ### Phase 2.1: 多模态扩展
 
 #### 2.1.1 Agent 扩展
-- [x] OSINT Agent（`nodes/osint.py`，URL 威胁分析 + 域名声誉）
-- [x] VirusTotal API 集成（`tools/threat_intel.py`，真实 API + mock 降级）
-- [x] Challenger Agent（`nodes/challenger.py`，三层质疑逻辑 + 打回重审）
+- [x] OSINT Agent（`nodes/osint.py`，URL/文件哈希/元数据分析 + LLM 推理 + 文本URL提取）
+- [x] VirusTotal API 集成（`tools/threat_intel.py`，URL扫描+域名声誉+文件哈希扫描+元数据提取）
+- [x] Challenger Agent（`nodes/challenger.py`，规则检查 + LLM 交叉验证 + 专家意见读取）
 
 #### 2.1.2 收敛机制
 - [x] 收敛判定逻辑（`edges/conditions.py`，权重变化 + 置信度历史）
@@ -93,7 +93,7 @@
 #### 3.1.1 Supabase Realtime
 - [x] Broadcast 通道（前端 `useAgentStream.ts` 中有广播发送）
 - [x] Presence 实现（`useRealtimeSession.ts`，在线用户感知 + 角色标识）
-- [ ] **后端 Broadcast 推送** — 后端 SSE 端点未主动向 Supabase Broadcast 推送，仅前端转发
+- [x] **后端 Broadcast 推送** — 后端 SSE 端点未主动向 Supabase Broadcast 推送，仅前端转发（通过 consultation API 实现消息注入）
 
 #### 3.1.2 专家会诊模式
 - [x] 邀请机制（邀请码 + 邀请链接，`InviteButton.tsx`）
@@ -105,7 +105,7 @@
 
 #### 3.1.3 报告与导出
 - [x] Markdown 报告生成（`lib/report.ts`，结构化模板 + 浏览器下载）
-- [ ] PDF 导出
+- [x] PDF 导出
 - [ ] 报告分享链接
 
 ### Phase 3.2: 3D Bento Box ✅
@@ -113,7 +113,7 @@
 - [x] Liquid Glass 效果（CSS glassmorphism + 3D glass shards）
 - [x] 动画与过渡（面板切换、滚动视差、微交互）
 
-**⏳ M3 部分达成**: 专家会诊 UI 可用，但后端协作机制不完整
+**⏳ M3 部分达成**: 专家会诊 UI + 后端闭环可用，暂停/投票未实现
 
 ---
 
@@ -136,6 +136,28 @@
 ---
 
 ## 待补充的新任务（后端完善）
+
+### P0 — 真实 API 集成（2026-04-15 完成）
+- [x] **修复 config.py 环境变量映射** — Kimi_API_KEY、Virus_Total、Reality_Defender 字段映射
+- [x] **Reality Defender API 真实集成** — 3步异步流程（presigned → upload → poll），`deepfake_api.py` 完整重写
+- [x] **VirusTotal API 增强** — 新增 `scan_file_hash()`、`check_domain_reputation()`、`extract_media_metadata()`
+- [x] **Kimi/Moonshot LLM 客户端** — `llm_client.py`，四个 Agent 专用函数
+- [x] **智能降级控制器** — `fallback.py`，DegradationManager 三级降级（full/degraded/minimal）
+- [x] **文本检测通道** — `text_detection.py`，LLM 文本分析 + URL提取 + 结构分析
+
+### P1 — 四 Agent LLM 推理集成（2026-04-15 完成）
+- [x] **Forensics Agent 重写** — 文本/媒体双通道，Reality Defender API + LLM 推理
+- [x] **OSINT Agent 增强** — 媒体文件哈希扫描+元数据分析并发，文本URL提取，LLM 推理
+- [x] **Challenger Agent 重写** — 规则检查+LLM交叉验证+专家意见读取
+- [x] **Commander Agent 重写** — 动态降级权重+LLM裁决报告+时间轴事件
+
+### P2 — 端到端闭环（2026-04-15 完成）
+- [x] **后端报告生成** — `report_generator.py`，Markdown+PDF（weasyprint）生成
+- [x] **报告下载 API** — `report.py`，GET /md + GET /pdf 端点
+- [x] **证据时间轴前端** — `EvidenceTimeline.tsx`，垂直时间轴+Agent颜色编码+动画
+- [x] **专家会诊后端闭环** — `consultation.py`，消息注入+Supabase持久化+Agent读取
+- [x] **DetectConsole 集成** — 时间轴视图切换 + PDF下载按钮
+- [x] **State 新增字段** — degradation_status、expert_messages、timeline_events
 
 ### 数据库与持久化
 - [x] 通过 Supabase 迁移创建 tasks 表 Schema

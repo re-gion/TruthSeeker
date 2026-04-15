@@ -4,6 +4,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { signUp } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
+import { ThemeToggle } from "@/components/landing/ThemeToggle"
 
 export default function SignupPage() {
     const [error, setError] = useState<string | null>(null)

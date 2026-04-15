@@ -5,7 +5,6 @@
 # ============================================
 # Node.js / Next.js（前端项目）
 # ============================================
-
 .mcp.json
 
 # Dependencies
@@ -302,4 +301,3 @@ truthseeker-api/**/*.pyc
 docs/~$*.doc*
 docs/~$*.xls*
 docs/~$*.ppt*
-.mcp.json

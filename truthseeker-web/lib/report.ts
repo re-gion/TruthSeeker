@@ -135,3 +135,27 @@ export function downloadMarkdownReport(content: string, filename: string) {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
 }
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+
+/** 从后端 API 下载 PDF 报告 */
+export async function downloadPdfReport(taskId: string) {
+    try {
+        const resp = await fetch(`${API_BASE}/api/v1/report/${taskId}/pdf`, {
+            method: "GET",
+        })
+        if (!resp.ok) throw new Error(`PDF 生成失败: ${resp.status}`)
+        const blob = await resp.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `truthseeker-report-${taskId.slice(0, 8)}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+    } catch (e) {
+        console.error("PDF download failed:", e)
+        alert("PDF 报告生成失败，请稍后重试")
+    }
+}

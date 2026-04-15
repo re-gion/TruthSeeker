@@ -9,9 +9,10 @@ import { AgentCard } from "@/components/agents/AgentCard"
 import { PresenceAvatars } from "@/components/collaboration/PresenceAvatars"
 import { InviteButton } from "@/components/collaboration/InviteButton"
 import { ExpertPanel } from "@/components/collaboration/ExpertPanel"
+import { EvidenceTimeline } from "@/components/detect/EvidenceTimeline"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
-import { generateMarkdownReport, downloadMarkdownReport } from "@/lib/report"
+import { generateMarkdownReport, downloadMarkdownReport, downloadPdfReport } from "@/lib/report"
 
 import Link from "next/link"
 import { useState } from "react"
@@ -26,7 +27,7 @@ function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
         inconclusive: { color: "#6B7280", bg: "rgba(107,114,128,0.1)", border: "rgba(107,114,128,0.3)", emoji: "❓" },
     }
     const cfg = configs[v] || configs.inconclusive
-    const confidence = verdict.confidence_overall as number
+    const confidence = verdict.confidence as number
 
     return (
         <motion.div
@@ -37,14 +38,14 @@ function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
         >
             <div className="text-2xl mb-1">{cfg.emoji}</div>
             <div className="font-bold text-lg" style={{ color: cfg.color }}>
-                {verdict.verdict_label as string}
+                {verdict.verdict as string}
             </div>
             <div className="text-sm text-[#C0C0C0] mt-1">{verdict.verdict_cn as string}</div>
             <div className="mt-2 font-mono text-xs" style={{ color: cfg.color }}>
                 综合置信度 {((confidence || 0) * 100).toFixed(1)}%
             </div>
-            {(verdict.key_evidence as string[])?.map((e, i) => (
-                <div key={i} className="mt-1 text-xs text-[#C0C0C0]">· {e}</div>
+            {(verdict.key_evidence as Array<{type?: string; source?: string; confidence?: number}>)?.map((e, i) => (
+                <div key={i} className="mt-1 text-xs text-[#C0C0C0]">· [{e.type || '?'}] {e.source || ''} ({((e.confidence || 0) * 100).toFixed(0)}%)</div>
             ))}
         </motion.div>
     )
@@ -96,7 +97,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const fileUrl = searchParams.get("url") || `mock://${taskId}`
     const role = (searchParams.get("role") || "host") as UserRole
     const [showExpertPanel, setShowExpertPanel] = useState(false)
-    const [viewMode, setViewMode] = useState<"2d" | "3d">("3d")
+    const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline">("3d")
 
     const { channel, onlineUsers } = useRealtimeSession(taskId, role)
 
@@ -160,10 +161,24 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     {/* Layer 3: 团队协作状态 */}
                     <div className="hidden lg:flex items-center gap-4">
                         <button
-                            onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}
-                            className="text-xs text-[#06B6D4] border border-[#06B6D4]/30 px-3 py-1.5 rounded-full hover:bg-[#06B6D4]/10 transition-colors"
+                            onClick={() => setViewMode(v => v === 'timeline' ? '3d' : 'timeline')}
+                            className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+                                viewMode === 'timeline'
+                                    ? 'text-[#6366F1] border border-[#6366F1]/30 hover:bg-[#6366F1]/10'
+                                    : 'text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/10'
+                            }`}
                         >
-                            {viewMode === '3d' ? '返回 2D 正交视图' : '开启 3D 拟真视图'}
+                            {viewMode === 'timeline' ? '返回 Agent 视图' : '时间轴视图'}
+                        </button>
+                        <button
+                            onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}
+                            className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+                                viewMode === '2d'
+                                    ? 'text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/10'
+                                    : 'text-white/50 border border-white/10 hover:bg-white/5'
+                            }`}
+                        >
+                            {viewMode === '3d' ? '2D 正交' : '3D 拟真'}
                         </button>
                         <button
                             onClick={() => setShowExpertPanel(!showExpertPanel)}
@@ -185,7 +200,15 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 }}
                                 className="text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors"
                             >
-                                📄 下载报告
+                                MD 报告
+                            </button>
+                        )}
+                        {isComplete && (
+                            <button
+                                onClick={() => downloadPdfReport(taskId)}
+                                className="text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors"
+                            >
+                                PDF 报告
                             </button>
                         )}
                         <PresenceAvatars users={onlineUsers} />
@@ -246,7 +269,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         }
                         commanderNode={
                             <>
-                                <AgentCard name="研判指挥Agent" agentKey="commander" icon={<img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={finalVerdict?.confidence_overall as number | undefined} description="多维向量收敛中心 · 最终判决" />
+                                <AgentCard name="研判指挥Agent" agentKey="commander" icon={<img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={finalVerdict?.confidence as number | undefined} description="多维向量收敛中心 · 最终判决" />
                                 <div className="flex-1 overflow-auto min-h-0 flex flex-col">
                                     {finalVerdict ? <VerdictBadge verdict={finalVerdict} /> : <div className="rounded-xl liquid-glass p-2 border border-white/10 flex-1"><AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" /></div>}
                                 </div>
@@ -337,7 +360,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             agentKey="commander"
                             icon={<img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-5 h-5" />}
                             status={agentStatus("commander", !!finalVerdict)}
-                            confidence={finalVerdict?.confidence_overall as number | undefined}
+                            confidence={finalVerdict?.confidence as number | undefined}
                             description="多维向量收敛中心 · 最终判决生成"
                         />
                         <div className="flex-1 min-h-[120px] overflow-hidden flex flex-col">
@@ -363,6 +386,13 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             </AnimatePresence>
                         </div>
                     </motion.div>
+                </div>
+            )}
+
+            {/* Timeline View */}
+            {viewMode === "timeline" && (
+                <div className="flex-1 overflow-auto">
+                    <EvidenceTimeline logs={logs as any} isComplete={isComplete} />
                 </div>
             )}
 

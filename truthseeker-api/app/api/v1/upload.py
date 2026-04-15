@@ -8,6 +8,7 @@ from pathlib import Path
 import filetype
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from storage3.types import FileOptions
 
 from app.utils.supabase_client import supabase
 
@@ -41,10 +42,10 @@ def _magic_mime(header: bytes) -> str | None:
 
 
 def _sanitize_folder(name: str) -> str:
-    """清理 user_id 防止路径穿越"""
+    """清理 user_id 防止路径穿越，未认证用户使用 anon 以匹配 RLS 策略"""
     clean = re.sub(r"[^a-zA-Z0-9_-]", "", name)
-    if not clean or len(clean) > 64:
-        return "anonymous"
+    if not clean or len(clean) > 64 or clean == "anonymous":
+        return "anon"
     return clean
 
 
@@ -141,7 +142,7 @@ async def upload_file(
         storage_path = f"{folder}/{os.path.basename(tmp_path)}"
         with open(tmp_path, "rb") as f:
             supabase.storage.from_("media").upload(
-                storage_path, f, content_type=real_mime,
+                storage_path, f, file_options=FileOptions(content_type=real_mime),
             )
 
         # 5. 生成签名 URL（有效 24 小时，U-5 修复）

@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional, AsyncGenerator
+from pydantic import BaseModel, Field
+from typing import Optional, AsyncGenerator, Literal
 
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
@@ -24,7 +24,7 @@ HEARTBEAT_INTERVAL = 20  # 秒
 class DetectRequest(BaseModel):
     """API 请求验证模型（非 LangGraph State）"""
     task_id: Optional[str] = None
-    input_type: str = "video"
+    input_type: Literal["video", "audio", "image", "text"] = "video"
     file_url: Optional[str] = None
     file_urls: Optional[dict] = None
     user_id: Optional[str] = "anonymous"
@@ -75,6 +75,9 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
         "logs": [],
         "is_converged": False,
         "termination_reason": None,
+        "degradation_status": {},
+        "expert_messages": [],
+        "timeline_events": [],
     }
 
     # 启动心跳任务
@@ -118,6 +121,9 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
                     if updates.get("challenger_feedback"):
                         await queue.put(_sse({"type": "challenger_feedback", "feedback": updates["challenger_feedback"]}))
 
+                    if updates.get("timeline_events"):
+                        await queue.put(_sse({"type": "timeline_update", "events": updates["timeline_events"]}))
+
                     if updates.get("agent_weights"):
                         await queue.put(_sse({"type": "weights_update", "weights": updates["agent_weights"]}))
 
@@ -157,7 +163,7 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
         # 等待任务清理
         await asyncio.gather(graph_task, hb_task, return_exceptions=True)
 
-    # 更新任务状态到 Supabase
+    # 更新任务状态到 Supabase（在 yield 之前，确保客户端断开后仍能执行）
     if final_verdict_data:
         try:
             supabase.table("tasks").update({

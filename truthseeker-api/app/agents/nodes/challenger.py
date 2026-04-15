@@ -1,21 +1,27 @@
-"""Challenger Agent - 逻辑质询Agent，负责审视证据充分性和逻辑矛盾"""
+"""Challenger Agent - 逻辑质询Agent，负责审视证据充分性和逻辑矛盾 + LLM 交叉验证"""
 import asyncio
 from datetime import datetime, timezone
+
 from app.agents.state import TruthSeekerState, AgentLog
+from app.agents.tools.llm_client import challenger_cross_validate
+from app.utils.supabase_client import supabase
 
 
 async def challenger_node(state: TruthSeekerState) -> dict:
     """
     逻辑质询Agent Agent：
-    1. 审查 Forensics + OSINT 证据的一致性
+    1. 审查 Forensics + OSINT 证据的一致性（规则检查 + LLM 推理）
     2. 检查置信度是否达到阈值
     3. 发现矛盾点时触发质疑，要求补充证据
     4. 判定是否需要打回重审或提交 Commander
     """
+    task_id = state["task_id"]
     round_num = state.get("current_round", 1)
     forensics = state.get("forensics_result") or {}
     osint = state.get("osint_result") or {}
     evidence_board = state.get("evidence_board", [])
+    existing_challenges = state.get("challenges", [])
+    expert_messages = state.get("expert_messages", [])
 
     logs: list[AgentLog] = []
     challenges: list[dict] = []
@@ -34,7 +40,26 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     log("thinking", f"⚖️  逻辑质询Agent Agent 启动（第 {round_num} 轮）...")
     log("thinking", f"📋 接收到 {len(evidence_board)} 条证据，开始交叉验证...")
 
-    await asyncio.sleep(0.3)
+    # 如果有专家消息，体现出来
+    if expert_messages:
+        log("thinking", f"💬 检测到 {len(expert_messages)} 条专家意见，将纳入交叉验证")
+
+    # 从 Supabase 读取新的专家会诊消息（除了 state 中已有的）
+    try:
+        known_ids = {m.get("id") for m in expert_messages if m.get("id")}
+        resp = supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
+        new_expert_messages = [
+            m for m in (resp.data or [])
+            if m.get("id") not in known_ids
+        ]
+        if new_expert_messages:
+            all_expert = expert_messages + new_expert_messages
+            log("thinking", f"💬 从数据库读取到 {len(new_expert_messages)} 条新专家意见")
+            for m in new_expert_messages[:3]:
+                log("finding", f"💬 专家意见 [{m.get('role', 'expert')}]: {m.get('message', '')[:80]}...")
+            expert_messages = all_expert
+    except Exception as e:
+        log("action", f"⚠️  读取专家意见失败: {e}")
 
     # 提取评分
     forensics_conf = forensics.get("confidence", 0.5)
@@ -45,9 +70,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
 
     log("action", f"🔬 法医置信度: {forensics_conf:.1%} | OSINT 威胁: {osint_threat_score:.1%}")
 
-    await asyncio.sleep(0.4)
-
-    # 质疑逻辑
+    # === 规则检查（快速、确定性） ===
     issues_found = []
     requires_more_evidence = False
     target_agent = None
@@ -65,7 +88,6 @@ async def challenger_node(state: TruthSeekerState) -> dict:
 
     # 检查 2: Forensics 与 OSINT 结论明显矛盾
     if forensics_is_deepfake and osint_threat_score < 0.2:
-        # 法医说是伪造，但 OSINT 没有发现威胁 - 可能是假阳性
         issue = {
             "type": "contradiction",
             "agents": ["forensics", "osint"],
@@ -76,7 +98,6 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         log("challenge", "⚡ 发现矛盾：法医认定伪造，但 OSINT 情报未见异常，需进一步核查")
 
     elif not forensics_is_deepfake and osint_threat_score > 0.7:
-        # 法医说是真实，但 OSINT 发现高威胁 - 需要核查
         issue = {
             "type": "contradiction",
             "agents": ["forensics", "osint"],
@@ -98,7 +119,32 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         issues_found.append(issue)
         log("challenge", "📊 证据维度有限，建议扩充分析维度以提升判断可靠性")
 
-    await asyncio.sleep(0.3)
+    # === LLM 深度交叉验证 ===
+    llm_cross_validation = ""
+    if forensics and osint:
+        log("action", "🧠 正在调用大模型进行深度交叉验证...")
+        try:
+            llm_cross_validation = await challenger_cross_validate(
+                forensics, osint, existing_challenges
+            )
+            if llm_cross_validation.startswith("[LLM降级]"):
+                log("action", "⚠️  LLM 交叉验证不可用，仅依赖规则检查")
+            else:
+                log("finding", f"🧠 LLM 交叉验证完成，生成 {len(llm_cross_validation)} 字分析报告")
+                # LLM 可能发现额外的矛盾或异常
+                # 检查是否 LLM 提到了新的矛盾点
+                if any(kw in llm_cross_validation for kw in ["矛盾", "不一致", "冲突", "异常"]):
+                    if not any(i["type"] == "llm_contradiction" for i in issues_found):
+                        issues_found.append({
+                            "type": "llm_contradiction",
+                            "agent": "challenger",
+                            "description": "LLM 交叉验证发现潜在矛盾或不一致，需要关注",
+                            "severity": "medium",
+                        })
+                        log("finding", "🧠 LLM 发现了规则检查未覆盖的潜在矛盾")
+        except Exception as e:
+            llm_cross_validation = f"[LLM降级] 交叉验证异常: {e}"
+            log("action", f"⚠️  LLM 交叉验证异常: {e}")
 
     # 决定是否打回
     high_severity_issues = [i for i in issues_found if i["severity"] == "high"]
@@ -133,6 +179,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "high_severity_count": len(high_severity_issues),
         "medium_severity_count": len(medium_severity_issues),
         "quality_score": max(0.0, 1.0 - len(high_severity_issues) * 0.3 - len(medium_severity_issues) * 0.15),
+        "llm_cross_validation": llm_cross_validation,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -143,6 +190,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "challenger_feedback": challenger_feedback,
         "challenges": challenges,
         "logs": logs,
+        "expert_messages": expert_messages,
         # 轮次加 1
         "current_round": round_num + (1 if requires_more_evidence else 0),
     }
