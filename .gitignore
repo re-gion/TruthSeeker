@@ -296,6 +296,9 @@ truthseeker-web/node_modules/
 truthseeker-web/.next/
 truthseeker-web/out/
 truthseeker-web/build/
+!truthseeker-web/lib/
+!truthseeker-web/lib/dashboard/
+!truthseeker-web/lib/dashboard/**
 
 # 后端项目的虚拟环境和缓存
 truthseeker-api/venv/
