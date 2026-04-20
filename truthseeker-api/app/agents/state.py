@@ -3,6 +3,12 @@ from typing import TypedDict, Annotated, Optional
 from operator import add
 
 
+def merge_dicts(left: dict | None, right: dict | None) -> dict:
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class EvidenceItem(TypedDict):
     type: str       # 'visual' | 'audio' | 'text' | 'osint'
     source: str     # 哪个 Agent/Tool 产生
@@ -24,8 +30,10 @@ class TruthSeekerState(TypedDict):
     task_id: str
     user_id: str
     input_files: dict           # {modality: storage_path}
-    input_type: str             # 'video' | 'audio' | 'image' | 'text'
+    input_type: str             # 'video' | 'audio' | 'image' | 'text' | 'mixed'
     priority_focus: str         # 'visual' | 'audio' | 'text' | 'balanced'
+    case_prompt: str            # 用户输入的全局检测目标/案件背景/重点风险
+    evidence_files: list[dict]  # 标准化 UploadedEvidenceFile 列表
 
     # 辩论状态
     current_round: int
@@ -63,10 +71,11 @@ class TruthSeekerState(TypedDict):
     # --- Phase 1+ 新增字段 ---
 
     # 降级状态追踪
-    degradation_status: dict    # {"reality_defender": "ok"|"degraded"|"failed", ...}
+    degradation_status: Annotated[dict, merge_dicts]    # {"reality_defender": "ok"|"degraded"|"failed", ...}
 
     # 专家会诊消息
     expert_messages: list[dict]  # [{role, content, timestamp}, ...]
+    consultation_resume: Optional[dict]
 
     # 时间轴关键事件（仅记录重要节点，非全量 log）
     timeline_events: Annotated[list[dict], add]  # [{round, agent, event_type, summary}, ...]

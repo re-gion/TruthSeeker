@@ -78,6 +78,16 @@ function getTempUserId() {
     return userId
 }
 
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+    } catch {
+        return null
+    }
+}
+
 export function ExpertPanel({
     taskId,
     inviteToken,
@@ -124,7 +134,46 @@ export function ExpertPanel({
         }
     }, [broadcastChannel])
 
-    const handleSubmit = (e: React.FormEvent) => {
+    useEffect(() => {
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        let cancelled = false
+
+        async function loadMessages() {
+            try {
+                const authToken = await getAuthToken()
+                const url = new URL(`${apiBase}/api/v1/consultation/${taskId}/messages`)
+                if (inviteToken) url.searchParams.set("invite_token", inviteToken)
+                const headers: Record<string, string> = {}
+                if (authToken) headers.Authorization = `Bearer ${authToken}`
+                const response = await fetch(url.toString(), { headers })
+                if (!response.ok) return
+                const data = await response.json()
+                if (cancelled || !Array.isArray(data.messages)) return
+
+                const history = data.messages.map((item: Record<string, unknown>) => {
+                    const rawRole = item.role
+                    const role: UserRole = rawRole === "host" || rawRole === "viewer" || rawRole === "expert" ? rawRole : "expert"
+                    return {
+                        id: typeof item.id === "string" ? item.id : Math.random().toString(36).substring(7),
+                        authorId: typeof item.expert_name === "string" ? item.expert_name : "expert",
+                        role,
+                        text: typeof item.message === "string" ? item.message : "",
+                        timestamp: typeof item.created_at === "string" ? item.created_at : new Date().toISOString(),
+                    }
+                })
+                setComments(history)
+            } catch {
+                // 历史消息加载失败不影响实时会诊输入。
+            }
+        }
+
+        void loadMessages()
+        return () => {
+            cancelled = true
+        }
+    }, [inviteToken, taskId])
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!inputValue.trim() || !broadcastChannel) return
 
@@ -148,9 +197,12 @@ export function ExpertPanel({
 
         // Inject into backend agent state via consultation API
         const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        const authToken = await getAuthToken()
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        if (authToken) headers.Authorization = `Bearer ${authToken}`
         fetch(`${apiBase}/api/v1/consultation/${taskId}/inject`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({
                 message: newComment.text,
                 role: newComment.role,

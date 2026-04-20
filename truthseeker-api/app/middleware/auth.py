@@ -11,25 +11,24 @@ logger = logging.getLogger(__name__)
 # 精确匹配的公开路径（A-1 修复：避免 startswith 前缀绕过）
 PUBLIC_PATHS: frozenset[str] = frozenset({
     "/health",
-    "/api/v1/detect/stream",
-    "/api/v1/tasks",
-    "/api/v1/upload/",
 })
 
 # 需要前缀匹配的公开路径（必须以 / 结尾）
-PUBLIC_PREFIXES: frozenset[str] = frozenset({
-    "/api/v1/upload/",
-})
+PUBLIC_PREFIXES: frozenset[str] = frozenset()
 
 # GET-only 公开前缀（POST/PUT/DELETE 仍需认证）
 PUBLIC_GET_PREFIXES: frozenset[str] = frozenset({
     "/api/v1/share/",
     "/api/v1/consultation/invite/",
+    "/api/v1/dashboard/",
 })
 
 PUBLIC_POST_PATH_SUFFIXES: frozenset[str] = frozenset({
     "/inject",
-    "/invite",
+})
+
+PUBLIC_GET_CONSULTATION_SUFFIXES: frozenset[str] = frozenset({
+    "/messages",
 })
 
 
@@ -47,6 +46,10 @@ def _is_public(path: str, method: str = "GET") -> bool:
                 return True
     if method.upper() == "POST":
         for suffix in PUBLIC_POST_PATH_SUFFIXES:
+            if path.startswith("/api/v1/consultation/") and path.endswith(suffix):
+                return True
+    if method.upper() == "GET":
+        for suffix in PUBLIC_GET_CONSULTATION_SUFFIXES:
             if path.startswith("/api/v1/consultation/") and path.endswith(suffix):
                 return True
     return False

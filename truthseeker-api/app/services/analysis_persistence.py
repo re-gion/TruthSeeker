@@ -5,7 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from app.utils.supabase_client import supabase
+from app.services.audit_log import record_audit_event
+from app.services.report_integrity import build_report_hash
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def build_report_row(
     existing_share_token: str | None = None,
 ) -> dict[str, Any]:
     verdict = normalize_final_verdict(final_verdict)
-    return {
+    row = {
         "task_id": task_id,
         "verdict": verdict.get("verdict"),
         "confidence_overall": verdict.get("confidence_overall"),
@@ -55,6 +56,8 @@ def build_report_row(
         "share_token": existing_share_token,
         "verdict_payload": verdict,
     }
+    row["report_hash"] = build_report_hash(row)
+    return row
 
 
 def build_agent_log_rows(task_id: str, node_name: str, updates: dict[str, Any]) -> list[dict[str, Any]]:
@@ -114,7 +117,11 @@ def build_analysis_state_row(
 class AnalysisPersistenceService:
     """Handles best-effort persistence of detection progress."""
 
-    def __init__(self, client=supabase):
+    def __init__(self, client=None):
+        if client is None:
+            from app.utils.supabase_client import supabase
+
+            client = supabase
         self.client = client
 
     def mark_task_started(
@@ -139,6 +146,39 @@ class AnalysisPersistenceService:
             payload["metadata"] = metadata
         self._safe_update("tasks", payload, task_id)
 
+    def mark_task_waiting_consultation(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        now = utc_now_iso()
+        payload: dict[str, Any] = {
+            "status": "waiting_consultation",
+            "updated_at": now,
+            "metadata": {
+                **(metadata or {}),
+                "waiting_consultation": True,
+                "consultation_reason": reason,
+            },
+        }
+        self._safe_update("tasks", payload, task_id)
+
+    def mark_task_failed(self, task_id: str, *, error_summary: str) -> None:
+        now = utc_now_iso()
+        payload = {
+            "status": "failed",
+            "result": {
+                "verdict": "failed",
+                "analysis_summary": error_summary,
+                "error_summary": error_summary,
+            },
+            "completed_at": now,
+            "updated_at": now,
+        }
+        self._safe_update("tasks", payload, task_id)
+
     def persist_update(self, task_id: str, node_name: str, updates: dict[str, Any]) -> None:
         log_rows = build_agent_log_rows(task_id, node_name, updates)
         if log_rows:
@@ -155,6 +195,12 @@ class AnalysisPersistenceService:
         existing_token = self._fetch_share_token(task_id)
         report_row = build_report_row(task_id, final_verdict, existing_share_token=existing_token)
         self._safe_upsert("reports", report_row, on_conflict="task_id")
+        record_audit_event(
+            action="report_generated",
+            task_id=task_id,
+            metadata={"report_hash": report_row.get("report_hash"), "verdict": report_row.get("verdict")},
+            client=self.client,
+        )
 
     def mark_task_completed(self, task_id: str, final_verdict: dict[str, Any] | None) -> None:
         normalized = normalize_final_verdict(final_verdict)

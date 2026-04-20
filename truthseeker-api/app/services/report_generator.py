@@ -95,6 +95,8 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append(f"| 状态 | {task.get('status', 'N/A')} |")
     lines.append(f"| 创建时间 | {_fmt_time(task.get('created_at'))} |")
     lines.append(f"| 更新时间 | {_fmt_time(task.get('updated_at'))} |")
+    if report and report.get("report_hash"):
+        lines.append(f"| 报告 Hash | `{report.get('report_hash')}` |")
     lines.append("")
 
     # ---- 最终裁决 ----

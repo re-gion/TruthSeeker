@@ -231,10 +231,11 @@ export function downloadMarkdownReport(content: string, filename: string) {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 
 /** 从后端 API 下载 PDF 报告 */
-export async function downloadPdfReport(taskId: string) {
+export async function downloadPdfReport(taskId: string, authToken?: string | null) {
     try {
         const resp = await fetch(`${API_BASE}/api/v1/report/${taskId}/pdf`, {
             method: "GET",
+            headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
         })
         if (!resp.ok) throw new Error(`PDF 生成失败: ${resp.status}`)
         const blob = await resp.blob()

@@ -12,6 +12,7 @@ interface ReportData {
         confidence_overall: number | null
         summary: string | null
         generated_at: string | null
+        report_hash?: string | null
     }
     task: {
         id: string | null
@@ -138,6 +139,7 @@ export default function SharedReportPage() {
                                 生成时间: {new Date(data.report.generated_at).toLocaleString("zh-CN")}
                             </span>
                         )}
+                        {data.report.report_hash && <span>报告 Hash: {data.report.report_hash}</span>}
                     </div>
                 </motion.div>
 

@@ -2,11 +2,14 @@
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
+import httpx
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.fallback import fallback_osint_analysis, minimal_osint_result, shared_degradation
 from app.agents.tools.threat_intel import analyze_urls, check_domain_reputation, scan_file_hash, extract_media_metadata
 from app.agents.tools.llm_client import osint_interpret
 from app.agents.tools.text_detection import extract_urls_from_text
+
+TEXT_MAX_CHARS = 10000
 
 
 async def osint_node(state: TruthSeekerState) -> dict:
@@ -20,6 +23,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
     task_id = state["task_id"]
     input_type = state.get("input_type", "video")
     input_files = state.get("input_files", {})
+    case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
 
     logs: list[AgentLog] = []
@@ -38,15 +42,56 @@ async def osint_node(state: TruthSeekerState) -> dict:
 
     log("thinking", f"🕵️  情报溯源Agent Agent 启动，任务 ID: {task_id}")
     log("thinking", "🌐 正在扫描输入内容，提取可疑 URL 和域名特征...")
+    if case_prompt:
+        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
 
     await asyncio.sleep(0.3)
 
-    # 提取目标 URL
-    primary_url = input_files.get("primary", input_files.get("url", ""))
-    urls_to_check = [u for u in [primary_url] if u and not u.startswith("mock://")]
+    osint_files = input_files.get("osint") or []
+    text_files = [item for item in osint_files if item.get("modality") == "text"]
+    media_files = [item for item in osint_files if item.get("modality") in ("video", "audio", "image")]
+
+    primary_osint = text_files[0] if text_files else (media_files[0] if media_files else None)
+    media_primary = media_files[0] if media_files else None
+    if primary_osint:
+        input_type = primary_osint.get("modality", input_type)
+
+    # 提取目标 URL。文本文件只进入 OSINT，在这里读取内容并抽取 URL/域名线索。
+    primary_url = (
+        (primary_osint.get("file_url") or primary_osint.get("storage_path"))
+        if primary_osint
+        else input_files.get("primary", input_files.get("url", ""))
+    )
+    urls_to_check = [] if text_files else [u for u in [primary_url] if u and not u.startswith("mock://")]
+    text_sources_analyzed = 0
+
+    if text_files:
+        text_urls: list[str] = []
+        for text_file in text_files:
+            text_url = text_file.get("file_url") or text_file.get("storage_path")
+            text_content = ""
+            if text_url and not str(text_url).startswith("mock://"):
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.get(str(text_url), follow_redirects=True)
+                        resp.raise_for_status()
+                        text_content = resp.text[:TEXT_MAX_CHARS]
+                        text_sources_analyzed += 1
+                except Exception as exc:
+                    log("action", f"⚠️  文本检材读取失败: {text_file.get('name', 'unknown')} ({type(exc).__name__})")
+            if text_content:
+                extracted_urls = extract_urls_from_text(text_content)
+                if extracted_urls:
+                    text_urls.extend(extracted_urls)
+
+        if text_urls:
+            urls_to_check = list(dict.fromkeys(text_urls))
+            log("finding", f"🔗 从文本检材中提取到 {len(urls_to_check)} 个 URL/域名线索")
+        else:
+            log("finding", "📋 文本检材中未发现 URL，OSINT 将结合元数据和案件提示词进行低风险溯源评估")
 
     # 文本输入类型：从文本内容中提取 URL
-    if input_type == "text" and not urls_to_check:
+    if input_type == "text" and not urls_to_check and not text_files:
         log("action", "📝 文本输入模式，尝试从文本中提取 URL 进行情报分析...")
         text_content = ""
         # 尝试获取文本内容
@@ -108,16 +153,21 @@ async def osint_node(state: TruthSeekerState) -> dict:
             log("finding", f"⚠️  中等风险，部分安全厂商标记可疑: {threat_score:.1%}")
         else:
             log("finding", f"✅ URL 情报检查通过，威胁分数: {threat_score:.1%}")
-    else:
+    elif media_primary or not text_files:
         # 对媒体文件做元数据分析与文件哈希扫描
         log("action", "📋 无外部 URL，转为分析媒体元数据与文件哈希威胁情报...")
         await asyncio.sleep(0.4)
 
-        file_url = primary_url or "mock://unknown"
+        file_url = (
+            media_primary.get("file_url") or media_primary.get("storage_path")
+            if media_primary
+            else (primary_url or "mock://unknown")
+        )
+        media_input_type = media_primary.get("modality", input_type) if media_primary else input_type
 
         # 并发调用文件哈希扫描和元数据提取
         vt_scan_task = asyncio.create_task(scan_file_hash(file_url))
-        metadata_task = asyncio.create_task(extract_media_metadata(file_url, input_type))
+        metadata_task = asyncio.create_task(extract_media_metadata(file_url, media_input_type))
 
         vt_scan_result, metadata_result = await asyncio.gather(
             vt_scan_task, metadata_task, return_exceptions=True
@@ -188,7 +238,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         domain_info = {
             "source": "media_metadata",
             "file_hash": vt_scan_result.get("hash", ""),
-            "input_type": input_type,
+            "input_type": media_input_type,
             "format": metadata_result.get("format", "unknown"),
             "dimensions": metadata_result.get("dimensions"),
             "has_exif": metadata_result.get("has_exif", False),
@@ -204,6 +254,16 @@ async def osint_node(state: TruthSeekerState) -> dict:
             log("finding", f"🔍 媒体分析发现轻微异常，威胁评分: {threat_score:.1%}")
         else:
             log("finding", f"✅ 媒体元数据检查通过，威胁评分: {threat_score:.1%}")
+    else:
+        log("action", "📋 文本检材未提取到外部 IOC，记录为低威胁情报项，等待质询与指挥综合判断")
+        threat_score = 0.05 if text_sources_analyzed else 0.1
+        threat_indicators = ["文本检材未提取到 URL/域名/IP 等外部 IOC"]
+        domain_info = {
+            "source": "text_file",
+            "text_sources_analyzed": text_sources_analyzed,
+            "input_type": "text",
+        }
+        virustotal_result = {"scan_available": False, "reason": "no_ioc_extracted"}
 
     # 构建证据条目
     evidence_item: EvidenceItem = {
@@ -220,6 +280,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             "domain_info": domain_info,
             "virustotal": virustotal_result,
             "urls_analyzed": len(urls_to_check),
+            "text_sources_analyzed": text_sources_analyzed,
         },
     }
     evidence.append(evidence_item)
@@ -239,6 +300,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "threat_indicators": threat_indicators,
         "domain_info": domain_info,
         "virustotal_summary": virustotal_result,
+        "text_sources_analyzed": text_sources_analyzed,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -248,7 +310,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
     llm_analysis = ""
     log("action", "🧠 正在调用大模型进行深度情报推理...")
     try:
-        llm_analysis = await osint_interpret(osint_result, input_type)
+        llm_analysis = await osint_interpret(osint_result, input_type, case_prompt)
         if llm_analysis.startswith("[LLM降级]"):
             log("action", "⚠️  LLM 情报推理不可用，使用降级模式")
         else:

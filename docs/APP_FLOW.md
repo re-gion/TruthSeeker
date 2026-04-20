@@ -1,429 +1,109 @@
-# TruthSeeker -系统数据流转与多智能体状态机拓扑
+# TruthSeeker 应用流程
 
-##1.全局状态定义 (Global State)
+> 更新时间：2026-04-20
 
-```typescript
-interface InvestigationState {
- //任务元数据
- caseId: string;
- createdAt: DateTime;
- priorityModality: 'video' | 'audio' | 'image' | 'text' | 'mixed';
- status: 'pending' | 'analyzing' | 'deliberating' | 'converged' | 'adjudicated' | 'error';
+## 1. 输入边界
 
- //原始输入
- inputArtifacts: {
- video?: { url: string; metadata: VideoMeta };
- audio?: { url: string; metadata: AudioMeta };
- image?: { url: string; metadata: ImageMeta };
- text?: { content: string; extractedUrls: string[] };
- };
+用户一次最多上传 5 个检材文件，单文件沿用 500MB 上限。支持类型：
 
- //电子证据板 (Evidence Board) -各Agent钉上的证据
- evidenceBoard: {
- visualForensics: VisualEvidence[];
- audioForensics: AudioEvidence[];
- osintIntelligence: OsintEvidence[];
- crossValidation: CrossCheckEvidence[];
- };
+- 视频：`video/mp4`、`video/webm`
+- 音频：`audio/mpeg`、`audio/wav`
+- 图片：`image/jpeg`、`image/png`、`image/webp`
+- 文本文件：`text/plain`
 
- // Agent置信度历史 (用于收敛判定)
- confidenceHistory: {
- round: number;
- timestamp: DateTime;
- forensicsAgent: { score: number; reasoning: string };
- osintAgent: { score: number; reasoning: string };
- inquisitorAgent: { challenges: Challenge[]; satisfaction: number };
- }[];
+上传界面的文本框不是待检测文本输入区，而是“检测提示词”：可填写简要案件描述、来源背景、分析提示、重点风险点。该提示词会写入 `case_prompt`，并传给视听鉴伪、情报溯源、逻辑质询和研判指挥四类 Agent。
 
- //当前辩论轮次
- currentRound: number;
- maxRounds: number;
- convergenceThreshold: number; //默认0.05 (5%变化视为收敛)
+文本检材中的 URL、域名、IP、可疑正文等应保存为 `.txt` 文件后在多媒体上传区上传，由情报溯源 Agent 读取和分析。
 
- //专家会诊介入记录
- expertInterventions: ExpertIntervention[];
+## 2. 任务创建
 
- //最终裁决
- finalVerdict?: {
- classification: 'authentic' | 'suspicious' | 'fabricated' | 'inconclusive';
- confidence: number;
- summary: string;
- recommendations: string[];
- chainOfEvidence: EvidenceChainItem[];
- };
-}
+前端流程：
+
+1. 用户选择 1 到 5 个文件。
+2. 前端逐个调用 `POST /api/v1/upload/` 上传文件。
+3. 后端返回标准文件对象：`id`、`name`、`mime_type`、`size_bytes`、`modality`、`storage_path`、可选 `file_url`。
+4. 前端调用 `POST /api/v1/tasks` 创建任务。
+5. 检测页只携带 `taskId`，不再通过 URL 传 signed file URL。
+
+任务表约定：
+
+- `description` 保存 `case_prompt`。
+- `metadata.files` 保存标准化文件清单。
+- `storage_paths.files` 保存文件名、模态和 storage path，不依赖前端 URL 传参启动检测。
+- `input_type` 由后端根据文件模态推导，混合模态写为 `mixed`。
+- 服务端只信任 JWT 中的 `request.state.user_id`，忽略客户端传入的 `user_id`。
+
+## 3. 检测状态机
+
+当前检测拓扑为：
+
+```mermaid
+flowchart TD
+  U["用户创建任务"] --> S["Detect Stream(taskId)"]
+  S --> F["视听鉴伪 Agent"]
+  S --> O["情报溯源 Agent"]
+  F --> C["逻辑质询 Agent"]
+  O --> C
+  C -->|证据可收敛| M["研判指挥 Agent"]
+  C -->|需要复核| F
+  C -->|需要溯源复核| O
+  C -->|高冲突| W["waiting_consultation"]
+  W -->|主持人继续研判| C
+  M --> R["报告生成、hash、审计"]
 ```
 
-##2. LangGraph状态机拓扑图
+关键规则：
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ TruthSeeker Multi-Agent DAG │
-└─────────────────────────────────────────────────────────────────────────────┘
+- Forensics 与 OSINT 每轮并行执行。
+- 视频、音频、图片进入视听鉴伪 Agent；文本文件只进入情报溯源 Agent。
+- 逻辑质询 Agent 在前两个专家产出后审查冲突、置信度和证据充分性。
+- 高冲突时触发 LangGraph in-process interrupt/checkpointer 暂停，任务状态写为 `waiting_consultation`。
+- 主持人点击“继续研判”后，前端用同一个 `taskId` 发送 `resume=true`，后端用同一 `thread_id` 恢复。
+- 进程内恢复只保证后端进程未重启时有效。后端重启后需要重新启动检测流程。
 
- ┌──────────────┐
- │ START │
- │ (用户提交) │
- └──────┬───────┘
- │
- ▼
- ┌────────────────────────────────┐
- │ Input Preprocessor │
- │ •文件类型识别 │
- │ •元数据提取 │
- │ • URL/域名解析 │
- └──────────────┬─────────────────┘
- │
- ┌────────────────────┼────────────────────┐
- │ │ │
- ▼ ▼ ▼
- ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
- │ 🎬 Forensics │ │ 🔍 OSINT │ │ ⚖️ Inquisitor │
- │ Agent │ │ Agent │ │ (Observer) │
- │ │ │ │ │ │
- │ •视频帧分析 │ │ •威胁情报查询 │ │ •审视证据板 │
- │ •音频频谱检测 │ │ •域名溯源 │ │ •提出质询 │
- │ •图像篡改定位 │ │ •文本情感分析 │ │ •挑战置信度 │
- └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
- │ │ │
- │ ┌───────────────┴────────────────────┘
- │ │ │
- ▼ ▼ ▼
- ┌─────────────────────────────────────────────────────────┐
- │ EVIDENCE BOARD │
- │ ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐ │
- │ │视觉证据 │ │音频证据 │ │溯源情报 │ │
- │ │ •帧级异常 │ │ •频谱异常 │ │ •域名信誉 │ │
- │ │ •边缘融合 │ │ •噪声模式 │ │ • IP归属 │ │
- │ │ •光影不一致│ │ •压缩伪影 │ │ •关联图谱 │ │
- │ └─────────────┘ └─────────────┘ └─────────────────┘ │
- └────────────────────────┬────────────────────────────────┘
- │
- ▼
- ┌──────────────────────────────┐
- │ Convergence Check │
- │收敛判定节点 │
- │ •轮次 >= maxRounds? │
- │ •置信度变化 < threshold? │
- │ •质询官满意度达标? │
- └──────────────┬───────────────┘
- │
- ┌──────────────┴───────────────┐
- │ │
- ▼ NO ▼ YES
- ┌─────────────────────┐ ┌─────────────────────┐
- │ Challenge Loop │ │ 👨‍⚖️ Commander │
- │ (返回质询流程) │ │ Agent │
- │ │ │ │
- │质询官生成Challenge →│ │ •综合权重计算 │
- │触发API重检或深度分析 │ │ •证据链验证 │
- │更新置信度历史 │ │ •生成最终报告 │
- └─────────────────────┘ └──────────┬──────────┘
- │
- ▼
- ┌─────────────────────┐
- │ END │
- │ (报告导出/存档) │
- └─────────────────────┘
-```
+## 4. SSE 事件
 
-##3.条件边 (Conditional Edges)详解
+检测流使用 `POST /api/v1/detect/stream` 返回 SSE。核心事件：
 
-###3.1从 Evidence Board到 Convergence Check
+- `start`
+- `node_start`
+- `agent_log`
+- `evidence_update`
+- `forensics_result`
+- `osint_result`
+- `challenger_feedback`
+- `consultation_required`
+- `consultation_resumed`
+- `task_failed`
+- `final_verdict`
+- `complete`
 
-```python
-#伪代码表示条件边逻辑
-def should_converge(state: InvestigationState) -> str:
- """判定是否满足收敛条件，终止辩论"""
+前端收到 `consultation_required` 后进入等待会诊状态；收到 `consultation_resumed` 后恢复推演；收到 `task_failed` 或 `error` 后展示失败状态。
 
- #条件1:达到最大轮次
- if state.currentRound >= state.maxRounds:
- return "force_adjudicate"
+## 5. 会诊协作
 
- #条件2:专家强制介入终止
- if has_expert_forced_stop(state.expertInterventions):
- return "expert_adjudicate"
+- 主持人创建邀请必须登录。
+- 外部专家凭邀请令牌访问会诊页和提交意见。
+- 会诊历史保存在 `consultation_messages`，面板打开时会加载历史消息。
+- 专家意见写入后端后，Challenger 和 Commander 会在恢复后的研判中读取。
 
- #条件3:置信度收敛判定
- if len(state.confidenceHistory) >=2:
- prev = state.confidenceHistory[-2]
- curr = state.confidenceHistory[-1]
+## 6. 报告与可信输出
 
- forensics_delta = abs(curr.forensicsAgent.score - prev.forensicsAgent.score)
- osint_delta = abs(curr.osintAgent.score - prev.osintAgent.score)
+检测完成后，Commander 生成最终裁决，后端写入 `reports`：
 
- #连续两轮变化都小于阈值
- if forensics_delta < state.convergenceThreshold and \
- osint_delta < state.convergenceThreshold and \
- curr.inquisitorAgent.satisfaction >0.8:
- return "converged"
+- `verdict`
+- `confidence_overall`
+- `summary`
+- `key_evidence`
+- `recommendations`
+- `verdict_payload`
+- `report_hash`
 
- #继续辩论
- return "continue_deliberation"
-```
+`report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 
-###3.2从 Convergence Check的分支
+审计日志写入 `audit_logs`，覆盖 upload、task_create、detect_start、detect_failed、detect_completed、report_generated、report_downloaded、share_created、share_viewed、consultation_message、consultation_resume。
 
-|分支结果 |目标节点 |说明 |
-|---------|---------|------|
-| `force_adjudicate` | Commander Agent |强制进入裁决（达到最大轮次） |
-| `expert_adjudicate` | Commander Agent |专家要求立即裁决 |
-| `converged` | Commander Agent |自然收敛，证据链稳定 |
-| `continue_deliberation` | Inquisitor Agent |继续质询循环 |
+## 7. 暂不实现
 
-##4.质询循环详细流程
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Challenge Loop Detail │
-└─────────────────────────────────────────────────────────────────┘
-
-Inquisitor Agent审视 Evidence Board:
-│
-├─→发现置信度不足的证据点
-│ │
-│ ├─→生成 Challenge对象:
-│ │ {
-│ │ challengeId: string,
-│ │ targetAgent: 'forensics' | 'osint',
-│ │ targetEvidenceId: string,
-│ │ question: "当前面部边缘融合概率72%，是否可能是微信压缩导致的伪影？",
-│ │ requiredAction: 'reinspect_with_higher_precision' | 'cross_reference_alternative_api',
-│ │ priority: 'high' | 'medium' | 'low'
-│ │ }
-│ │
-│ └─→将 Challenge广播到 Realtime Channel
-│ │
-│ ├─→ Frontend:在质询面板高亮显示
-│ │
-│ └─→ Target Agent接收 Challenge:
-│ │
-│ ├─→调用更高精度API /备选模型
-│ │
-│ ├─→生成新证据覆盖/补充原证据
-│ │
-│ └─→更新 Confidence Score和 Reasoning
-│
-└─→新一轮 Evidence Board更新完成
- │
- └─→触发下一轮 Convergence Check
-```
-
-##5. Supabase Realtime数据流
-
-###5.1 Broadcast Channels
-
-```typescript
-// Channel1: Agent状态流
-const agentChannel = supabase.channel('agent-updates')
- .on('broadcast', { event: 'forensics_progress' }, (payload) => {
- //视听鉴伪AgentAgent进度更新
- })
- .on('broadcast', { event: 'osint_progress' }, (payload) => {
- //情报溯源AgentAgent进度更新
- })
- .on('broadcast', { event: 'challenge_issued' }, (payload) => {
- //质询官发起质询
- })
- .on('broadcast', { event: 'evidence_added' }, (payload) => {
- //新证据钉上证据板
- })
- .subscribe();
-
-// Channel2:专家会诊协作
-const expertChannel = supabase.channel(`case-${caseId}-expert`)
- .on('broadcast', { event: 'expert_joined' }, (payload) => {
- //专家加入会诊
- })
- .on('broadcast', { event: 'expert_comment' }, (payload) => {
- //专家发表评论
- })
- .on('broadcast', { event: 'expert_intervention' }, (payload) => {
- //专家强制干预（如要求立即裁决）
- })
- .subscribe();
-
-// Channel3:系统事件
-const systemChannel = supabase.channel('system-events')
- .on('broadcast', { event: 'convergence_reached' }, (payload) => {
- //辩论收敛
- })
- .on('broadcast', { event: 'verdict_ready' }, (payload) => {
- //最终裁决完成
- })
- .subscribe();
-```
-
-###5.2 Presence (在线状态)
-
-```typescript
-//追踪当前查看该案件的专家和用户
-const presenceChannel = supabase.channel(`case-${caseId}-presence`)
- .on('presence', { event: 'sync' }, () => {
- const state = presenceChannel.presenceState();
- //更新UI显示当前在线的专家列表
- })
- .subscribe(async (status) => {
- if (status === 'SUBSCRIBED') {
- await presenceChannel.track({
- userId: currentUser.id,
- role: currentUser.role, // 'viewer' | 'expert' | 'admin'
- joinedAt: new Date().toISOString(),
- });
- }
- });
-```
-
-##6.数据库表设计 (Supabase Schema)
-
-###6.1核心表
-
-```sql
---案件主表
-CREATE TABLE investigations (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- case_id TEXT UNIQUE NOT NULL,
- created_by UUID REFERENCES auth.users(id),
- priority_modality TEXT CHECK (priority_modality IN ('video', 'audio', 'image', 'text', 'mixed')),
- status TEXT CHECK (status IN ('pending', 'analyzing', 'deliberating', 'converged', 'adjudicated', 'error')),
- current_round INTEGER DEFAULT0,
- max_rounds INTEGER DEFAULT5,
- convergence_threshold FLOAT DEFAULT0.05,
- input_artifacts JSONB NOT NULL,
- final_verdict JSONB,
- created_at TIMESTAMPTZ DEFAULT NOW(),
- updated_at TIMESTAMPTZ DEFAULT NOW(),
- retention_until TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '7 days')
-);
-
---证据表
-CREATE TABLE evidences (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- investigation_id UUID REFERENCES investigations(id) ON DELETE CASCADE,
- agent_type TEXT CHECK (agent_type IN ('forensics', 'osint', 'cross_validation')),
- evidence_type TEXT, -- 'visual_anomaly', 'audio_spectrum', 'domain_reputation', etc.
- content JSONB NOT NULL, --具体证据内容
- confidence_score FLOAT CHECK (confidence_score >=0 AND confidence_score <=1),
- source_api TEXT, --来源API名称
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
---质询记录表
-CREATE TABLE challenges (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- investigation_id UUID REFERENCES investigations(id) ON DELETE CASCADE,
- round INTEGER NOT NULL,
- target_agent TEXT,
- target_evidence_id UUID REFERENCES evidences(id),
- question TEXT NOT NULL,
- required_action TEXT,
- priority TEXT,
- resolved BOOLEAN DEFAULT FALSE,
- resolution_result JSONB,
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
---专家会诊记录
-CREATE TABLE expert_interventions (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- investigation_id UUID REFERENCES investigations(id) ON DELETE CASCADE,
- expert_id UUID REFERENCES auth.users(id),
- intervention_type TEXT CHECK (intervention_type IN ('comment', 'force_stop', 'request_recheck')),
- content TEXT NOT NULL,
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
---审计日志表
-CREATE TABLE audit_logs (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- investigation_id UUID REFERENCES investigations(id) ON DELETE SET NULL,
- user_id UUID REFERENCES auth.users(id),
- action TEXT NOT NULL,
- details JSONB,
- ip_address INET,
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-###6.2 RLS (行级安全)策略
-
-```sql
---用户只能看到自己的案件（除非是管理员或受邀专家）
-CREATE POLICY "Users can view own investigations" ON investigations
- FOR SELECT USING (
- auth.uid() = created_by
- OR auth.uid() IN (
- SELECT expert_id FROM expert_interventions
- WHERE investigation_id = investigations.id
- )
- OR EXISTS (
- SELECT1 FROM user_roles
- WHERE user_id = auth.uid() AND role = 'admin'
- )
- );
-
---只有创建者可以删除自己的案件
-CREATE POLICY "Users can delete own investigations" ON investigations
- FOR DELETE USING (auth.uid() = created_by);
-```
-
-##7.向量存储 (pgvector)设计
-
-```sql
---高危特征向量库（用于快速比对）
-CREATE TABLE threat_vectors (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- vector_type TEXT, -- 'deepfake_pattern', 'malicious_domain', 'audio_fingerprint'
- embedding VECTOR(1536), -- OpenAI/text-embedding-3-large维度
- metadata JSONB,
- source_case_id TEXT,
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
---创建相似度搜索索引
-CREATE INDEX ON threat_vectors USING ivfflat (embedding vector_cosine_ops);
-
--- Agent记忆向量（长期学习能力）
-CREATE TABLE agent_memories (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- agent_type TEXT,
- memory_type TEXT, -- 'success_pattern', 'failure_lesson', 'edge_case'
- embedding VECTOR(1536),
- content TEXT,
- case_reference UUID,
- created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-##8.前端状态管理 (Zustand Store)
-
-```typescript
-interface InvestigationStore {
- //当前案件状态
- currentCase: InvestigationState | null;
-
- //3D视图状态
- cameraPosition: { x: number; y: number; z: number };
- focusedPanel: 'media' | 'forensics' | 'osint' | 'inquisitor' | null;
-
- //实时连接
- isConnected: boolean;
- onlineExperts: UserPresence[];
-
- // UI状态
- showDetailedLogs: boolean;
- selectedEvidenceId: string | null;
- playbackState: 'idle' | 'playing' | 'paused';
-
- // Actions
- setCameraPosition: (pos: Vector3) => void;
- focusPanel: (panel: PanelType) => void;
- toggleDetailedLogs: () => void;
- addExpertComment: (comment: ExpertComment) => void;
-}
-```
-
----
-
-*文档版本: v1.0*
-*更新日期:2026-03-01*
+- 案例库真实加载：当前仍保留演示/占位能力，等核心功能稳定后再升级真实案例库。
+- 向量库 / pgvector：本次不实现，只作为后续检索增强能力保留在规划中。

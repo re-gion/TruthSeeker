@@ -1,46 +1,63 @@
-"""SSE 检测端点 - Layer 2: 四 Agent 完整事件流"""
+"""SSE 检测端点 - 多文件任务闭环 + LangGraph 暂停/恢复。"""
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import AsyncGenerator, Literal, Optional
 
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
 from app.services.analysis_persistence import AnalysisPersistenceService, normalize_final_verdict
+from app.services.audit_log import record_audit_event
+from app.services.evidence_files import (
+    UploadedEvidenceFile,
+    build_input_files,
+    derive_input_type,
+    normalize_uploaded_files,
+    require_evidence_files,
+)
 from app.utils.supabase_client import supabase
+
+try:
+    from langgraph.types import Command
+except ImportError:  # pragma: no cover - LangGraph minor-version compatibility
+    Command = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-HEARTBEAT_INTERVAL = 20  # 秒
+HEARTBEAT_INTERVAL = 20
 
 
 class DetectRequest(BaseModel):
-    """API 请求验证模型（非 LangGraph State）"""
+    """API 请求验证模型（非 LangGraph State）。"""
+
     task_id: Optional[str] = None
-    input_type: Literal["video", "audio", "image", "text"] = "video"
+    input_type: Literal["video", "audio", "image", "text", "mixed"] = "video"
     file_url: Optional[str] = None
-    file_urls: Optional[dict] = None
-    user_id: Optional[str] = "anonymous"
+    file_urls: Optional[dict[str, Any]] = None
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    case_prompt: Optional[str] = None
+    user_id: Optional[str] = None
     priority_focus: str = "balanced"
     max_rounds: int = 3
+    resume: bool = False
 
 
-def _sse(data: dict) -> str:
-    """构建 SSE data 行（D-2 修复：确保 JSON 内无原始换行）"""
+def _sse(data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=True).replace("\n", "\\n")
     return f"data: {payload}\n\n"
 
 
-async def _heartbeat_sender(queue: asyncio.Queue, stop: asyncio.Event) -> None:
-    """D-3 修复：后台发送心跳 SSE 注释行"""
+async def _heartbeat_sender(queue: asyncio.Queue[str], stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL)
@@ -48,20 +65,150 @@ async def _heartbeat_sender(queue: asyncio.Queue, stop: asyncio.Event) -> None:
             await queue.put(":keepalive\n\n")
 
 
-async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, None]:
-    """生成 Layer 2 四 Agent SSE 事件流"""
+def _safe_metadata(task: dict[str, Any] | None) -> dict[str, Any]:
+    value = (task or {}).get("metadata") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_storage_paths(task: dict[str, Any] | None) -> dict[str, Any]:
+    value = (task or {}).get("storage_paths") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _fetch_task(task_id: str) -> dict[str, Any] | None:
+    resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
+    return resp.data[0] if resp.data else None
+
+
+def _assert_task_owner(task: dict[str, Any] | None, user_id: str | None) -> None:
+    if not task:
+        return
+    task_user_id = task.get("user_id")
+    if task_user_id and user_id and user_id != "anonymous" and task_user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问该检测任务")
+
+
+def _task_storage_files(files: list[UploadedEvidenceFile]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "mime_type": item.get("mime_type"),
+            "size_bytes": item.get("size_bytes"),
+            "modality": item.get("modality"),
+            "storage_path": item.get("storage_path"),
+        }
+        for item in files
+    ]
+
+
+def _ensure_signed_urls(files: list[UploadedEvidenceFile]) -> list[UploadedEvidenceFile]:
+    signed_files: list[UploadedEvidenceFile] = []
+    bucket = supabase.storage.from_("media")
+    for item in files:
+        normalized = dict(item)
+        storage_path = normalized.get("storage_path")
+        if storage_path and not normalized.get("file_url"):
+            try:
+                signed = bucket.create_signed_url(storage_path, 86400)
+                file_url = signed.get("signedURL") or signed.get("signedUrl")
+                if file_url:
+                    normalized["file_url"] = file_url
+            except Exception as exc:
+                logger.warning("Failed to sign storage path %s: %s", storage_path, exc)
+        signed_files.append(normalized)  # type: ignore[arg-type]
+    return signed_files
+
+
+def _resolve_evidence_files(request: DetectRequest, task: dict[str, Any] | None) -> list[UploadedEvidenceFile]:
+    metadata = _safe_metadata(task)
+    storage_paths = _safe_storage_paths(task)
+    raw_files = (
+        request.files
+        or metadata.get("files")
+        or storage_paths.get("files")
+        or []
+    )
+    files = normalize_uploaded_files(raw_files)
+    if not require_evidence_files(files):
+        if request.file_url:
+            files = normalize_uploaded_files([
+                {
+                    "name": "legacy-upload",
+                    "mime_type": f"{request.input_type}/unknown" if request.input_type != "text" else "text/plain",
+                    "size_bytes": 0,
+                    "modality": request.input_type if request.input_type != "mixed" else "video",
+                    "storage_path": request.file_url,
+                    "file_url": request.file_url,
+                }
+            ])
+        else:
+            raise HTTPException(status_code=400, detail="检测任务缺少待检测文件")
+    return _ensure_signed_urls(files)
+
+
+def _resolve_case_prompt(request: DetectRequest, task: dict[str, Any] | None) -> str:
+    metadata = _safe_metadata(task)
+    return (
+        request.case_prompt
+        or metadata.get("case_prompt")
+        or (task or {}).get("description")
+        or ""
+    )
+
+
+def _fetch_consultation_messages(task_id: str) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("consultation_messages")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        logger.warning("Failed to fetch consultation messages for %s: %s", task_id, exc)
+        return []
+
+
+def _extract_interrupt_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (list, tuple)) and value:
+        first = value[0]
+        if isinstance(first, dict):
+            return first
+        if hasattr(first, "value") and isinstance(first.value, dict):
+            return first.value
+    if hasattr(value, "value") and isinstance(value.value, dict):
+        return value.value
+    return {"type": "consultation_required", "reason": "检测流程请求专家会诊"}
+
+
+async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGenerator[str, None]:
     task_id = request.task_id or str(uuid.uuid4())
+    task = _fetch_task(task_id) if request.task_id else None
+    _assert_task_owner(task, user_id)
+
+    evidence_files = _resolve_evidence_files(request, task)
+    case_prompt = _resolve_case_prompt(request, task)
+    input_type = derive_input_type(evidence_files)
+    input_files = build_input_files(evidence_files)
+
     queue: asyncio.Queue[str] = asyncio.Queue()
     stop_heartbeat = asyncio.Event()
     persistence = AnalysisPersistenceService()
+    config = {"configurable": {"thread_id": task_id}}
 
-    # 初始化 State
     initial_state: TruthSeekerState = {
         "task_id": task_id,
-        "user_id": request.user_id or "anonymous",
-        "input_files": request.file_urls or {"primary": request.file_url or "mock://default"},
-        "input_type": request.input_type,
+        "user_id": user_id,
+        "input_files": input_files,
+        "input_type": input_type,
         "priority_focus": request.priority_focus,
+        "case_prompt": case_prompt,
+        "evidence_files": evidence_files,
         "current_round": 1,
         "max_rounds": min(request.max_rounds, 5),
         "convergence_threshold": 0.05,
@@ -79,32 +226,91 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
         "termination_reason": None,
         "degradation_status": {},
         "expert_messages": [],
+        "consultation_resume": None,
         "timeline_events": [],
     }
 
-    # 启动心跳任务
     hb_task = asyncio.create_task(_heartbeat_sender(queue, stop_heartbeat))
+    final_verdict_data: dict[str, Any] | None = None
+    interrupted = False
 
-    # 发送开始事件
-    await queue.put(_sse({
-        "type": "start",
-        "task_id": task_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "max_rounds": initial_state["max_rounds"],
-    }))
-    persistence.mark_task_started(
-        task_id,
-        input_files=initial_state["input_files"],
-        priority_focus=initial_state["priority_focus"],
-    )
-
-    final_verdict_data = None
-
-    # 主事件流（后台任务，向 queue 写入）
-    async def run_graph():
-        nonlocal final_verdict_data
+    async def run_graph() -> None:
+        nonlocal final_verdict_data, interrupted
         try:
-            async for chunk in compiled_graph.astream(initial_state, stream_mode="updates"):
+            if request.resume:
+                if Command is None:
+                    raise RuntimeError("当前 LangGraph 版本不支持 Command resume")
+                expert_messages = _fetch_consultation_messages(task_id)
+                resume_payload = {
+                    "action": "resume",
+                    "resumed_by": user_id,
+                    "expert_messages": expert_messages,
+                    "resumed_at": datetime.now(timezone.utc).isoformat(),
+                }
+                graph_input = Command(resume=resume_payload)
+                persistence.mark_task_started(
+                    task_id,
+                    input_files={"files": _task_storage_files(evidence_files)},
+                    priority_focus=request.priority_focus,
+                    metadata={
+                        **_safe_metadata(task),
+                        "case_prompt": case_prompt,
+                        "files": _task_storage_files(evidence_files),
+                        "waiting_consultation": False,
+                    },
+                )
+                record_audit_event(
+                    action="consultation_resume",
+                    task_id=task_id,
+                    user_id=user_id,
+                    metadata={"expert_message_count": len(expert_messages)},
+                )
+                await queue.put(_sse({"type": "consultation_resumed", "task_id": task_id}))
+            else:
+                graph_input = initial_state
+                await queue.put(_sse({
+                    "type": "start",
+                    "task_id": task_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "max_rounds": initial_state["max_rounds"],
+                    "input_type": input_type,
+                }))
+                persistence.mark_task_started(
+                    task_id,
+                    input_files={"files": _task_storage_files(evidence_files)},
+                    priority_focus=request.priority_focus,
+                    metadata={
+                        **_safe_metadata(task),
+                        "case_prompt": case_prompt,
+                        "files": _task_storage_files(evidence_files),
+                    },
+                )
+                record_audit_event(
+                    action="detect_start",
+                    task_id=task_id,
+                    user_id=user_id,
+                    metadata={"input_type": input_type, "file_count": len(evidence_files)},
+                )
+
+            async for chunk in compiled_graph.astream(graph_input, config=config, stream_mode="updates"):
+                if "__interrupt__" in chunk:
+                    interrupt_payload = _extract_interrupt_payload(chunk["__interrupt__"])
+                    reason = str(interrupt_payload.get("reason") or "高冲突证据触发专家会诊")
+                    interrupted = True
+                    metadata = {
+                        **_safe_metadata(task),
+                        "case_prompt": case_prompt,
+                        "files": _task_storage_files(evidence_files),
+                    }
+                    persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                    await queue.put(_sse({
+                        "type": "consultation_required",
+                        "task_id": task_id,
+                        "reason": reason,
+                        "payload": interrupt_payload,
+                    }))
+                    return
+
                 for node_name, updates in chunk.items():
                     await queue.put(_sse({"type": "node_start", "node": node_name}))
 
@@ -142,22 +348,53 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
                         await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
 
                     persistence.persist_update(task_id, node_name, updates)
-
                     await queue.put(_sse({"type": "node_complete", "node": node_name}))
-        except Exception as e:
-            # D-4 修复：异常时发送 error 事件
-            logger.error("SSE stream error for task %s: %s", task_id, e)
+
+            if final_verdict_data:
+                persistence.mark_task_completed(task_id, final_verdict_data)
+                record_audit_event(
+                    action="detect_completed",
+                    task_id=task_id,
+                    user_id=user_id,
+                    metadata={"verdict": final_verdict_data.get("verdict")},
+                )
+                await queue.put(_sse({
+                    "type": "complete",
+                    "task_id": task_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }))
+            elif not interrupted:
+                persistence.mark_task_failed(task_id, error_summary="检测流程未生成最终裁决")
+                record_audit_event(action="detect_failed", task_id=task_id, user_id=user_id)
+                await queue.put(_sse({
+                    "type": "task_failed",
+                    "task_id": task_id,
+                    "message": "检测流程未生成最终裁决",
+                }))
+        except Exception as exc:
+            logger.error("SSE stream error for task %s: %s", task_id, exc)
+            persistence.mark_task_failed(task_id, error_summary="检测过程发生异常，请稍后重试")
+            record_audit_event(
+                action="detect_failed",
+                task_id=task_id,
+                user_id=user_id,
+                metadata={"error_type": type(exc).__name__},
+            )
+            await queue.put(_sse({
+                "type": "task_failed",
+                "task_id": task_id,
+                "message": "检测过程发生异常，请稍后重试",
+            }))
             await queue.put(_sse({
                 "type": "error",
                 "task_id": task_id,
                 "message": "检测过程发生异常，请稍后重试",
             }))
         finally:
-            stop_heartbeat.set()  # 停止心跳
+            stop_heartbeat.set()
 
     graph_task = asyncio.create_task(run_graph())
 
-    # 消费 queue，产出 SSE 行
     try:
         while not graph_task.done() or not queue.empty():
             try:
@@ -169,40 +406,19 @@ async def sse_event_generator(request: DetectRequest) -> AsyncGenerator[str, Non
         stop_heartbeat.set()
         graph_task.cancel()
         hb_task.cancel()
-        # 等待任务清理
         await asyncio.gather(graph_task, hb_task, return_exceptions=True)
-
-    # 更新任务状态到 Supabase（在 yield 之前，确保客户端断开后仍能执行）
-    if final_verdict_data:
-        try:
-            supabase.table("tasks").update({
-                "status": "completed",
-                "result": final_verdict_data,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", task_id).execute()
-        except Exception as e:
-            logger.warning("Failed to update task status: %s", e)
-        persistence.mark_task_completed(task_id, final_verdict_data)
-
-    # 完成
-    yield _sse({
-        "type": "complete",
-        "task_id": task_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
 
 
 @router.post("/stream")
-async def detect_stream(request: DetectRequest):
-    """SSE 流式检测端点（Layer 2 四 Agent）"""
+async def detect_stream(request: DetectRequest, raw_request: Request):
+    """SSE 流式检测端点。"""
+    user_id = getattr(raw_request.state, "user_id", None) or "anonymous"
     return StreamingResponse(
-        sse_event_generator(request),
+        sse_event_generator(request, user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            # D-5 修复：移除 Access-Control-Allow-Origin，统一由 CORSMiddleware 处理
         },
     )

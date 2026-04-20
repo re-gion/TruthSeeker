@@ -2,10 +2,11 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.services.analysis_persistence import normalize_final_verdict
+from app.services.audit_log import record_audit_event
 from app.services.report_generator import generate_markdown_report
 from app.utils.supabase_client import supabase
 
@@ -17,12 +18,13 @@ router = APIRouter()
 class ShareResponse(BaseModel):
     share_token: str
     share_url: str
+    report_hash: str | None = None
 
 
 @router.post("/{task_id}", response_model=ShareResponse)
-async def create_share_link(task_id: str):
+async def create_share_link(task_id: str, request: Request):
     """为指定任务生成报告分享链接"""
-    resp = supabase.table("reports").select("id, share_token").eq("task_id", task_id).execute()
+    resp = supabase.table("reports").select("id, share_token, report_hash").eq("task_id", task_id).execute()
     if not resp.data:
         raise HTTPException(status_code=404, detail="报告尚未生成")
 
@@ -34,14 +36,22 @@ async def create_share_link(task_id: str):
         token = secrets.token_urlsafe(16)
         supabase.table("reports").update({"share_token": token}).eq("id", report["id"]).execute()
 
+    record_audit_event(
+        action="share_created",
+        task_id=task_id,
+        user_id=getattr(request.state, "user_id", None),
+        metadata={"share_token": token, "report_hash": report.get("report_hash")},
+    )
+
     return ShareResponse(
         share_token=token,
         share_url=f"/report/{token}",
+        report_hash=report.get("report_hash"),
     )
 
 
 @router.get("/{token}")
-async def get_shared_report(token: str):
+async def get_shared_report(token: str, request: Request):
     """通过分享令牌访问报告（无需认证）"""
     resp = supabase.table("reports").select("*, tasks(*)").eq("share_token", token).execute()
     if not resp.data:
@@ -49,6 +59,13 @@ async def get_shared_report(token: str):
 
     report = resp.data[0]
     task = report.get("tasks") or {}
+    record_audit_event(
+        action="share_viewed",
+        task_id=task.get("id") or report.get("task_id"),
+        user_id=getattr(request.state, "user_id", None),
+        actor_role="viewer",
+        metadata={"share_token": token, "report_hash": report.get("report_hash")},
+    )
 
     try:
         md_content = await generate_markdown_report(task.get("id", report["task_id"]))
@@ -63,6 +80,7 @@ async def get_shared_report(token: str):
             "confidence_overall": report.get("confidence_overall"),
             "summary": report.get("summary"),
             "generated_at": report.get("generated_at"),
+            "report_hash": report.get("report_hash"),
         },
         "task": {
             "id": task.get("id"),

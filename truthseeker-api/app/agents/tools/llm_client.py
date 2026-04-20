@@ -57,7 +57,7 @@ async def _invoke_llm(
 # Forensics Agent
 # ---------------------------------------------------------------------------
 
-async def forensics_interpret(raw_api_result: dict, input_type: str) -> str:
+async def forensics_interpret(raw_api_result: dict, input_type: str, case_prompt: str = "") -> str:
     """Let the LLM interpret raw forensic detection results into professional analysis."""
     return await _invoke_llm(
         system_prompt=(
@@ -67,8 +67,12 @@ async def forensics_interpret(raw_api_result: dict, input_type: str) -> str:
             "3) 检测模型的推断细节；4) 潜在影响与风险提示。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
-        human_template="输入媒体类型：{input_type}\n\n原始检测结果：\n{raw_data}",
+        human_template=(
+            "全局检测目标/案件背景：{case_prompt}\n\n"
+            "输入媒体类型：{input_type}\n\n原始检测结果：\n{raw_data}"
+        ),
         variables={
+            "case_prompt": case_prompt or "用户未补充额外提示。",
             "input_type": input_type,
             "raw_data": json.dumps(raw_api_result, ensure_ascii=False, indent=2),
         },
@@ -85,7 +89,7 @@ async def forensics_interpret(raw_api_result: dict, input_type: str) -> str:
 # OSINT Agent
 # ---------------------------------------------------------------------------
 
-async def osint_interpret(raw_intel: dict, input_type: str) -> str:
+async def osint_interpret(raw_intel: dict, input_type: str, case_prompt: str = "") -> str:
     """Let the LLM interpret raw OSINT intelligence into a professional assessment."""
     indicators = raw_intel.get("indicators", [])
     return await _invoke_llm(
@@ -96,8 +100,12 @@ async def osint_interpret(raw_intel: dict, input_type: str) -> str:
             "3) 来源可信度评估；4) 关联风险与溯源线索。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
-        human_template="输入媒体类型：{input_type}\n\n原始情报数据：\n{raw_data}",
+        human_template=(
+            "全局检测目标/案件背景：{case_prompt}\n\n"
+            "输入媒体类型：{input_type}\n\n原始情报数据：\n{raw_data}"
+        ),
         variables={
+            "case_prompt": case_prompt or "用户未补充额外提示。",
             "input_type": input_type,
             "raw_data": json.dumps(raw_intel, ensure_ascii=False, indent=2),
         },
@@ -117,6 +125,7 @@ async def challenger_cross_validate(
     forensics: dict,
     osint: dict,
     challenges: list,
+    case_prompt: str = "",
 ) -> str:
     """Let the LLM cross-validate evidence from forensics and OSINT agents."""
     return await _invoke_llm(
@@ -130,11 +139,13 @@ async def challenger_cross_validate(
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(
+            "【全局检测目标/案件背景】\n{case_prompt}\n\n"
             "【取证分析结果】\n{forensics_data}\n\n"
             "【情报评估结果】\n{osint_data}\n\n"
             "【已有质疑记录】\n{challenges_data}"
         ),
         variables={
+            "case_prompt": case_prompt or "用户未补充额外提示。",
             "forensics_data": json.dumps(forensics, ensure_ascii=False, indent=2),
             "osint_data": json.dumps(osint, ensure_ascii=False, indent=2),
             "challenges_data": json.dumps(challenges, ensure_ascii=False, indent=2),
@@ -158,6 +169,7 @@ async def commander_ruling(
     osint: dict,
     challenger_feedback: dict,
     agent_weights: dict,
+    case_prompt: str = "",
 ) -> str:
     """Let the LLM produce a final ruling based on all agent evidence."""
     return await _invoke_llm(
@@ -171,12 +183,14 @@ async def commander_ruling(
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(
+            "【全局检测目标/案件背景】\n{case_prompt}\n\n"
             "【取证分析结果】\n{forensics_data}\n\n"
             "【情报评估结果】\n{osint_data}\n\n"
             "【交叉验证反馈】\n{challenger_data}\n\n"
             "【智能体权重配置】\n{weights_data}"
         ),
         variables={
+            "case_prompt": case_prompt or "用户未补充额外提示。",
             "forensics_data": json.dumps(forensics, ensure_ascii=False, indent=2),
             "osint_data": json.dumps(osint, ensure_ascii=False, indent=2),
             "challenger_data": json.dumps(challenger_feedback, ensure_ascii=False, indent=2),

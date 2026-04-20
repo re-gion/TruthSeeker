@@ -4,9 +4,10 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.services.audit_log import record_audit_event
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class InviteResponse(BaseModel):
 
 
 @router.post("/{task_id}/inject")
-async def inject_expert_message(task_id: str, req: InjectMessageRequest):
+async def inject_expert_message(task_id: str, req: InjectMessageRequest, request: Request):
     """注入专家意见到运行中的 Agent 状态
 
     消息被写入 Supabase consultation_messages 表，
@@ -52,13 +53,18 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest):
         raise HTTPException(status_code=404, detail="任务不存在")
 
     task_status = task_resp.data[0].get("status", "")
-    if task_status not in ("analyzing", "deliberating", "pending"):
+    if task_status not in ("analyzing", "deliberating", "pending", "waiting_consultation"):
         raise HTTPException(
             status_code=400,
             detail=f"任务状态为 {task_status}，不接受新的专家意见"
         )
+    request_user_id = getattr(request.state, "user_id", None)
+    is_authenticated = bool(getattr(request.state, "is_authenticated", False))
+
     if req.role == "expert":
         _validate_invite_token(task_id, req.invite_token)
+    elif not is_authenticated:
+        raise HTTPException(status_code=401, detail="主持人会诊消息需要登录")
 
     # 写入 consultation_messages 表
     message_record = {
@@ -71,6 +77,13 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest):
 
     try:
         resp = supabase.table("consultation_messages").insert(message_record).execute()
+        record_audit_event(
+            action="consultation_message",
+            task_id=task_id,
+            user_id=request_user_id,
+            actor_role=req.role,
+            metadata={"message_length": len(req.message), "invite_token": req.invite_token},
+        )
         return {"status": "ok", "message_id": resp.data[0].get("id") if resp.data else None}
     except Exception as e:
         logger.error("Failed to insert consultation message: %s", e)
@@ -78,7 +91,7 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest):
 
 
 @router.post("/{task_id}/invite", response_model=InviteResponse)
-async def create_consultation_invite(task_id: str):
+async def create_consultation_invite(task_id: str, request: Request):
     """创建专家邀请链接。"""
     task_resp = supabase.table("tasks").select("id").eq("id", task_id).execute()
     if not task_resp.data:
@@ -96,6 +109,12 @@ async def create_consultation_invite(task_id: str):
 
     try:
         supabase.table("consultation_invites").insert(invite_record).execute()
+        record_audit_event(
+            action="consultation_invite_created",
+            task_id=task_id,
+            user_id=getattr(request.state, "user_id", None),
+            metadata={"invite_token": token},
+        )
     except Exception as e:
         logger.error("Failed to create invite: %s", e)
         raise HTTPException(status_code=500, detail="邀请创建失败")
@@ -134,8 +153,12 @@ async def validate_consultation_invite(token: str):
 
 
 @router.get("/{task_id}/messages")
-async def get_consultation_messages(task_id: str):
+async def get_consultation_messages(task_id: str, request: Request, invite_token: Optional[str] = None):
     """获取任务的专家会诊消息"""
+    is_authenticated = bool(getattr(request.state, "is_authenticated", False))
+    if not is_authenticated:
+        _validate_invite_token(task_id, invite_token)
+
     resp = supabase.table("consultation_messages").select("*").eq("task_id", task_id).order(
         "created_at", desc=False
     ).execute()
@@ -164,3 +187,6 @@ def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
     )
     if not resp.data:
         raise HTTPException(status_code=403, detail="邀请令牌无效")
+    invite = resp.data[0]
+    if invite.get("status") == "expired":
+        raise HTTPException(status_code=410, detail="邀请链接已过期")

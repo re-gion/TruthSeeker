@@ -26,6 +26,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     task_id = state["task_id"]
     input_type = state.get("input_type", "video")
     input_files = state.get("input_files", {})
+    case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
 
     logs: list[AgentLog] = []
@@ -45,8 +46,48 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
     log("thinking", f"🔍 鉴伪Agent 启动，任务 ID: {task_id}")
     log("thinking", f"📁 输入类型: {input_type}")
+    if case_prompt:
+        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
 
-    primary_url = input_files.get("primary", input_files.get("url", ""))
+    forensics_files = input_files.get("forensics") or []
+    primary_forensics = forensics_files[0] if forensics_files else None
+    if primary_forensics:
+        input_type = primary_forensics.get("modality", input_type)
+    primary_url = (
+        (primary_forensics.get("file_url") or primary_forensics.get("storage_path"))
+        if primary_forensics
+        else input_files.get("primary", input_files.get("url", ""))
+    )
+
+    if input_type == "text" or not primary_url:
+        log("action", "📝 当前任务仅包含文本检材，视听鉴伪Agent跳过，由情报溯源Agent处理文本检测与溯源")
+        return {
+            "forensics_result": {
+                "is_deepfake": False,
+                "deepfake_probability": 0.0,
+                "confidence": 0.5,
+                "forensics_score": 0.5,
+                "model_used": "not_applicable",
+                "model_scores": [],
+                "frame_inferences_count": 0,
+                "audio_score": None,
+                "indicators": ["文本检材不进入视听鉴伪通道"],
+                "degraded": False,
+                "degradation_status": "skipped",
+                "llm_analysis": "文本检材由情报溯源Agent负责检测与溯源。",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+            "evidence_board": [],
+            "confidence_history": list(state.get("confidence_history", [])),
+            "logs": logs,
+            "timeline_events": [{
+                "round": round_num,
+                "agent": "forensics",
+                "event_type": "skipped",
+                "summary": "文本检材跳过视听鉴伪通道",
+            }],
+            "degradation_status": {"reality_defender": "skipped"},
+        }
 
     # 默认值
     is_deepfake = False
@@ -205,7 +246,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     llm_analysis = ""
     log("action", "🧠 正在调用大模型进行深度鉴证推理...")
     try:
-        llm_analysis = await forensics_interpret(result, input_type)
+        llm_analysis = await forensics_interpret(result, input_type, case_prompt)
         if llm_analysis.startswith("[LLM降级]"):
             log("action", "⚠️  LLM 推理不可用，使用降级模式")
         else:

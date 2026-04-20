@@ -10,6 +10,8 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from storage3.types import FileOptions
 
+from app.services.audit_log import record_audit_event
+from app.services.evidence_files import infer_modality
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -103,17 +105,17 @@ async def upload_file(
 
     # 2. 写入临时文件（流式，内存友好）
     request_user_id = getattr(request.state, "user_id", None)
-    effective_user_id = request_user_id if request_user_id and user_id == "anonymous" else user_id
+    effective_user_id = request_user_id or "anonymous"
     folder = _sanitize_folder(effective_user_id)
     ext = _safe_ext(file.filename or "upload")
     tmp_path: str | None = None
 
     try:
+        total = 0
         with tempfile.NamedTemporaryFile(
             suffix=f".{ext}", delete=False, dir=tempfile.gettempdir(),
         ) as tmp:
             tmp_path = tmp.name
-            total = 0
             while True:
                 chunk = await file.read(1024 * 1024)  # 1 MB
                 if not chunk:
@@ -163,7 +165,28 @@ async def upload_file(
                 status_code=500,
             )
 
-        return {"file_url": file_url, "storage_path": storage_path}
+        modality = infer_modality(real_mime, file.filename or "upload")
+        record_audit_event(
+            action="upload",
+            user_id=effective_user_id,
+            metadata={
+                "name": file.filename,
+                "mime_type": real_mime,
+                "size_bytes": total,
+                "modality": modality,
+                "storage_path": storage_path,
+            },
+        )
+
+        return {
+            "id": os.path.basename(storage_path),
+            "name": file.filename or os.path.basename(storage_path),
+            "mime_type": real_mime,
+            "size_bytes": total,
+            "modality": modality,
+            "file_url": file_url,
+            "storage_path": storage_path,
+        }
 
     except Exception as e:
         logger.error("Upload failed: %s", e)

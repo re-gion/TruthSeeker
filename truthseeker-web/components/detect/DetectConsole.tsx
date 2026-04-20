@@ -30,6 +30,15 @@ async function getAuthToken(): Promise<string | null> {
     }
 }
 
+interface TaskContext {
+    inputType: string
+    priorityFocus: string
+    casePrompt: string
+    files: Record<string, unknown>[]
+    title?: string
+    status?: string
+}
+
 function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
     const normalized = extractVerdictSnapshot(verdict)
     const configs: Record<string, { color: string; bg: string; border: string; emoji: string }> = {
@@ -105,21 +114,36 @@ function DebateStats({ currentRound, maxRounds, weights }: { currentRound: numbe
 export function DetectConsole({ taskId }: { taskId: string }) {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const inputType = searchParams.get("type") || "video"
-    const fileUrl = searchParams.get("url") || `mock://${taskId}`
-    const priorityFocus = searchParams.get("focus") || "balanced"
     const role = (searchParams.get("role") || "host") as UserRole
     const inviteToken = searchParams.get("invite_token")
     const [showExpertPanel, setShowExpertPanel] = useState(false)
     const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline">("3d")
+    const [taskContext, setTaskContext] = useState<TaskContext>({
+        inputType: "mixed",
+        priorityFocus: searchParams.get("focus") || "balanced",
+        casePrompt: "",
+        files: [],
+    })
+    const [taskLoaded, setTaskLoaded] = useState(role === "expert")
+    const [taskLoadError, setTaskLoadError] = useState<string | null>(null)
 
     const { channel, onlineUsers } = useRealtimeSession(taskId, role)
 
     const {
         logs, forensicsResult, osintResult, challengerFeedback,
         agentWeights, finalVerdict, isRunning, isComplete,
-        currentNode, currentRound, maxRounds
-    } = useAgentStream({ taskId, inputType, fileUrl, priorityFocus, autoStart: true, role, channel })
+        currentNode, currentRound, maxRounds, isWaitingConsultation,
+        errorMessage, resume
+    } = useAgentStream({
+        taskId,
+        inputType: taskContext.inputType,
+        files: taskContext.files,
+        casePrompt: taskContext.casePrompt,
+        priorityFocus: taskContext.priorityFocus,
+        autoStart: role === "host" && taskLoaded,
+        role,
+        channel,
+    })
     const forensicsSnapshot = forensicsResult ? extractAnalysisSnapshot(forensicsResult) : null
     const osintSnapshot = osintResult ? extractAnalysisSnapshot(osintResult) : null
     const challengerSnapshot = challengerFeedback ? extractChallengerSnapshot(challengerFeedback) : null
@@ -134,6 +158,56 @@ export function DetectConsole({ taskId }: { taskId: string }) {
 
     const agentStatus = (key: string, hasResult: boolean) =>
         currentNode === key ? "analyzing" : hasResult ? "complete" : "idle"
+
+    useEffect(() => {
+        if (role === "expert") {
+            setTaskLoaded(true)
+            return
+        }
+
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        let cancelled = false
+
+        async function loadTask() {
+            try {
+                const authToken = await getAuthToken()
+                const headers: Record<string, string> = {}
+                if (authToken) headers.Authorization = `Bearer ${authToken}`
+
+                const response = await fetch(`${apiBase}/api/v1/tasks/${taskId}`, { headers })
+                if (!response.ok) throw new Error(`HTTP ${response.status}`)
+                const task = await response.json()
+                if (cancelled) return
+
+                const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {}
+                const storagePaths = task.storage_paths && typeof task.storage_paths === "object" ? task.storage_paths : {}
+                const files = Array.isArray(metadata.files)
+                    ? metadata.files
+                    : Array.isArray(storagePaths.files)
+                        ? storagePaths.files
+                        : []
+
+                setTaskContext({
+                    inputType: task.input_type || "mixed",
+                    priorityFocus: task.priority_focus || searchParams.get("focus") || "balanced",
+                    casePrompt: metadata.case_prompt || task.description || "",
+                    files,
+                    title: task.title,
+                    status: task.status,
+                })
+                setTaskLoaded(true)
+            } catch {
+                if (!cancelled) {
+                    setTaskLoadError("任务数据加载失败，请确认已登录并拥有该任务权限")
+                }
+            }
+        }
+
+        void loadTask()
+        return () => {
+            cancelled = true
+        }
+    }, [role, searchParams, taskId])
 
     useEffect(() => {
         if (role !== "expert" || !inviteToken) return
@@ -237,11 +311,19 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             {showExpertPanel ? '收起会诊面板' : '打开会诊面板'}
                         </button>
                         {role === 'host' && <InviteButton taskId={taskId} />}
+                        {role === 'host' && isWaitingConsultation && (
+                            <button
+                                onClick={resume}
+                                className="text-xs text-[#F59E0B] border border-[#F59E0B]/40 px-3 py-1.5 rounded-full hover:bg-[#F59E0B]/10 transition-colors"
+                            >
+                                继续研判
+                            </button>
+                        )}
                         {isComplete && (
                             <button
                                 onClick={() => {
                                     const md = generateMarkdownReport({
-                                        taskId, inputType, logs,
+                                        taskId, inputType: taskContext.inputType, logs,
                                         forensicsResult, osintResult,
                                         challengerFeedback, finalVerdict,
                                         agentWeights, currentRound,
@@ -255,7 +337,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         )}
                         {isComplete && (
                             <button
-                                onClick={() => downloadPdfReport(taskId)}
+                                onClick={async () => downloadPdfReport(taskId, await getAuthToken())}
                                 className="text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors"
                             >
                                 PDF 报告
@@ -307,6 +389,12 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 AI 联合推演中
                             </motion.div>
                         )}
+                        {isWaitingConsultation && (
+                            <div className="flex items-center gap-1.5 text-xs text-[#F59E0B]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shadow-[0_0_8px_#F59E0B]" />
+                                等待会诊
+                            </div>
+                        )}
                         {isComplete && (
                             <div className="flex items-center gap-1.5 text-xs text-[#10B981]">
                                 <div className="w-1.5 h-1.5 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981]" />
@@ -316,6 +404,12 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     </div>
                 </div>
             </header>
+
+            {(taskLoadError || errorMessage || isWaitingConsultation) && (
+                <div className="mx-6 mt-3 rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/10 px-4 py-3 text-sm text-[#FCD34D]">
+                    {taskLoadError || errorMessage || "逻辑质询Agent已暂停研判，等待专家会诊意见；主持人可在会诊后继续研判。"}
+                </div>
+            )}
 
             {/* Content Area */}
             {viewMode === "3d" ? (

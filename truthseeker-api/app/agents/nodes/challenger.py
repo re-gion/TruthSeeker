@@ -6,6 +6,11 @@ from app.agents.state import TruthSeekerState, AgentLog
 from app.agents.tools.llm_client import challenger_cross_validate
 from app.utils.supabase_client import supabase
 
+try:
+    from langgraph.types import interrupt
+except ImportError:  # pragma: no cover - only used when LangGraph is installed
+    interrupt = None
+
 
 async def challenger_node(state: TruthSeekerState) -> dict:
     """
@@ -22,6 +27,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     evidence_board = state.get("evidence_board", [])
     existing_challenges = state.get("challenges", [])
     expert_messages = state.get("expert_messages", [])
+    case_prompt = state.get("case_prompt", "")
 
     logs: list[AgentLog] = []
     challenges: list[dict] = []
@@ -39,6 +45,8 @@ async def challenger_node(state: TruthSeekerState) -> dict:
 
     log("thinking", f"⚖️  逻辑质询Agent Agent 启动（第 {round_num} 轮）...")
     log("thinking", f"📋 接收到 {len(evidence_board)} 条证据，开始交叉验证...")
+    if case_prompt:
+        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
 
     # 如果有专家消息，体现出来
     if expert_messages:
@@ -125,7 +133,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         log("action", "🧠 正在调用大模型进行深度交叉验证...")
         try:
             llm_cross_validation = await challenger_cross_validate(
-                forensics, osint, existing_challenges
+                forensics, osint, existing_challenges, case_prompt
             )
             if llm_cross_validation.startswith("[LLM降级]"):
                 log("action", "⚠️  LLM 交叉验证不可用，仅依赖规则检查")
@@ -149,6 +157,33 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     # 决定是否打回
     high_severity_issues = [i for i in issues_found if i["severity"] == "high"]
     medium_severity_issues = [i for i in issues_found if i["severity"] == "medium"]
+    consultation_required = bool(round_num == 1 and high_severity_issues)
+    consultation_resumed = False
+    consultation_resume_payload = None
+
+    if consultation_required and interrupt is not None:
+        consultation_payload = {
+            "type": "consultation_required",
+            "task_id": task_id,
+            "round": round_num,
+            "reason": high_severity_issues[0].get("description", "发现高冲突证据，需要专家会诊"),
+            "issues": high_severity_issues,
+            "case_prompt": case_prompt,
+        }
+        log("challenge", "🧑‍⚖️  高冲突证据触发专家会诊，等待主持人恢复研判")
+        consultation_resume_payload = interrupt(consultation_payload)
+        consultation_resumed = True
+        if isinstance(consultation_resume_payload, dict):
+            resumed_messages = consultation_resume_payload.get("expert_messages")
+            if isinstance(resumed_messages, list) and resumed_messages:
+                known_ids = {m.get("id") for m in expert_messages if m.get("id")}
+                expert_messages = expert_messages + [
+                    m for m in resumed_messages
+                    if not m.get("id") or m.get("id") not in known_ids
+                ]
+            log("thinking", f"✅ 会诊已恢复，恢复指令: {consultation_resume_payload.get('action', 'resume')}")
+    elif consultation_required:
+        log("action", "⚠️  当前 LangGraph 运行时不可用 interrupt，继续使用普通重审流程")
 
     # 只有第一轮且有高严重度问题时打回（最多打回 1 次避免死循环）
     if round_num == 1 and len(high_severity_issues) >= 1:
@@ -180,6 +215,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "medium_severity_count": len(medium_severity_issues),
         "quality_score": max(0.0, 1.0 - len(high_severity_issues) * 0.3 - len(medium_severity_issues) * 0.15),
         "llm_cross_validation": llm_cross_validation,
+        "consultation_required": consultation_required,
+        "consultation_resumed": consultation_resumed,
+        "consultation_resume_payload": consultation_resume_payload if isinstance(consultation_resume_payload, dict) else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

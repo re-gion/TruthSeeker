@@ -1,9 +1,10 @@
 """报告下载 API — Markdown / PDF 格式"""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.services.audit_log import record_audit_event
 from app.services.report_generator import generate_markdown_report, generate_pdf_report
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/{task_id}/md")
-async def download_markdown_report(task_id: str):
+async def download_markdown_report(task_id: str, request: Request):
     """下载 Markdown 格式的鉴伪与溯源分析报告"""
     try:
         md_content = await generate_markdown_report(task_id)
@@ -21,6 +22,13 @@ async def download_markdown_report(task_id: str):
     except Exception as e:
         logger.error("Failed to generate markdown report for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="报告生成失败")
+
+    record_audit_event(
+        action="report_downloaded",
+        task_id=task_id,
+        user_id=getattr(request.state, "user_id", None),
+        metadata={"format": "md"},
+    )
 
     return StreamingResponse(
         iter([md_content.encode("utf-8")]),
@@ -32,7 +40,7 @@ async def download_markdown_report(task_id: str):
 
 
 @router.get("/{task_id}/pdf")
-async def download_pdf_report(task_id: str):
+async def download_pdf_report(task_id: str, request: Request):
     """下载 PDF 格式的鉴伪与溯源分析报告"""
     try:
         pdf_bytes = await generate_pdf_report(task_id)
@@ -43,6 +51,13 @@ async def download_pdf_report(task_id: str):
     except Exception as e:
         logger.error("Failed to generate pdf report for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="报告生成失败")
+
+    record_audit_event(
+        action="report_downloaded",
+        task_id=task_id,
+        user_id=getattr(request.state, "user_id", None),
+        metadata={"format": "pdf"},
+    )
 
     return StreamingResponse(
         iter([pdf_bytes]),

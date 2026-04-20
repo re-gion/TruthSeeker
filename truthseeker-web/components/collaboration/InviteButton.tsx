@@ -2,6 +2,17 @@
 
 import { useState } from "react"
 import { motion, AnimatePresence } from "motion/react"
+import { createClient } from "@/lib/supabase/client"
+
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+    } catch {
+        return null
+    }
+}
 
 export function InviteButton({ taskId }: { taskId: string }) {
     const [copied, setCopied] = useState(false)
@@ -9,8 +20,12 @@ export function InviteButton({ taskId }: { taskId: string }) {
     const handleInvite = async () => {
         try {
             const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+            const authToken = await getAuthToken()
+            const headers: Record<string, string> = {}
+            if (authToken) headers.Authorization = `Bearer ${authToken}`
             const response = await fetch(`${apiBase}/api/v1/consultation/${taskId}/invite`, {
                 method: "POST",
+                headers,
             })
             if (!response.ok) {
                 throw new Error("invite creation failed")

@@ -19,6 +19,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
     osint = state.get("osint_result") or {}
     challenger = state.get("challenger_feedback") or {}
     evidence_board = state.get("evidence_board", [])
+    expert_messages = state.get("expert_messages", [])
+    case_prompt = state.get("case_prompt", "")
 
     logs: list[AgentLog] = []
     timeline_events: list[dict] = []
@@ -36,6 +38,10 @@ async def commander_node(state: TruthSeekerState) -> dict:
 
     log("thinking", f"👑 研判指挥Agent 启动，开始综合裁决...")
     log("thinking", f"📊 证据板共 {len(evidence_board)} 条，质询官报告 {challenger.get('issue_count', 0)} 个问题")
+    if case_prompt:
+        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
+    if expert_messages:
+        log("thinking", f"💬 纳入 {len(expert_messages)} 条专家会诊意见")
 
     # === 加权计算（保留数值计算的确定性） ===
     forensics_conf = forensics.get("confidence", 0.5)
@@ -92,7 +98,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     llm_ruling = ""
     log("action", "🧠 正在调用大模型生成最终裁决报告...")
     try:
-        llm_ruling = await commander_ruling(forensics, osint, challenger, agent_weights)
+        llm_ruling = await commander_ruling(forensics, osint, challenger, agent_weights, case_prompt)
         if llm_ruling.startswith("[LLM降级]"):
             log("action", "⚠️  LLM 裁决不可用，使用规则推断")
         else:
@@ -124,7 +130,11 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "challenger_summary": {
             "issue_count": challenger.get("issue_count", 0),
             "quality_score": quality_score,
+            "consultation_required": challenger.get("consultation_required", False),
+            "consultation_resumed": challenger.get("consultation_resumed", False),
         },
+        "case_prompt": case_prompt,
+        "expert_message_count": len(expert_messages),
         "key_evidence": [
             {"type": e.get("type"), "source": e.get("source"), "confidence": e.get("confidence")}
             for e in evidence_board[:5]

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
+import { createClient } from "@/lib/supabase/client"
 
 export type AgentEvent =
     | { type: "start"; task_id: string; max_rounds?: number }
@@ -16,6 +17,9 @@ export type AgentEvent =
     | { type: "weights_update"; weights: Record<string, number> }
     | { type: "round_update"; round: number }
     | { type: "final_verdict"; verdict: Record<string, unknown> }
+    | { type: "consultation_required"; task_id: string; reason?: string; payload?: unknown }
+    | { type: "consultation_resumed"; task_id: string }
+    | { type: "task_failed"; task_id?: string; message: string; detail?: unknown }
     | { type: "node_complete"; node: string }
     | { type: "error"; message: string; detail?: unknown }
     | { type: "complete"; task_id: string }
@@ -32,6 +36,8 @@ interface UseAgentStreamOptions {
     taskId: string
     inputType?: string
     fileUrl?: string
+    files?: Record<string, unknown>[]
+    casePrompt?: string
     priorityFocus?: string
     autoStart?: boolean
     maxRounds?: number
@@ -52,10 +58,14 @@ interface UseAgentStreamReturn {
     isRunning: boolean
     isComplete: boolean
     currentNode: string | null
+    isWaitingConsultation: boolean
+    errorMessage: string | null
     start: () => void
+    resume: () => void
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+const EMPTY_FILES: Record<string, unknown>[] = []
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null
@@ -98,10 +108,22 @@ function readTimelineEntries(event: Extract<AgentEvent, { type: "timeline_update
     return singleEntry ? [singleEntry] : []
 }
 
+async function getAuthToken(): Promise<string | null> {
+    try {
+        const supabase = createClient()
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+    } catch {
+        return null
+    }
+}
+
 export function useAgentStream({
     taskId,
     inputType = "video",
     fileUrl,
+    files = EMPTY_FILES,
+    casePrompt = "",
     priorityFocus = "balanced",
     autoStart = true,
     maxRounds = 3,
@@ -120,6 +142,8 @@ export function useAgentStream({
     const [isRunning, setIsRunning] = useState(false)
     const [isComplete, setIsComplete] = useState(false)
     const [currentNode, setCurrentNode] = useState<string | null>(null)
+    const [isWaitingConsultation, setIsWaitingConsultation] = useState(false)
+    const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const abortRef = useRef<AbortController | null>(null)
     const startedRef = useRef(false)
 
@@ -128,6 +152,8 @@ export function useAgentStream({
 
         if (event.type === "start") {
             if (event.max_rounds) setMaxRoundsState(event.max_rounds)
+            setErrorMessage(null)
+            setIsWaitingConsultation(false)
         } else if (event.type === "node_start") {
             setCurrentNode(event.node)
         } else if (event.type === "agent_log") {
@@ -149,7 +175,48 @@ export function useAgentStream({
             setCurrentRound(event.round)
         } else if (event.type === "final_verdict") {
             setFinalVerdict(event.verdict)
+        } else if (event.type === "consultation_required") {
+            const reason = event.reason || "检测证据存在高冲突，等待专家会诊"
+            setIsWaitingConsultation(true)
+            setIsRunning(false)
+            setCurrentNode(null)
+            setLogs(prev => [
+                ...prev,
+                {
+                    agent: "challenger",
+                    type: "consultation_required",
+                    content: reason,
+                    timestamp: new Date().toISOString(),
+                },
+            ])
+        } else if (event.type === "consultation_resumed") {
+            setIsWaitingConsultation(false)
+            setIsRunning(true)
+            setLogs(prev => [
+                ...prev,
+                {
+                    agent: "system",
+                    type: "consultation_resumed",
+                    content: "主持人已恢复研判流程",
+                    timestamp: new Date().toISOString(),
+                },
+            ])
+        } else if (event.type === "task_failed") {
+            setErrorMessage(event.message)
+            setIsRunning(false)
+            setIsWaitingConsultation(false)
+            setCurrentNode(null)
+            setLogs(prev => [
+                ...prev,
+                {
+                    agent: "system",
+                    type: "error",
+                    content: event.message,
+                    timestamp: new Date().toISOString(),
+                },
+            ])
         } else if (event.type === "error") {
+            setErrorMessage(event.message)
             setLogs(prev => [
                 ...prev,
                 {
@@ -164,30 +231,39 @@ export function useAgentStream({
         } else if (event.type === "complete") {
             setIsComplete(true)
             setIsRunning(false)
+            setIsWaitingConsultation(false)
             setCurrentNode(null)
         }
     }, [])
 
-    const start = useCallback(async () => {
-        if (startedRef.current) return
-        startedRef.current = true
+    const runStream = useCallback(async (resume = false) => {
+        if (startedRef.current && !resume) return
+        if (!resume) startedRef.current = true
         setIsRunning(true)
         setIsComplete(false)
+        setErrorMessage(null)
 
         abortRef.current = new AbortController()
 
         try {
+            const authToken = await getAuthToken()
+            const headers: Record<string, string> = { "Content-Type": "application/json" }
+            if (authToken) headers.Authorization = `Bearer ${authToken}`
+
             const body = JSON.stringify({
                 task_id: taskId,
                 input_type: inputType,
                 file_url: fileUrl || `mock://${taskId}`,
+                files,
+                case_prompt: casePrompt,
                 priority_focus: priorityFocus,
                 max_rounds: maxRounds,
+                resume,
             })
 
             const response = await fetch(`${API_BASE}/api/v1/detect/stream`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body,
                 signal: abortRef.current.signal,
             })
@@ -232,11 +308,20 @@ export function useAgentStream({
         } catch (err: unknown) {
             if (err instanceof Error && err.name !== "AbortError") {
                 console.error("[useAgentStream] Error:", err)
+                setErrorMessage(err.message)
             }
         } finally {
             setIsRunning(false)
         }
-    }, [taskId, inputType, fileUrl, priorityFocus, maxRounds, channel, role, processEvent])
+    }, [taskId, inputType, fileUrl, files, casePrompt, priorityFocus, maxRounds, channel, role, processEvent])
+
+    const start = useCallback(() => {
+        void runStream(false)
+    }, [runStream])
+
+    const resume = useCallback(() => {
+        void runStream(true)
+    }, [runStream])
 
     useEffect(() => {
         if (role === 'expert') {
@@ -270,6 +355,9 @@ export function useAgentStream({
         isRunning,
         isComplete,
         currentNode,
+        isWaitingConsultation,
+        errorMessage,
         start,
+        resume,
     }
 }
