@@ -1,5 +1,9 @@
 {
   "devDependencies": {
     "shadcn": "^3.8.5"
+  },
+  "dependencies": {
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.6"
   }
 }

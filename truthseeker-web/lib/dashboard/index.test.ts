@@ -1,21 +1,23 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import {
+  createFallbackDashboardViewModel,
   DASHBOARD_EXTERNAL_INSIGHTS,
-  buildDashboardViewModel,
-  calculateAverageResponseMs,
+  getDashboardViewModel,
   isHighRiskVerdictAlias,
+  normalizeDashboardResponse,
 } from "./index"
 
 describe("dashboard external insights", () => {
-  it("keeps every authority module fully traceable", () => {
+  it("keeps every authority module traceable and assigns a visual direction", () => {
     expect(DASHBOARD_EXTERNAL_INSIGHTS.length).toBeGreaterThanOrEqual(4)
 
     for (const insight of DASHBOARD_EXTERNAL_INSIGHTS) {
       expect(insight.id).toEqual(expect.any(String))
       expect(insight.layer).toEqual(expect.any(String))
       expect(insight.moduleTitle).toEqual(expect.any(String))
-      expect(insight.note).toEqual(expect.any(String))
+      expect(insight.summary).toEqual(expect.any(String))
+      expect(insight.visualType).toEqual(expect.any(String))
       expect(insight.metrics.length).toBeGreaterThan(0)
       expect(insight.source.publisher).toEqual(expect.any(String))
       expect(insight.source.publishedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
@@ -36,134 +38,111 @@ describe("high-risk verdict normalization", () => {
   })
 })
 
-describe("response time aggregation", () => {
-  it("uses only valid completed tasks when calculating the average latency", () => {
-    const average = calculateAverageResponseMs([
+describe("dashboard response normalization", () => {
+  it("maps the backend aggregate payload into the screen view model", () => {
+    const viewModel = normalizeDashboardResponse(
       {
-        id: "task-1",
-        status: "completed",
-        response_ms: 120,
+        generated_at: "2026-04-18T12:00:00.000Z",
+        kpis: {
+          total_tasks: 12,
+          high_risk_tasks: 4,
+          average_response_ms: 186,
+          completed_today: 3,
+        },
+        trend_series: [
+          {
+            id: "daily-completions",
+            title: "近7日完成任务量",
+            unit: "件",
+            points: [
+              { label: "04-12", value: 1 },
+              { label: "04-13", value: 2 },
+            ],
+          },
+          {
+            id: "response-time",
+            title: "近7日平均响应时间",
+            unit: "ms",
+            points: [
+              { label: "04-12", value: 160 },
+              { label: "04-13", value: 220 },
+            ],
+          },
+        ],
+        threat_mix: [
+          { label: "政务短视频换脸", value: 3, share: 0.5 },
+          { label: "语音冒充", value: 2, share: 0.333 },
+        ],
+        status_breakdown: [
+          { label: "已完成", value: 8, share: 0.666 },
+          { label: "分析中", value: 4, share: 0.333 },
+        ],
+        evidence_mix: [
+          { label: "视觉证据", value: 4, share: 0.5 },
+          { label: "音频证据", value: 2, share: 0.25 },
+        ],
+        flow_sankey: {
+          nodes: [{ name: "视频内容" }, { name: "帧级取证" }, { name: "高风险结论" }],
+          links: [
+            { source: "视频内容", target: "帧级取证", value: 3 },
+            { source: "帧级取证", target: "高风险结论", value: 3 },
+          ],
+        },
+        capability_metrics: [
+          { id: "reports-generated", label: "已生成报告", value: 6, helper: "已入库的鉴定报告总量" },
+          { id: "consultation-triggered", label: "会诊触发任务", value: 2, helper: "触发专家会诊的唯一任务数" },
+          { id: "reports-covered", label: "报告覆盖任务", value: 5, helper: "已形成报告闭环的唯一任务数" },
+        ],
       },
-      {
-        id: "task-2",
-        status: "completed",
-        started_at: "2026-04-16T08:00:00.000Z",
-        completed_at: "2026-04-16T08:00:00.240Z",
-      },
-      {
-        id: "task-3",
-        status: "completed",
-        response_ms: 0,
-      },
-      {
-        id: "task-4",
-        status: "analyzing",
-        response_ms: 300,
-      },
-      {
-        id: "task-5",
-        status: "completed",
-        started_at: "2026-04-16T09:00:00.000Z",
-        completed_at: null,
-      },
-    ])
+      "2026-04-18T00:00:00.000Z",
+    )
 
-    expect(average).toBe(180)
-  })
-})
-
-describe("dashboard view model", () => {
-  it("returns the planned shape and tolerates empty datasets", () => {
-    const viewModel = buildDashboardViewModel({
-      tasks: [],
-      reports: [],
-      consultationInvites: [],
-      generatedAt: "2026-04-16T00:00:00.000Z",
+    expect(viewModel.capabilityState).toBe("ready")
+    expect(viewModel.generatedAt).toBe("2026-04-18T12:00:00.000Z")
+    expect(viewModel.kpis).toEqual({
+      totalTasks: 12,
+      highRiskTasks: 4,
+      averageResponseMs: 186,
+      completedToday: 3,
     })
+    expect(viewModel.trendSeries.map((series) => series.id)).toEqual(["daily-completions", "response-time"])
+    expect(viewModel.threatMix[0]?.label).toBe("政务短视频换脸")
+    expect(viewModel.statusBreakdown[0]?.label).toBe("已完成")
+    expect(viewModel.evidenceMix[0]?.label).toBe("视觉证据")
+    expect(viewModel.flowSankey.links).toHaveLength(2)
+    expect(viewModel.capabilityMetrics.map((metric) => metric.id)).toEqual([
+      "reports-generated",
+      "consultation-triggered",
+      "reports-covered",
+    ])
+  })
 
-    expect(viewModel.generatedAt).toBe("2026-04-16T00:00:00.000Z")
-    expect(viewModel.dataWarnings).toEqual([])
+  it("creates a compact fallback state when the aggregate interface is unavailable", () => {
+    const viewModel = createFallbackDashboardViewModel("2026-04-18T00:00:00.000Z")
+
+    expect(viewModel.capabilityState).toBe("error")
     expect(viewModel.kpis).toEqual({
       totalTasks: 0,
       highRiskTasks: 0,
       averageResponseMs: 0,
       completedToday: 0,
     })
-    expect(viewModel.trendSeries.map((series) => series.id)).toEqual(
-      expect.arrayContaining(["response-time", "daily-completions"]),
-    )
-    expect(viewModel.distributionSeries.map((series) => series.id)).toEqual(
-      expect.arrayContaining(["threat-types", "task-status"]),
-    )
-    expect(viewModel.capabilityMetrics.map((metric) => metric.id)).toEqual(
-      expect.arrayContaining(["reports-generated", "consultation-triggered"]),
-    )
-    expect(viewModel.externalInsights).toHaveLength(DASHBOARD_EXTERNAL_INSIGHTS.length)
+    expect(viewModel.evidenceMix).toEqual([])
+    expect(viewModel.flowSankey).toEqual({ nodes: [], links: [] })
   })
+})
 
-  it("prefers task results, falls back to reports, and counts completed-today in Asia/Shanghai", () => {
-    const viewModel = buildDashboardViewModel({
-      generatedAt: "2026-04-16T15:00:00.000Z",
-      tasks: [
-        {
-          id: "task-1",
-          status: "completed",
-          input_type: "video",
-          result: { verdict: "forged", threat_type: "政要人物换脸" },
-          started_at: "2026-04-16T08:00:00.000Z",
-          completed_at: "2026-04-16T08:00:00.300Z",
-          created_at: "2026-04-16T07:55:00.000Z",
-        },
-        {
-          id: "task-2",
-          status: "completed",
-          input_type: "audio",
-          result: "{\"verdict\":\"authentic\"}",
-          started_at: "2026-04-15T08:00:00.000Z",
-          completed_at: "2026-04-15T08:00:00.100Z",
-          created_at: "2026-04-15T07:55:00.000Z",
-        },
-        {
-          id: "task-3",
-          status: "analyzing",
-          input_type: "text",
-          created_at: "2026-04-16T10:00:00.000Z",
-        },
-      ],
-      reports: [
-        {
-          task_id: "task-4",
-          verdict: { verdict: "疑似" },
-          generated_at: "2026-04-16T12:00:00.000Z",
-        },
-      ],
-      consultationInvites: [
-        {
-          task_id: "task-1",
-          status: "pending",
-          created_at: "2026-04-16T11:00:00.000Z",
-        },
-        {
-          task_id: "task-1",
-          status: "accepted",
-          created_at: "2026-04-16T12:00:00.000Z",
-        },
-      ],
+describe("dashboard data fetching", () => {
+  it("falls back gracefully when the backend aggregate endpoint fails", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({}),
     })
 
-    expect(viewModel.kpis.totalTasks).toBe(3)
-    expect(viewModel.kpis.highRiskTasks).toBe(2)
-    expect(viewModel.kpis.completedToday).toBe(1)
-    expect(viewModel.kpis.averageResponseMs).toBe(200)
-    expect(viewModel.dataWarnings).toEqual([])
-    expect(
-      viewModel.distributionSeries.find((series) => series.id === "threat-types")?.items[0]?.label,
-    ).toBe("政要人物换脸")
-    expect(
-      viewModel.capabilityMetrics.find((metric) => metric.id === "reports-generated")?.value,
-    ).toBe(1)
-    expect(
-      viewModel.capabilityMetrics.find((metric) => metric.id === "consultation-triggered")?.value,
-    ).toBe(1)
+    const viewModel = await getDashboardViewModel(fetchMock as unknown as typeof fetch)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(viewModel.capabilityState).toBe("error")
+    expect(viewModel.externalInsights).toHaveLength(DASHBOARD_EXTERNAL_INSIGHTS.length)
   })
 })

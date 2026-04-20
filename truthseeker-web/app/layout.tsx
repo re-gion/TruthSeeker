@@ -1,18 +1,18 @@
 import type { Metadata } from "next"
-import { Inter, JetBrains_Mono } from "next/font/google"
 import localFont from "next/font/local"
 import { ScrollToTop } from "@/components/layout/ScrollToTop"
 import { PageTransition } from "@/components/layout/PageTransition"
 import "./globals.css"
 
-const inter = Inter({
-  subsets: ["latin"],
+const interfaceSans = localFont({
+  src: "../public/fonts/思源宋体SemiBold.otf",
   variable: "--font-geist-sans",
   display: "swap",
+  weight: "600",
 })
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
+const interfaceMono = localFont({
+  src: "../public/fonts/ZhengKaiTi.ttf",
   variable: "--font-geist-mono",
   display: "swap",
 })
@@ -44,7 +44,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN" className="dark" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} ${zhengKaiTi.variable} ${siyuanSong.variable} ${siyuanSong.className} antialiased bg-background text-foreground`}>
+      <body className={`${interfaceSans.variable} ${interfaceMono.variable} ${zhengKaiTi.variable} ${siyuanSong.variable} ${siyuanSong.className} antialiased bg-background text-foreground`}>
         <PageTransition>
           {children}
         </PageTransition>
