@@ -55,7 +55,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     # 从 Supabase 读取新的专家会诊消息（除了 state 中已有的）
     try:
         known_ids = {m.get("id") for m in expert_messages if m.get("id")}
-        resp = supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
+        resp = await asyncio.to_thread(
+            lambda: supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
+        )
         new_expert_messages = [
             m for m in (resp.data or [])
             if m.get("id") not in known_ids
@@ -135,7 +137,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             llm_cross_validation = await challenger_cross_validate(
                 forensics, osint, existing_challenges, case_prompt
             )
-            if llm_cross_validation.startswith("[LLM降级]"):
+            if llm_cross_validation.startswith("[降级模式: LLM不可用]"):
                 log("action", "⚠️  LLM 交叉验证不可用，仅依赖规则检查")
             else:
                 log("finding", f"🧠 LLM 交叉验证完成，生成 {len(llm_cross_validation)} 字分析报告")
@@ -151,7 +153,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
                         })
                         log("finding", "🧠 LLM 发现了规则检查未覆盖的潜在矛盾")
         except Exception as e:
-            llm_cross_validation = f"[LLM降级] 交叉验证异常: {e}"
+            llm_cross_validation = f"[降级模式: LLM不可用] 交叉验证异常: {e}"
             log("action", f"⚠️  LLM 交叉验证异常: {e}")
 
     # 决定是否打回

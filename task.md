@@ -80,8 +80,8 @@
 - [x] Supabase Client 配置（client.ts + server.ts，使用 @supabase/ssr）
 - [x] 用户认证（注册、登录、登出，使用 Server Actions）
 - [x] 认证中间件 `middleware.ts`（路由保护）
-- [x] **数据库 Schema 迁移** — 仓库已补核心表基线迁移；远端环境仍需按迁移执行验证
-- [x] **RLS 策略** — 仓库已补核心 RLS policy；远端环境仍需按迁移执行验证
+- [x] **数据库 Schema 迁移** — 仓库基线迁移已与远端 Supabase 同步（9 表、17 迁移、全 RLS 启用）
+- [x] **RLS 策略** — 全部 9 表 RLS policy 已配置并优化（(select auth.uid()) initplan 模式）
 - [x] 任务 API（POST/GET /api/v1/tasks，含 Supabase 持久化 + 降级）
 
 ### Phase 1.2: 双 Agent 核心流程 ✅
@@ -203,8 +203,10 @@
 - [x] **State 新增字段** — degradation_status、expert_messages、timeline_events
 
 ### 数据库与持久化
-- [x] 通过 Supabase 基线迁移定义 tasks 表 Schema
-- [x] 配置 RLS 策略（仓库迁移已包含用户任务隔离 policy）
+- [x] 通过 Supabase 基线迁移定义全部 9 表 Schema（profiles、tasks、analysis_states、agent_logs、reports、consultation_invites、consultation_messages、audit_logs、system_stats）
+- [x] 配置 RLS 策略（全部 9 表 RLS 已启用，策略使用 (select auth.uid()) 优化）
+- [x] Supabase 远端已执行 17 次迁移，基线迁移文件与线上 schema 完全一致
+- [x] `analysis_states.result_snapshot` 列已补齐（代码依赖此字段做会诊恢复）
 - [x] 创建 `.env.example` 文件（前端 + 后端）
 
 ### 后端安全与健壮性
@@ -214,7 +216,7 @@
 - [x] 文件上传端点（接收文件 → 存储 → 返回 URL）
 
 ### 测试
-- [x] 后端单元测试 — 77 项 pytest 覆盖纯函数、降级管理、收敛路由、报告完整性、认证配置、文本校验、会诊恢复（2026-04-21 验证通过）
+- [x] 后端单元测试 — 85 项 pytest 覆盖纯函数、降级管理、收敛路由、报告完整性、认证配置、文本校验、会诊恢复、数据库错误可见性（2026-04-21 验证通过）
 - [x] API 集成测试 — report/consultation/dashboard 端点 mock DB 测试通过
 - [ ] 前后端联调测试（需真实 Supabase 环境）
 

@@ -149,7 +149,8 @@ class DashboardApiTests(TestCase):
     def test_dashboard_overview_returns_public_aggregated_snapshot(self):
         from app.api.v1 import dashboard as dashboard_module
 
-        with patch.object(dashboard_module, "supabase", FakeSupabase(build_dashboard_db())):
+        with patch.object(dashboard_module, "supabase", FakeSupabase(build_dashboard_db())), \
+             patch("app.middleware.auth._is_public", lambda path, method="GET": True):
             client = TestClient(app)
             response = client.get("/api/v1/dashboard/overview")
 
@@ -199,7 +200,8 @@ class DashboardApiTests(TestCase):
         db = build_dashboard_db()
         db["reports"] = []
 
-        with patch.object(dashboard_module, "supabase", FakeSupabase(db)):
+        with patch.object(dashboard_module, "supabase", FakeSupabase(db)), \
+             patch("app.middleware.auth._is_public", lambda path, method="GET": True):
             client = TestClient(app)
             response = client.get("/api/v1/dashboard/overview")
 

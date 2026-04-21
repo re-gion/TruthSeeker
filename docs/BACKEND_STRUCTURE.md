@@ -37,7 +37,7 @@ truthseeker-api/
 │   ├── services/
 │   │   ├── auth_config.py
 │   │   ├── evidence_files.py
-│   │   ├── text_validation.py
+│   │   ├── text_validation.py   # 文本上传校验（扩展名白名单、控制字符比例检测、多编码尝试、二进制伪装检测）
 │   │   ├── analysis_persistence.py
 │   │   ├── report_integrity.py
 │   │   ├── audit_log.py

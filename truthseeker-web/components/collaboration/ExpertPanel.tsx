@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { createClient } from "@/lib/supabase/client"
+import { getAuthToken } from "@/lib/auth"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import Image from "next/image"
 
@@ -76,16 +77,6 @@ function getTempUserId() {
     const userId = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(7)
     window.localStorage.setItem("temp_user_id", userId)
     return userId
-}
-
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const supabase = createClient()
-        const { data } = await supabase.auth.getSession()
-        return data.session?.access_token ?? null
-    } catch {
-        return null
-    }
 }
 
 export function ExpertPanel({

@@ -18,17 +18,7 @@ import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnaps
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import StarBackground from "@/components/ui/StarBackground"
-import { createClient } from "@/lib/supabase/client"
-
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const supabase = createClient()
-        const { data } = await supabase.auth.getSession()
-        return data.session?.access_token ?? null
-    } catch {
-        return null
-    }
-}
+import { getAuthToken } from "@/lib/auth"
 
 interface TaskContext {
     inputType: string
@@ -439,7 +429,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         activeAgent={currentNode || (isComplete ? 'commander' : null)}
                     />
                 </div>
-            ) : (
+            ) : viewMode !== "timeline" ? (
                 <div className="flex-1 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-7xl mx-auto w-full auto-rows-fr">
                     {/* 左上：媒体与溯源（OSINT） */}
                     <motion.div
@@ -548,7 +538,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         </div>
                     </motion.div>
                 </div>
-            )}
+            ) : null}
 
             {/* Timeline View */}
             {viewMode === "timeline" && (

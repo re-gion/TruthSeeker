@@ -17,16 +17,23 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# LLM connection pool – module-level singleton cache keyed by model name
+# ---------------------------------------------------------------------------
+_llm_cache: dict[str, ChatOpenAI] = {}
 
-def get_llm() -> ChatOpenAI:
-    """Return a ChatOpenAI instance configured for Kimi/Moonshot API."""
-    return ChatOpenAI(
-        model="moonshot-v1-8k",
-        base_url=settings.KIMI_BASE_URL,
-        api_key=settings.KIMI_API_KEY,
-        temperature=0.3,
-        max_tokens=2048,
-    )
+
+def get_llm(model_name: str = "moonshot-v1-8k") -> ChatOpenAI:
+    """Return a cached ChatOpenAI instance configured for Kimi/Moonshot API."""
+    if model_name not in _llm_cache:
+        _llm_cache[model_name] = ChatOpenAI(
+            model=model_name,
+            base_url=settings.KIMI_BASE_URL,
+            api_key=settings.KIMI_API_KEY,
+            temperature=0.3,
+            max_tokens=2048,
+        )
+    return _llm_cache[model_name]
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +57,7 @@ async def _invoke_llm(
         return await chain.ainvoke(variables)
     except Exception as exc:
         logger.exception("LLM 调用失败: %s", exc)
-        return fallback_text
+        return f"[降级模式: LLM不可用] {fallback_text}"
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +84,7 @@ async def forensics_interpret(raw_api_result: dict, input_type: str, case_prompt
             "raw_data": json.dumps(raw_api_result, ensure_ascii=False, indent=2),
         },
         fallback_text=(
-            f"[LLM降级] 基于规则推断: 检测对象类型={input_type}, "
+            f"基于规则推断: 检测对象类型={input_type}, "
             f"是否伪造={raw_api_result.get('is_deepfake', False)}, "
             f"置信度/概率={raw_api_result.get('deepfake_probability', raw_api_result.get('confidence', 'N/A'))}。"
             f"原始数据如下: {json.dumps(raw_api_result, ensure_ascii=False)}"
@@ -110,7 +117,7 @@ async def osint_interpret(raw_intel: dict, input_type: str, case_prompt: str = "
             "raw_data": json.dumps(raw_intel, ensure_ascii=False, indent=2),
         },
         fallback_text=(
-            f"[LLM降级] 基于规则推断: 威胁评分={raw_intel.get('threat_score', 'N/A')}, "
+            f"基于规则推断: 威胁评分={raw_intel.get('threat_score', 'N/A')}, "
             f"关键指标数={len(indicators) if isinstance(indicators, list) else 'N/A'}。"
             f"原始数据如下: {json.dumps(raw_intel, ensure_ascii=False)}"
         ),
@@ -151,7 +158,7 @@ async def challenger_cross_validate(
             "challenges_data": json.dumps(challenges, ensure_ascii=False, indent=2),
         },
         fallback_text=(
-            "[LLM降级] 基于规则推断: "
+            "基于规则推断: "
             f"取证结论={json.dumps(forensics, ensure_ascii=False)[:200]}, "
             f"情报结论={json.dumps(osint, ensure_ascii=False)[:200]}, "
             f"已有质疑数={len(challenges) if isinstance(challenges, list) else 'N/A'}。"
@@ -197,7 +204,7 @@ async def commander_ruling(
             "weights_data": json.dumps(agent_weights, ensure_ascii=False, indent=2),
         },
         fallback_text=(
-            "[LLM降级] 基于规则推断: 综合所有智能体证据，"
+            "基于规则推断: 综合所有智能体证据，"
             f"权重={json.dumps(agent_weights, ensure_ascii=False)}，"
             "裁决未能由 LLM 完成。"
             f"取证={json.dumps(forensics, ensure_ascii=False)[:150]}, "

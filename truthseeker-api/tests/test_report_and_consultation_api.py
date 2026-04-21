@@ -178,6 +178,7 @@ def test_download_pdf_returns_error_when_generation_unavailable(monkeypatch):
     from app.api.v1 import report as report_module
 
     monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+    monkeypatch.setattr(report_module, "_assert_task_owner", lambda task_id, request: None)
 
     async def fake_generate_pdf_report(_task_id):
         raise RuntimeError("PDF generation unavailable")

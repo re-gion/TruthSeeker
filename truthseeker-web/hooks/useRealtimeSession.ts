@@ -62,7 +62,7 @@ export function useRealtimeSession(taskId: string, role: UserRole = 'host') {
             .on('presence', { event: 'sync' }, () => {
                 handlePresenceSync()
             })
-            .subscribe(async (status) => {
+            .subscribe(async (status: string) => {
                 if (status === 'SUBSCRIBED') {
                     await channel.track({
                         role,

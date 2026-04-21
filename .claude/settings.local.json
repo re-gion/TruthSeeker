@@ -39,7 +39,12 @@
       "mcp__chrome-devtools__fill_form",
       "mcp__chrome-devtools__click",
       "mcp__chrome-devtools__wait_for",
-      "mcp__chrome-devtools__fill"
+      "mcp__chrome-devtools__fill",
+      "Bash(npm --version)",
+      "Bash(node node_modules/next/dist/bin/next build)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false --incremental false)",
+      "Bash(node node_modules/vitest/vitest.mjs run --reporter=verbose)"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -272,7 +272,7 @@ async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> di
     await asyncio.sleep(0.1)
 
     seed = f"{media_type}:{file_url}"
-    deepfake_prob = _stable_float(f"{seed}:probability", minimum=0.3, maximum=0.95)
+    deepfake_prob = _stable_float(f"{seed}:probability", minimum=0.1, maximum=0.95)
     is_deepfake = deepfake_prob > 0.5
 
     indicators = []

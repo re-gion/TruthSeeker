@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         default="https://api.moonshot.cn/v1",
         validation_alias=AliasChoices("KIMI_BASE_URL", "Kimi_Base_URL"),
     )
+    # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
 

@@ -36,8 +36,8 @@ export function HomeClientWidgets() {
             {/* Comparison View Section */}
             <div className="w-full max-w-5xl">
                 <div className="text-center mb-8">
-                    <h2 className="text-2xl font-bold text-white mb-2">多维特征指纹提取</h2>
-                    <p className="text-[#6B7280] text-sm">TruthSeeker 鉴伪引擎能够在像素级和频谱级发现肉眼无法辨别的合成伪影</p>
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">多维特征指纹提取</h2>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">TruthSeeker 鉴伪引擎能够在像素级和频谱级发现肉眼无法辨别的合成伪影</p>
                 </div>
 
                 <ComparisonView />

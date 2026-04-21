@@ -68,8 +68,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 if AUTH_MIDDLEWARE_ENABLED:
     app.add_middleware(AuthMiddleware, supabase_jwt_secret=settings.SUPABASE_JWT_SECRET)

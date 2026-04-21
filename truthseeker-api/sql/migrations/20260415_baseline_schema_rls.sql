@@ -1,37 +1,53 @@
 -- TruthSeeker baseline schema and RLS policies.
 -- This file must run before later incremental migrations in a fresh Supabase project.
+-- Updated 2026-04-21: aligned with live Supabase schema (uuid user_id, CHECK constraints, result_snapshot).
 
 create extension if not exists pgcrypto;
 
+-- profiles: mirrors Supabase auth.users
+create table if not exists public.profiles (
+  id uuid references auth.users(id) on delete cascade primary key,
+  username text unique,
+  role text default 'user' check (role in ('user', 'admin')),
+  avatar_url text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- tasks: core detection task tracking
 create table if not exists public.tasks (
   id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id),
   title text not null default 'Untitled Task',
-  status text not null default 'pending',
-  input_type text not null default 'video',
   description text,
-  user_id text,
-  metadata jsonb not null default '{}'::jsonb,
+  input_type text not null default 'video'
+    check (input_type in ('video', 'audio', 'image', 'text', 'mixed')),
+  priority_focus text not null default 'balanced'
+    check (priority_focus in ('visual', 'audio', 'text', 'balanced')),
   storage_paths jsonb not null default '{}'::jsonb,
-  priority_focus text not null default 'balanced',
-  result jsonb,
-  verdict jsonb,
-  response_ms integer,
-  duration_ms integer,
+  status text not null default 'pending'
+    check (status in ('pending', 'preprocessing', 'analyzing', 'deliberating', 'waiting_consultation', 'completed', 'failed')),
+  progress integer default 0 check (progress >= 0 and progress <= 100),
+  created_at timestamptz not null default now(),
   started_at timestamptz,
   completed_at timestamptz,
-  created_at timestamptz not null default now(),
+  expires_at timestamptz default (now() + interval '7 days'),
+  deleted_at timestamptz,
+  result jsonb,
+  metadata jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
+-- analysis_states: per-round agent debate snapshots
 create table if not exists public.analysis_states (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
   round_number int default 1,
-  forensics_score float,
-  osint_score float,
+  forensics_score float check (forensics_score is null or (forensics_score >= 0 and forensics_score <= 1)),
+  osint_score float check (osint_score is null or (osint_score >= 0 and osint_score <= 1)),
   convergence_delta float,
   evidence_board jsonb default '{}'::jsonb,
-  result_snapshot jsonb default '{}'::jsonb,
+  result_snapshot jsonb not null default '{}'::jsonb,
   current_agent text,
   is_converged boolean default false,
   termination_reason text,
@@ -39,21 +55,23 @@ create table if not exists public.analysis_states (
   updated_at timestamptz default now()
 );
 
+-- agent_logs: per-agent thinking/action/finding logs
 create table if not exists public.agent_logs (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
-  round_number int not null,
+  round_number int not null default 1,
   agent_name text not null,
-  log_type text,
+  log_type text check (log_type in ('thinking', 'action', 'finding', 'challenge', 'conclusion')),
   content text not null,
   metadata jsonb default '{}'::jsonb,
   timestamp timestamptz default now()
 );
 
+-- reports: final verdict and share tokens
 create table if not exists public.reports (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null unique,
-  verdict text,
+  verdict text check (verdict in ('authentic', 'suspicious', 'forged', 'inconclusive')),
   confidence_overall float,
   summary text,
   key_evidence jsonb default '[]'::jsonb,
@@ -64,6 +82,7 @@ create table if not exists public.reports (
   generated_at timestamptz default now()
 );
 
+-- consultation_invites: expert invitation tokens
 create table if not exists public.consultation_invites (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
@@ -73,6 +92,7 @@ create table if not exists public.consultation_invites (
   created_at timestamptz default now()
 );
 
+-- consultation_messages: expert chat messages
 create table if not exists public.consultation_messages (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
@@ -82,6 +102,7 @@ create table if not exists public.consultation_messages (
   created_at timestamptz default now()
 );
 
+-- audit_logs: security and action audit trail
 create table if not exists public.audit_logs (
   id uuid default gen_random_uuid() primary key,
   action text not null,
@@ -92,6 +113,18 @@ create table if not exists public.audit_logs (
   created_at timestamptz default now()
 );
 
+-- system_stats: dashboard aggregate stats
+create table if not exists public.system_stats (
+  id serial primary key,
+  date date unique default current_date,
+  total_tasks integer default 0,
+  completed_tasks integer default 0,
+  avg_processing_time interval,
+  threat_type_distribution jsonb default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+
+-- Indexes
 create index if not exists idx_tasks_user_created on public.tasks(user_id, created_at desc);
 create index if not exists idx_tasks_status_created on public.tasks(status, created_at desc);
 create index if not exists idx_analysis_states_task_round on public.analysis_states(task_id, round_number);
@@ -99,10 +132,13 @@ create index if not exists idx_agent_logs_task_round on public.agent_logs(task_i
 create index if not exists idx_reports_share_token on public.reports(share_token);
 create index if not exists idx_reports_report_hash on public.reports(report_hash);
 create index if not exists idx_consultation_invites_token on public.consultation_invites(token);
+create index if not exists idx_consultation_invites_task_id on public.consultation_invites(task_id);
 create index if not exists idx_consultation_messages_task_created on public.consultation_messages(task_id, created_at);
 create index if not exists idx_audit_logs_task_created on public.audit_logs(task_id, created_at desc);
 create index if not exists idx_audit_logs_action_created on public.audit_logs(action, created_at desc);
 
+-- Enable RLS on all tables
+alter table public.profiles enable row level security;
 alter table public.tasks enable row level security;
 alter table public.analysis_states enable row level security;
 alter table public.agent_logs enable row level security;
@@ -110,81 +146,98 @@ alter table public.reports enable row level security;
 alter table public.consultation_invites enable row level security;
 alter table public.consultation_messages enable row level security;
 alter table public.audit_logs enable row level security;
+alter table public.system_stats enable row level security;
 
-drop policy if exists tasks_select_own on public.tasks;
-create policy tasks_select_own on public.tasks
+-- Helper functions (search_path set for security)
+create or replace function public.set_updated_at()
+returns trigger language plpgsql set search_path = '' as $$
+begin new.updated_at = now(); return new; end;
+$$;
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  insert into public.profiles (id, username, role) values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'username', new.email),
+    coalesce(new.raw_user_meta_data->>'role', 'user')
+  );
+  return new;
+end;
+$$;
+
+-- profiles RLS (using (select auth.uid()) for initplan optimization)
+create policy "Users can view own profile" on public.profiles
+  for select to authenticated using ((select auth.uid()) = id);
+create policy "Users can update own profile" on public.profiles
+  for update to authenticated using ((select auth.uid()) = id);
+
+-- tasks RLS
+create policy users_own_tasks_select on public.tasks
+  for select to authenticated using ((select auth.uid()) = user_id);
+create policy users_own_tasks_insert on public.tasks
+  for insert to authenticated with check ((select auth.uid()) = user_id);
+create policy users_own_tasks_update on public.tasks
+  for update to authenticated using ((select auth.uid()) = user_id);
+create policy anon_tasks_insert on public.tasks
+  for insert to public with check (user_id is null);
+
+-- analysis_states RLS
+create policy "Analysis states viewable by task owner" on public.analysis_states
   for select to authenticated
-  using (user_id is null or user_id = auth.uid()::text);
-
-drop policy if exists tasks_insert_own on public.tasks;
-create policy tasks_insert_own on public.tasks
+  using (exists (select 1 from public.tasks where tasks.id = analysis_states.task_id and tasks.user_id = (select auth.uid())));
+create policy "Analysis states insertable by service" on public.analysis_states
   for insert to authenticated
-  with check (user_id is null or user_id = auth.uid()::text);
+  with check (exists (select 1 from public.tasks where tasks.id = analysis_states.task_id and tasks.user_id = (select auth.uid())));
 
-drop policy if exists tasks_update_own on public.tasks;
-create policy tasks_update_own on public.tasks
-  for update to authenticated
-  using (user_id is null or user_id = auth.uid()::text)
-  with check (user_id is null or user_id = auth.uid()::text);
-
-drop policy if exists tasks_delete_own on public.tasks;
-create policy tasks_delete_own on public.tasks
-  for delete to authenticated
-  using (user_id is null or user_id = auth.uid()::text);
-
-drop policy if exists analysis_states_select_task_owner on public.analysis_states;
-create policy analysis_states_select_task_owner on public.analysis_states
+-- agent_logs RLS
+create policy "Agent logs viewable by task owner" on public.agent_logs
   for select to authenticated
-  using (exists (
-    select 1 from public.tasks
-    where tasks.id = analysis_states.task_id
-      and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-  ));
+  using (exists (select 1 from public.tasks where tasks.id = agent_logs.task_id and tasks.user_id = (select auth.uid())));
+create policy "Agent logs insertable by service" on public.agent_logs
+  for insert to authenticated
+  with check (exists (select 1 from public.tasks where tasks.id = agent_logs.task_id and tasks.user_id = (select auth.uid())));
 
-drop policy if exists agent_logs_select_task_owner on public.agent_logs;
-create policy agent_logs_select_task_owner on public.agent_logs
+-- reports RLS
+create policy "Reports viewable by task owner" on public.reports
   for select to authenticated
-  using (exists (
-    select 1 from public.tasks
-    where tasks.id = agent_logs.task_id
-      and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-  ));
+  using (exists (select 1 from public.tasks where tasks.id = reports.task_id and tasks.user_id = (select auth.uid())));
+create policy reports_insert_by_owner on public.reports
+  for insert to authenticated
+  with check (exists (select 1 from public.tasks where tasks.id = reports.task_id and (tasks.user_id = (select auth.uid()) or tasks.user_id is null)));
 
-drop policy if exists reports_select_task_owner on public.reports;
-create policy reports_select_task_owner on public.reports
-  for select to authenticated
-  using (exists (
-    select 1 from public.tasks
-    where tasks.id = reports.task_id
-      and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-  ));
-
-drop policy if exists consultation_invites_select_task_owner on public.consultation_invites;
+-- consultation_invites RLS
 create policy consultation_invites_select_task_owner on public.consultation_invites
   for select to authenticated
-  using (exists (
-    select 1 from public.tasks
-    where tasks.id = consultation_invites.task_id
-      and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-  ));
+  using (exists (select 1 from public.tasks where tasks.id = consultation_invites.task_id and tasks.user_id = (select auth.uid())));
+create policy consultation_invites_insert_task_owner on public.consultation_invites
+  for insert to authenticated
+  with check (exists (select 1 from public.tasks where tasks.id = consultation_invites.task_id and tasks.user_id = (select auth.uid())));
+create policy consultation_invites_update_task_owner on public.consultation_invites
+  for update to authenticated
+  using (exists (select 1 from public.tasks where tasks.id = consultation_invites.task_id and tasks.user_id = (select auth.uid())));
 
-drop policy if exists consultation_messages_select_task_owner on public.consultation_messages;
-create policy consultation_messages_select_task_owner on public.consultation_messages
+-- consultation_messages RLS
+create policy "Consultation messages viewable by task owner" on public.consultation_messages
   for select to authenticated
-  using (exists (
-    select 1 from public.tasks
-    where tasks.id = consultation_messages.task_id
-      and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-  ));
+  using (exists (select 1 from public.tasks where tasks.id = consultation_messages.task_id and tasks.user_id = (select auth.uid())));
+create policy "Consultation messages insertable by task owner" on public.consultation_messages
+  for insert to authenticated
+  with check (exists (select 1 from public.tasks where tasks.id = consultation_messages.task_id and tasks.user_id = (select auth.uid())));
 
-drop policy if exists audit_logs_select_task_owner on public.audit_logs;
+-- audit_logs RLS
 create policy audit_logs_select_task_owner on public.audit_logs
   for select to authenticated
-  using (
-    task_id is null
-    or exists (
-      select 1 from public.tasks
-      where tasks.id = audit_logs.task_id
-        and (tasks.user_id is null or tasks.user_id = auth.uid()::text)
-    )
-  );
+  using (task_id is null or exists (select 1 from public.tasks where tasks.id = audit_logs.task_id and tasks.user_id = (select auth.uid())));
+create policy audit_logs_insert_authenticated on public.audit_logs
+  for insert to authenticated with check (true);
+
+-- system_stats RLS
+create policy system_stats_select_all on public.system_stats
+  for select to public using (true);
+
+-- Triggers
+create trigger set_updated_at before update on public.tasks
+  for each row execute function public.set_updated_at();
+create trigger on_auth_user_created after insert on auth.users
+  for each row execute function public.handle_new_user();

@@ -163,7 +163,7 @@ import { motion } from "framer-motion" //已废弃！
 ###交互动效
 - **鼠标跟随**：轻微视差偏移
 - **聚焦模式**：点击面板放大至全屏，其他面板淡出
-- **过渡动画**：使用 `@react-spring/three`实现平滑相机移动
+- **过渡动画**：使用 `motion`（来自 `motion/react`）和 `gsap` 实现平滑动画过渡
 
 ---
 

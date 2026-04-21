@@ -2,17 +2,7 @@
 
 import { useState } from "react"
 import { motion, AnimatePresence } from "motion/react"
-import { createClient } from "@/lib/supabase/client"
-
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const supabase = createClient()
-        const { data } = await supabase.auth.getSession()
-        return data.session?.access_token ?? null
-    } catch {
-        return null
-    }
-}
+import { getAuthToken } from "@/lib/auth"
 
 export function InviteButton({ taskId }: { taskId: string }) {
     const [copied, setCopied] = useState(false)

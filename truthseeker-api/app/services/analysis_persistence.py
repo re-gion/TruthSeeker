@@ -305,22 +305,22 @@ class AnalysisPersistenceService:
         try:
             self.client.table(table_name).insert(payload).execute()
         except Exception as exc:
-            logger.warning("Failed to insert into %s: %s", table_name, exc)
+            logger.error("Failed to insert into %s: %s (payload keys: %s)", table_name, exc, list(payload.keys()))
 
     def _safe_insert_many(self, table_name: str, payload: list[dict[str, Any]]) -> None:
         try:
             self.client.table(table_name).insert(payload).execute()
         except Exception as exc:
-            logger.warning("Failed to insert many rows into %s: %s", table_name, exc)
+            logger.error("Failed to insert %d rows into %s: %s", len(payload), table_name, exc)
 
     def _safe_update(self, table_name: str, payload: dict[str, Any], task_id: str) -> None:
         try:
             self.client.table(table_name).update(payload).eq("id", task_id).execute()
         except Exception as exc:
-            logger.warning("Failed to update %s for task %s: %s", table_name, task_id, exc)
+            logger.error("Failed to update %s for task %s: %s (payload keys: %s)", table_name, task_id, exc, list(payload.keys()))
 
     def _safe_upsert(self, table_name: str, payload: dict[str, Any], *, on_conflict: str) -> None:
         try:
             self.client.table(table_name).upsert(payload, on_conflict=on_conflict).execute()
         except Exception as exc:
-            logger.warning("Failed to upsert into %s: %s", table_name, exc)
+            logger.error("Failed to upsert into %s (on_conflict=%s): %s", table_name, on_conflict, exc)

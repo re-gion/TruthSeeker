@@ -7,7 +7,7 @@ from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.fallback import fallback_osint_analysis, minimal_osint_result, shared_degradation
 from app.agents.tools.threat_intel import analyze_urls, check_domain_reputation, scan_file_hash, extract_media_metadata
 from app.agents.tools.llm_client import osint_interpret
-from app.agents.tools.text_detection import extract_urls_from_text
+from app.agents.tools.text_detection import extract_urls_from_text, analyze_text
 
 TEXT_MAX_CHARS = 10000
 
@@ -45,8 +45,6 @@ async def osint_node(state: TruthSeekerState) -> dict:
     if case_prompt:
         log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
 
-    await asyncio.sleep(0.3)
-
     osint_files = input_files.get("osint") or []
     text_files = [item for item in osint_files if item.get("modality") == "text"]
     media_files = [item for item in osint_files if item.get("modality") in ("video", "audio", "image")]
@@ -64,9 +62,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
     )
     urls_to_check = [] if text_files else [u for u in [primary_url] if u and not u.startswith("mock://")]
     text_sources_analyzed = 0
+    text_analysis_result: dict | None = None  # 文本 AI 检测分析结果
 
     if text_files:
         text_urls: list[str] = []
+        collected_text_contents: list[str] = []
         for text_file in text_files:
             text_url = text_file.get("file_url") or text_file.get("storage_path")
             text_content = ""
@@ -83,12 +83,27 @@ async def osint_node(state: TruthSeekerState) -> dict:
                 extracted_urls = extract_urls_from_text(text_content)
                 if extracted_urls:
                     text_urls.extend(extracted_urls)
+                collected_text_contents.append(text_content)
 
         if text_urls:
             urls_to_check = list(dict.fromkeys(text_urls))
             log("finding", f"🔗 从文本检材中提取到 {len(urls_to_check)} 个 URL/域名线索")
         else:
             log("finding", "📋 文本检材中未发现 URL，OSINT 将结合元数据和案件提示词进行低风险溯源评估")
+
+        # 对收集到的文本内容调用 analyze_text 进行 AI 文本检测分析
+        if collected_text_contents:
+            combined_text = "\n\n".join(collected_text_contents)[:TEXT_MAX_CHARS]
+            log("action", "🧠 正在调用文本检测模块进行 AI 生成文本分析...")
+            try:
+                text_analysis_result = await analyze_text(combined_text)
+                ai_prob = text_analysis_result.get("ai_probability", 0.0)
+                anomalies = text_analysis_result.get("anomalies", [])
+                log("finding", f"📄 文本 AI 检测完成：AI 生成概率={ai_prob:.1%}，发现 {len(anomalies)} 条异常")
+                for anomaly in anomalies[:3]:
+                    log("finding", f"  → 文本异常: {anomaly}")
+            except Exception as exc:
+                log("action", f"⚠️  文本 AI 检测分析失败: {type(exc).__name__}: {exc}")
 
     # 文本输入类型：从文本内容中提取 URL
     if input_type == "text" and not urls_to_check and not text_files:
@@ -97,7 +112,9 @@ async def osint_node(state: TruthSeekerState) -> dict:
         # 尝试获取文本内容
         try:
             from app.utils.supabase_client import supabase as supabase_client
-            task_resp = supabase_client.table("tasks").select("description").eq("id", task_id).execute()
+            task_resp = await asyncio.to_thread(
+                lambda: supabase_client.table("tasks").select("description").eq("id", task_id).execute()
+            )
             if task_resp.data:
                 text_content = task_resp.data[0].get("description", "")
         except Exception:
@@ -111,6 +128,18 @@ async def osint_node(state: TruthSeekerState) -> dict:
             else:
                 log("finding", "📋 文本中未发现 URL，OSINT 情报贡献有限")
 
+            # 调用 analyze_text 进行 AI 文本检测分析
+            log("action", "🧠 正在调用文本检测模块进行 AI 生成文本分析...")
+            try:
+                text_analysis_result = await analyze_text(text_content)
+                ai_prob = text_analysis_result.get("ai_probability", 0.0)
+                anomalies = text_analysis_result.get("anomalies", [])
+                log("finding", f"📄 文本 AI 检测完成：AI 生成概率={ai_prob:.1%}，发现 {len(anomalies)} 条异常")
+                for anomaly in anomalies[:3]:
+                    log("finding", f"  → 文本异常: {anomaly}")
+            except Exception as exc:
+                log("action", f"⚠️  文本 AI 检测分析失败: {type(exc).__name__}: {exc}")
+
     degradation_status = shared_degradation.get_degradation_level("virustotal")
 
     threat_score = 0.0
@@ -120,7 +149,6 @@ async def osint_node(state: TruthSeekerState) -> dict:
 
     if urls_to_check:
         log("action", f"🔍 正在查询威胁情报数据库，目标: {urls_to_check[0][:60]}...")
-        await asyncio.sleep(0.5)
 
         try:
             intel_result = await analyze_urls(urls_to_check)
@@ -265,6 +293,21 @@ async def osint_node(state: TruthSeekerState) -> dict:
         }
         virustotal_result = {"scan_available": False, "reason": "no_ioc_extracted"}
 
+    # 整合文本 AI 检测分析结果到威胁指标
+    if text_analysis_result:
+        text_ai_prob = text_analysis_result.get("ai_probability", 0.0)
+        text_anomalies = text_analysis_result.get("anomalies", [])
+        if text_ai_prob > 0.6:
+            threat_indicators.append(f"文本 AI 检测：AI 生成概率高 ({text_ai_prob:.1%})")
+        elif text_ai_prob > 0.3:
+            threat_indicators.append(f"文本 AI 检测：存在 AI 痕迹 ({text_ai_prob:.1%})")
+        for anomaly in text_anomalies[:2]:
+            if anomaly not in threat_indicators:
+                threat_indicators.append(f"文本异常: {anomaly}")
+        # 提升威胁分数：AI 文本概率贡献
+        text_threat_factor = text_ai_prob * 0.3
+        threat_score = min(1.0, max(threat_score, text_threat_factor))
+
     # 构建证据条目
     evidence_item: EvidenceItem = {
         "type": "osint",
@@ -301,6 +344,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "domain_info": domain_info,
         "virustotal_summary": virustotal_result,
         "text_sources_analyzed": text_sources_analyzed,
+        "text_analysis": text_analysis_result,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -311,12 +355,12 @@ async def osint_node(state: TruthSeekerState) -> dict:
     log("action", "🧠 正在调用大模型进行深度情报推理...")
     try:
         llm_analysis = await osint_interpret(osint_result, input_type, case_prompt)
-        if llm_analysis.startswith("[LLM降级]"):
+        if llm_analysis.startswith("[降级模式: LLM不可用]"):
             log("action", "⚠️  LLM 情报推理不可用，使用降级模式")
         else:
             log("finding", f"🧠 LLM 情报分析完成，生成 {len(llm_analysis)} 字专业报告")
     except Exception as e:
-        llm_analysis = f"[LLM降级] 情报推理异常: {e}"
+        llm_analysis = f"[降级模式: LLM不可用] 情报推理异常: {e}"
         log("action", f"⚠️  LLM 情报推理异常: {e}")
 
     # 将 LLM 分析添加到结果中

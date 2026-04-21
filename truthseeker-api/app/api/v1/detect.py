@@ -50,7 +50,6 @@ class DetectRequest(BaseModel):
     file_urls: Optional[dict[str, Any]] = None
     files: list[dict[str, Any]] = Field(default_factory=list)
     case_prompt: Optional[str] = None
-    user_id: Optional[str] = None
     priority_focus: str = "balanced"
     max_rounds: int = Field(3, ge=1, le=5)
     resume: bool = False

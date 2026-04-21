@@ -122,9 +122,11 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
+SUPABASE_JWT_SECRET=...
 OPENAI_API_KEY=sk-...
-DEEPWARE_API_KEY=...
-SENSITY_API_KEY=...
+KIMI_API_KEY=
+KIMI_BASE_URL=https://api.moonshot.cn/v1
+APP_ENV=development
 ```
 
 ---
@@ -576,15 +578,15 @@ import { Canvas } from '@react-three/fiber'
 ### 前端依赖
 ```json
 {
-  "next": "^15.2.0",
+  "next": "16.1.6",
   "react": "^19.0.0",
   "tailwindcss": "^4.0.0",
   "@tailwindcss/postcss": "^4.0.0",
-  "motion": "^12.9.2",
+  "motion": "^12.34.3",
   "@react-three/fiber": "^9.5.0",
-  "@react-three/drei": "^10.0.0",
-  "@supabase/supabase-js": "^2.49.0",
-  "@supabase/ssr": "^0.6.0"
+  "@react-three/drei": "^10.7.7",
+  "@supabase/supabase-js": "^2.98.0",
+  "@supabase/ssr": "^0.8.0"
 }
 ```
 

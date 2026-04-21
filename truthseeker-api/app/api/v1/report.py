@@ -15,7 +15,7 @@ router = APIRouter()
 def _assert_task_owner(task_id: str, request: Request) -> None:
     user_id = getattr(request.state, "user_id", None)
     if not user_id or user_id == "anonymous":
-        return
+        raise HTTPException(status_code=401, detail="未认证用户无法下载报告，请先登录")
 
     try:
         from app.utils.supabase_client import supabase

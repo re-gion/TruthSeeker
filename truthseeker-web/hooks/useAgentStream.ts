@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
+import { getAuthToken } from "@/lib/auth"
 
 export type AgentEvent =
     | { type: "start"; task_id: string; max_rounds?: number }
@@ -106,16 +107,6 @@ function readTimelineEntries(event: Extract<AgentEvent, { type: "timeline_update
 
     const singleEntry = readTimelineEntry(event)
     return singleEntry ? [singleEntry] : []
-}
-
-async function getAuthToken(): Promise<string | null> {
-    try {
-        const supabase = createClient()
-        const { data } = await supabase.auth.getSession()
-        return data.session?.access_token ?? null
-    } catch {
-        return null
-    }
 }
 
 export function useAgentStream({
@@ -333,12 +324,16 @@ export function useAgentStream({
                     if (!event) return
                     processEvent(event)
                 })
-                return
+                return () => { void channel.unsubscribe() }
             }
+            return () => {}
         } else {
             // Host starts the execution stream
             if (autoStart) start()
-            return () => abortRef.current?.abort()
+            return () => {
+                abortRef.current?.abort()
+                startedRef.current = false
+            }
         }
     }, [autoStart, start, role, channel, processEvent])
 

@@ -17,12 +17,6 @@ const interfaceMono = localFont({
   display: "swap",
 })
 
-const zhengKaiTi = localFont({
-  src: "../public/fonts/ZhengKaiTi.ttf",
-  variable: "--font-zhengkai",
-  display: "swap",
-})
-
 const siyuanSong = localFont({
   src: "../public/fonts/思源宋体SemiBold.otf",
   variable: "--font-siyuan",
@@ -44,7 +38,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN" className="dark" suppressHydrationWarning>
-      <body className={`${interfaceSans.variable} ${interfaceMono.variable} ${zhengKaiTi.variable} ${siyuanSong.variable} ${siyuanSong.className} antialiased bg-background text-foreground`}>
+      <body className={`${interfaceSans.variable} ${interfaceMono.variable} ${siyuanSong.variable} ${siyuanSong.className} antialiased bg-background text-foreground`}>
         <PageTransition>
           {children}
         </PageTransition>

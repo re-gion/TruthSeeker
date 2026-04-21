@@ -17,10 +17,9 @@ Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)
 └── Supabase Auth + Realtime            └── Supabase 持久化
 ```
 
-## 当前进度（2026-04-14 审查）
+## 当前进度（2026-04-21 审查）
 
-- **M1 ✅ M2 ✅** — 四 Agent 辩论完整运行，SSE 流式可用
-- **M3 ⏳** — 专家会诊 UI 可用，后端协作机制不完整
+- **M1 ✅ M2 ✅ M3 ✅** — 四 Agent 辩论完整运行，SSE 流式可用，专家会诊闭环
 - **M4 ❌** — 部署和竞赛准备未开始
 - 详见 `task.md` 获取完整任务状态
 
@@ -32,7 +31,7 @@ Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)
 4. **Supabase**: 用 `@supabase/ssr`，不是 `@supabase/auth-helpers`
 5. **shadcn CLI**: 必须用 `npx shadcn@canary`（Tailwind v4 支持）
 6. **Drei**: 必须用 v10（v9 不支持 React 19）
-7. **Next.js 15**: Server Components 中 `cookies()` 必须 await
+7. **Next.js 16**: Server Components 中 `cookies()` 必须 await
 
 ## 参考文档
 
@@ -49,24 +48,24 @@ Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)
 ## 版本锁定
 
 详见 `docs/TECH_STACK.md`。核心版本：
-- Next.js ^15.2.0 / React ^19.0.0 / Tailwind CSS ^4.0.0
+- Next.js 16.1.6 / React 19.2.3 / Tailwind CSS ^4.0.0
 - FastAPI 0.134.0 / LangGraph >=1.0.9 / Python ^3.11
-- motion ^12.9.2 / @react-three/fiber ^9.5.0 / @react-three/drei ^10.0.0
-- @supabase/ssr ^0.5.0
+- motion ^12.34.3 / @react-three/fiber ^9.5.0 / @react-three/drei ^10.7.7
+- @supabase/ssr ^0.8.0
 
 ## 环境变量
 
 ```bash
 # truthseeker-web/.env.local
 NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 
 # truthseeker-api/.env
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
-OPENAI_API_KEY=
-QWEN_API_KEY=
+SUPABASE_JWT_SECRET=
+KIMI_API_KEY=
 VIRUSTOTAL_API_KEY=
 REALITY_DEFENDER_API_KEY=
 ```

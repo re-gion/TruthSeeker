@@ -2,6 +2,8 @@
 from app.agents.state import TruthSeekerState
 
 
+# NOTE: should_converge 当前未被 challenger_route 或 graph 使用（收敛逻辑由 commander 节点内联处理）。
+# 保留此函数供未来 graph 重构时启用。
 def should_converge(state: TruthSeekerState) -> str:
     """
     判断是否达到收敛条件：

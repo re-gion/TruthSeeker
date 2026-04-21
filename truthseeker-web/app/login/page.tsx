@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "motion/react"
 import { signIn } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
 import Image from "next/image"
+import { ThemeToggle } from "@/components/landing/ThemeToggle"
 
 export default function LoginPage() {
     const [error, setError] = useState<string | null>(null)
@@ -22,17 +23,29 @@ export default function LoginPage() {
     }
 
     return (
-        <main className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[#020107] selection:bg-[#6366F1]/30">
+        <main className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[#020107] dark:bg-[#020107] selection:bg-[#6366F1]/30">
             <div className="absolute inset-0 z-0 pointer-events-none">
                 <Image
                     src="/auth-bg.png"
                     alt=""
                     fill
                     sizes="100vw"
-                    className="absolute left-1/2 top-1/2 h-[102%] w-[113.75%] max-w-none -translate-x-1/2 -translate-y-1/2 -scale-y-100 object-cover opacity-90"
+                    className="absolute left-1/2 top-1/2 h-[102%] w-[113.75%] max-w-none -translate-x-1/2 -translate-y-1/2 -scale-y-100 object-cover opacity-90 dark:opacity-90"
                     draggable={false}
                 />
                 <div className="absolute inset-0 bg-gradient-to-b from-[#6366F1]/5 via-transparent to-[#020107]/60" />
+            </div>
+
+            {/* Light theme fallback */}
+            <div className="absolute inset-0 z-0 pointer-events-none dark:hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-[#f0f0ff] via-[#e4e0ff] to-[#f5f0ff]" />
+                <div className="absolute top-1/4 left-1/3 w-[500px] h-[500px] rounded-full bg-[#6366F1]/10 blur-[120px]" />
+                <div className="absolute bottom-1/3 right-1/4 w-[400px] h-[400px] rounded-full bg-[#A855F7]/8 blur-[100px]" />
+            </div>
+
+            {/* Theme toggle */}
+            <div className="absolute top-6 right-6 z-50">
+                <ThemeToggle />
             </div>
 
             <motion.div
@@ -135,8 +148,8 @@ export default function LoginPage() {
                                 />
                                 <span className="text-xs font-medium text-white select-none">记住我</span>
                             </label>
-                            <button type="button" className="text-xs text-white/70 underline underline-offset-2 hover:text-white transition-colors">
-                                忘记密码？
+                            <button type="button" className="text-xs text-white/70 underline underline-offset-2 hover:text-white transition-colors cursor-default">
+                                忘记密码？<span className="text-white/40 no-underline"> (暂未开放)</span>
                             </button>
                         </div>
 

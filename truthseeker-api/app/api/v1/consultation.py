@@ -239,3 +239,10 @@ def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
     invite = resp.data[0]
     if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")
+    if invite.get("status") == "used":
+        raise HTTPException(status_code=400, detail="邀请令牌已被使用")
+    # 标记为已使用，防止重复使用
+    try:
+        supabase.table("consultation_invites").update({"status": "used"}).eq("id", invite["id"]).execute()
+    except Exception as exc:
+        logger.error("Failed to mark invite as used: %s", exc)

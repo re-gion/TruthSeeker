@@ -20,7 +20,6 @@ PUBLIC_PREFIXES: frozenset[str] = frozenset()
 PUBLIC_GET_PREFIXES: frozenset[str] = frozenset({
     "/api/v1/share/",
     "/api/v1/consultation/invite/",
-    "/api/v1/dashboard/",
 })
 
 PUBLIC_POST_PATH_SUFFIXES: frozenset[str] = frozenset({
