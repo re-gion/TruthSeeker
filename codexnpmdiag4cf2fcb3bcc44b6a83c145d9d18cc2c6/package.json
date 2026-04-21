@@ -1,0 +1,12 @@
+{
+  "name": "codexnpmdiag4cf2fcb3bcc44b6a83c145d9d18cc2c6",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

@@ -173,9 +173,11 @@ export function ExpertPanel({
         }
     }, [inviteToken, taskId])
 
+    const canSendMessage = currentRole !== "viewer"
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!inputValue.trim() || !broadcastChannel) return
+        if (!canSendMessage || !inputValue.trim() || !broadcastChannel) return
 
         const newComment: ExpertComment = {
             id: Math.random().toString(36).substring(7),
@@ -292,31 +294,37 @@ export function ExpertPanel({
             </div>
 
             {/* 输入栏 */}
-            <form onSubmit={handleSubmit} className="p-2.5 border-t border-white/10 bg-black/50 flex gap-2 items-center">
-                <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
-                    <Image
-                        src={ROLE_CONFIG[currentRole]?.avatar || "/host-avatar.png"}
-                        alt="我"
-                        width={28}
-                        height={28}
-                        className="w-full h-full object-cover"
+            {canSendMessage ? (
+                <form onSubmit={handleSubmit} className="p-2.5 border-t border-white/10 bg-black/50 flex gap-2 items-center">
+                    <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
+                        <Image
+                            src={ROLE_CONFIG[currentRole]?.avatar || "/host-avatar.png"}
+                            alt="我"
+                            width={28}
+                            height={28}
+                            className="w-full h-full object-cover"
+                        />
+                    </div>
+                    <input
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        placeholder={currentRole === 'host' ? "回复专家..." : "提交质询意见..."}
+                        className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-1.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                     />
+                    <button
+                        type="submit"
+                        disabled={!inputValue.trim()}
+                        className="px-4 py-1.5 bg-[#D4FF12] text-black font-semibold rounded-full text-xs hover:bg-[#bce600] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        发送
+                    </button>
+                </form>
+            ) : (
+                <div className="p-3 border-t border-white/10 bg-black/50 text-center text-xs text-gray-500">
+                    访客仅可查看会诊记录
                 </div>
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder={currentRole === 'host' ? "回复专家..." : "提交质询意见..."}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-1.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-                />
-                <button
-                    type="submit"
-                    disabled={!inputValue.trim()}
-                    className="px-4 py-1.5 bg-[#D4FF12] text-black font-semibold rounded-full text-xs hover:bg-[#bce600] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                    发送
-                </button>
-            </form>
+            )}
         </div>
     )
 }

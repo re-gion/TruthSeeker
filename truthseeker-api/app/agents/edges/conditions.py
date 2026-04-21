@@ -50,19 +50,19 @@ def should_converge(state: TruthSeekerState) -> str:
     return "continue"
 
 
-def challenger_route(state: TruthSeekerState) -> str:
+def challenger_route(state: TruthSeekerState) -> str | list[str]:
     """
     质询官路由：决定质询后下一步走向
-    - "proceed_to_commander": 提交最终裁决
-    - "return_to_forensics": 打回法医重审
-    - "return_to_osint": 打回溯源重审
+    - "commander": 提交最终裁决
+    - ["forensics", "osint"]: 打回两个 Agent 重审（返回两个以满足 fan-in 边）
     """
     feedback = state.get("challenger_feedback") or {}
 
     if not feedback.get("requires_more_evidence", False):
-        return "proceed_to_commander"
+        return "commander"
 
-    target = feedback.get("target_agent", "forensics")
-    if target == "osint":
-        return "return_to_osint"
-    return "return_to_forensics"
+    # 会诊恢复后直接进 Commander，避免 fan-in 死锁
+    if feedback.get("consultation_resumed"):
+        return "commander"
+
+    return ["forensics", "osint"]

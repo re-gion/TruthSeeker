@@ -236,7 +236,7 @@ export function FileUploader() {
                                 多模态检材接入与全局任务提示
                             </h2>
                             <p className="mt-2 max-w-3xl text-sm md:text-base text-black/60 leading-relaxed dark:text-white/60">
-                                上传视频、音频、图片或文本检材；下方文本仅作为各专家共享的检测目标、案件背景和重点风险。
+                                上传视频、音频、图片或文本检材。
                             </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
@@ -268,7 +268,7 @@ export function FileUploader() {
                         <div className="flex items-start justify-between gap-4 mb-5">
                             <div>
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">多媒体上传区</div>
-                                <div className="mt-1 text-sm text-black/50 dark:text-white/45">最多 5 个文件，文本文件会交给情报溯源Agent处理。</div>
+                                <div className="mt-1 text-sm text-black/50 dark:text-white/45">最多 5 个文件，视频、音频、图片文件会交给视听鉴伪Agent，文本文件会交给情报溯源Agent处理。</div>
                             </div>
                             <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">MP4 / WebM / MP3 / WAV / JPG / PNG / WebP / TXT<br />单文件最大 500MB</div>
                         </div>

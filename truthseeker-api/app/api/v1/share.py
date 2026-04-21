@@ -21,9 +21,28 @@ class ShareResponse(BaseModel):
     report_hash: str | None = None
 
 
+def _assert_task_owner(task_id: str, request: Request) -> None:
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id or user_id == "anonymous":
+        return
+
+    try:
+        task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+    except Exception as exc:
+        logger.warning("Failed to verify share owner for %s: %s", task_id, exc)
+        raise HTTPException(status_code=403, detail="无法验证任务归属")
+
+    if not task_resp.data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task_user_id = task_resp.data[0].get("user_id")
+    if task_user_id and task_user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权分享该任务报告")
+
+
 @router.post("/{task_id}", response_model=ShareResponse)
 async def create_share_link(task_id: str, request: Request):
     """为指定任务生成报告分享链接"""
+    _assert_task_owner(task_id, request)
     resp = supabase.table("reports").select("id, share_token, report_hash").eq("task_id", task_id).execute()
     if not resp.data:
         raise HTTPException(status_code=404, detail="报告尚未生成")

@@ -40,7 +40,7 @@ DEFAULT_EXTENSIONS = {
 
 def _get_api_key() -> str:
     """获取可用的 Reality Defender API Key"""
-    return settings.REALITY_DEFENDER_API_KEY or settings.REALITY_DEFENDER_API_KEY_2
+    return settings.REALITY_DEFENDER_API_KEY
 
 
 async def _download_file(file_url: str) -> tuple[bytes, str]:

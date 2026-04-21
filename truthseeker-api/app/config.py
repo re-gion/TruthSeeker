@@ -1,5 +1,5 @@
 """Application configuration using pydantic-settings"""
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,11 +13,16 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = "NOT_SET"
 
     # AI APIs — 使用 Field 映射 .env 中的实际变量名
-    REALITY_DEFENDER_API_KEY: str = Field(default="", validation_alias="REALITY_DEFENDER_API_KEY")
-    REALITY_DEFENDER_API_KEY_2: str = Field(default="", validation_alias="Reality_Defender")
-    VIRUSTOTAL_API_KEY: str = Field(default="", validation_alias="Virus_Total")
-    KIMI_API_KEY: str = Field(default="", validation_alias="Kimi_API_KEY")
-    KIMI_BASE_URL: str = Field(default="https://api.moonshot.cn/v1", validation_alias="Kimi_Base_URL")
+    REALITY_DEFENDER_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("REALITY_DEFENDER_API_KEY", "Reality_Defender"),
+    )
+    VIRUSTOTAL_API_KEY: str = Field(default="", validation_alias=AliasChoices("VIRUSTOTAL_API_KEY", "Virus_Total"))
+    KIMI_API_KEY: str = Field(default="", validation_alias=AliasChoices("KIMI_API_KEY", "Kimi_API_KEY"))
+    KIMI_BASE_URL: str = Field(
+        default="https://api.moonshot.cn/v1",
+        validation_alias=AliasChoices("KIMI_BASE_URL", "Kimi_Base_URL"),
+    )
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
 

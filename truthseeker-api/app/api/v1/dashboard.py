@@ -488,7 +488,7 @@ async def get_dashboard_overview():
     )
     consultation_invites = _select_rows(
         "consultation_invites",
-        "task_id,status,state,created_at,expires_at,accepted_at,used_at",
+        "task_id,status,created_at,expires_at",
     )
 
     threat_snapshots = _build_threat_snapshots(tasks, reports)

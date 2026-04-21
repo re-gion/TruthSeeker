@@ -33,7 +33,13 @@
       "Bash(find \"D:/a311/系统赛/2026系统赛/信安/truthseeker-api\" -name \"*.py\" -exec wc -c {} +)",
       "Bash(ls -la truthseeker-api/supabase)",
       "Bash(ls -la supabase/)",
-      "Bash(find . -name \"*.sql\" -not -path \"*/venv*\" -not -path \"*/node_modules*\")"
+      "Bash(find . -name \"*.sql\" -not -path \"*/venv*\" -not -path \"*/node_modules*\")",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__fill_form",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__wait_for",
+      "mcp__chrome-devtools__fill"
     ],
     "deny": [
       "Bash(rm -rf *)",

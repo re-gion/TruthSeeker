@@ -51,16 +51,8 @@ def build_graph():
     graph.add_edge(START, "osint")
     graph.add_edge(["forensics", "osint"], "challenger")
 
-    # Challenger → 条件路由
-    graph.add_conditional_edges(
-        "challenger",
-        challenger_route,
-        {
-            "proceed_to_commander": "commander",   # ✅ 通过审查，提交裁决
-            "return_to_forensics": "forensics",    # ⟳ 打回法医重审（round+1 后自动收敛）
-            "return_to_osint": "osint",            # ⟳ 打回 OSINT 重审
-        },
-    )
+    # Challenger → 条件路由（返回节点名直接路由，支持 list 做 fan-out）
+    graph.add_conditional_edges("challenger", challenger_route)
 
     # Commander → END
     graph.add_edge("commander", END)

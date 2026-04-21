@@ -1,7 +1,7 @@
 """专家会诊 API — 注入专家意见到 Agent 状态"""
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,6 +13,8 @@ from app.utils.supabase_client import supabase
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+INVITE_TTL_HOURS = 24
 
 
 class InjectMessageRequest(BaseModel):
@@ -40,6 +42,30 @@ class InviteResponse(BaseModel):
     expires_at: str
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _invite_is_expired(invite: dict) -> bool:
+    expires_at = _parse_datetime(invite.get("expires_at"))
+    return bool(expires_at and expires_at <= datetime.now(timezone.utc))
+
+
+def _assert_task_owner(task: dict, request: Request) -> None:
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id or user_id == "anonymous":
+        return
+    task_user_id = task.get("user_id")
+    if task_user_id and task_user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权操作该任务会诊")
+
+
 @router.post("/{task_id}/inject")
 async def inject_expert_message(task_id: str, req: InjectMessageRequest, request: Request):
     """注入专家意见到运行中的 Agent 状态
@@ -48,11 +74,12 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
     Agent 节点在下一轮开始时读取这些消息。
     """
     # 验证任务是否存在
-    task_resp = supabase.table("tasks").select("id, status").eq("id", task_id).execute()
+    task_resp = supabase.table("tasks").select("id,status,user_id").eq("id", task_id).execute()
     if not task_resp.data:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task_status = task_resp.data[0].get("status", "")
+    task = task_resp.data[0]
+    task_status = task.get("status", "")
     if task_status not in ("analyzing", "deliberating", "pending", "waiting_consultation"):
         raise HTTPException(
             status_code=400,
@@ -65,6 +92,8 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
         _validate_invite_token(task_id, req.invite_token)
     elif not is_authenticated:
         raise HTTPException(status_code=401, detail="主持人会诊消息需要登录")
+    else:
+        _assert_task_owner(task, request)
 
     # 写入 consultation_messages 表
     message_record = {
@@ -93,12 +122,13 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
 @router.post("/{task_id}/invite", response_model=InviteResponse)
 async def create_consultation_invite(task_id: str, request: Request):
     """创建专家邀请链接。"""
-    task_resp = supabase.table("tasks").select("id").eq("id", task_id).execute()
+    task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
     if not task_resp.data:
         raise HTTPException(status_code=404, detail="任务不存在")
+    _assert_task_owner(task_resp.data[0], request)
 
     token = secrets.token_urlsafe(24)
-    expires_at = "2999-01-01T00:00:00+00:00"
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=INVITE_TTL_HOURS)).isoformat()
     invite_record = {
         "task_id": task_id,
         "token": token,
@@ -140,7 +170,7 @@ async def validate_consultation_invite(token: str):
         raise HTTPException(status_code=404, detail="邀请链接无效")
 
     invite = resp.data[0]
-    if invite.get("status") == "expired":
+    if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")
 
     return {
@@ -158,6 +188,11 @@ async def get_consultation_messages(task_id: str, request: Request, invite_token
     is_authenticated = bool(getattr(request.state, "is_authenticated", False))
     if not is_authenticated:
         _validate_invite_token(task_id, invite_token)
+    else:
+        task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+        if not task_resp.data:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        _assert_task_owner(task_resp.data[0], request)
 
     resp = supabase.table("consultation_messages").select("*").eq("task_id", task_id).order(
         "created_at", desc=False
@@ -188,5 +223,5 @@ def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
     if not resp.data:
         raise HTTPException(status_code=403, detail="邀请令牌无效")
     invite = resp.data[0]
-    if invite.get("status") == "expired":
+    if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")

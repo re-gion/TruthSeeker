@@ -224,6 +224,7 @@ tmp_*
 *.tmp
 *.temp
 test_*.py
+!truthseeker-api/tests/test_*.py
 
 # 日志文件
 dev.log
