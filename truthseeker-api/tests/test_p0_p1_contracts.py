@@ -143,6 +143,7 @@ class AuthPublicRouteTests(unittest.TestCase):
         self.assertTrue(_is_public("/api/v1/share/share-token", "GET"))
         self.assertTrue(_is_public("/api/v1/consultation/invite/invite-token", "GET"))
         self.assertTrue(_is_public("/api/v1/consultation/task-1/messages", "GET"))
+        self.assertTrue(_is_public("/api/v1/consultation/task-1/unread", "GET"))
 
 
 if __name__ == "__main__":

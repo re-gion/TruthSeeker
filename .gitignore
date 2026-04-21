@@ -231,7 +231,6 @@ dev.log
 build_output.log
 typescript_errors.log
 *.stackdump
-truthseeker-api/=1.2.0
 
 # 明确列出本轮清理的临时脚本
 truthseeker-web/tmp_pixel_blast*.jsx

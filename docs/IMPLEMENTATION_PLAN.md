@@ -30,10 +30,10 @@ Week1-2   Week3-4   Week5-6   Week7-8
 
 #### Day1-2: 项目初始化 ⭐【已修正】
 
-**前端：Next.js 15 + shadcn/ui初始化**
+**前端：Next.js 16 + shadcn/ui初始化**
 
 ```bash
-# 1. 创建Next.js 15项目（内置Tailwind v4 + React 19）
+# 1. 创建Next.js 16项目（内置Tailwind v4 + React 19）
 npx create-next-app@latest truthseeker-web \
   --typescript \
   --tailwind \

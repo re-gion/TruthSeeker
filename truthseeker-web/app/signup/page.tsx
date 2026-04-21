@@ -22,6 +22,7 @@ export default function SignupPage() {
             setLoading(false)
         } else {
             setSuccess(true)
+            setLoading(false)
         }
     }
 

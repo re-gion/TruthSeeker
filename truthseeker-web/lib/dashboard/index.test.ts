@@ -93,11 +93,13 @@ describe("dashboard response normalization", () => {
           { id: "consultation-triggered", label: "会诊触发任务", value: 2, helper: "触发专家会诊的唯一任务数" },
           { id: "reports-covered", label: "报告覆盖任务", value: 5, helper: "已形成报告闭环的唯一任务数" },
         ],
+        data_warnings: [{ table: "reports", message: "reports 数据源读取失败" }],
       },
       "2026-04-18T00:00:00.000Z",
     )
 
-    expect(viewModel.capabilityState).toBe("ready")
+    expect(viewModel.capabilityState).toBe("warning")
+    expect(viewModel.dataWarnings).toEqual(["reports 数据源读取失败"])
     expect(viewModel.generatedAt).toBe("2026-04-18T12:00:00.000Z")
     expect(viewModel.kpis).toEqual({
       totalTasks: 12,

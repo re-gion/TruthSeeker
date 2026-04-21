@@ -229,6 +229,32 @@ export function downloadMarkdownReport(content: string, filename: string) {
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+type FetchLike = typeof fetch
+
+
+export async function fetchCanonicalMarkdownReport(
+    taskId: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+) {
+    const resp = await fetchImpl(`${API_BASE}/api/v1/report/${taskId}/md`, {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+    })
+    if (!resp.ok) throw new Error(`Markdown 报告生成失败: ${resp.status}`)
+    return resp.text()
+}
+
+
+export async function downloadCanonicalMarkdownReport(taskId: string, authToken?: string | null) {
+    try {
+        const markdown = await fetchCanonicalMarkdownReport(taskId, authToken)
+        downloadMarkdownReport(markdown, `truthseeker-report-${taskId.slice(0, 8)}.md`)
+    } catch (e) {
+        console.error("Markdown download failed:", e)
+        alert("Markdown 报告生成失败，请稍后重试")
+    }
+}
 
 /** 从后端 API 下载 PDF 报告 */
 export async function downloadPdfReport(taskId: string, authToken?: string | null) {

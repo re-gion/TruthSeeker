@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
 
     # App
+    APP_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
     MAX_ROUNDS: int = 5
     CONVERGENCE_THRESHOLD: float = 0.05

@@ -8,11 +8,19 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 
-from app.utils.supabase_client import supabase
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+supabase = None
+
+
+def _get_supabase():
+    global supabase
+    if supabase is None:
+        from app.utils.supabase_client import supabase as active_supabase
+
+        supabase = active_supabase
+    return supabase
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -462,11 +470,16 @@ def _build_capability_metrics(
     ]
 
 
-def _select_rows(table: str, columns: str) -> list[dict[str, Any]]:
+def _select_rows(table: str, columns: str, warnings: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
     try:
-        response = supabase.table(table).select(columns).execute()
+        response = _get_supabase().table(table).select(columns).execute()
     except Exception as exc:
         logger.warning("dashboard table read failed for %s: %s", table, exc)
+        if warnings is not None:
+            warnings.append({
+                "table": table,
+                "message": f"{table} 数据源读取失败，当前指标可能不完整",
+            })
         return []
     if not getattr(response, "data", None):
         return []
@@ -477,18 +490,22 @@ def _select_rows(table: str, columns: str) -> list[dict[str, Any]]:
 async def get_dashboard_overview():
     generated_at = datetime.now(timezone.utc)
     generated_at_iso = generated_at.isoformat()
+    data_warnings: list[dict[str, str]] = []
 
     tasks = _select_rows(
         "tasks",
         "id,status,input_type,result,verdict,response_ms,duration_ms,started_at,completed_at,created_at",
+        data_warnings,
     )
     reports = _select_rows(
         "reports",
         "task_id,verdict,generated_at,key_evidence,verdict_payload",
+        data_warnings,
     )
     consultation_invites = _select_rows(
         "consultation_invites",
         "task_id,status,created_at,expires_at",
+        data_warnings,
     )
 
     threat_snapshots = _build_threat_snapshots(tasks, reports)
@@ -521,4 +538,5 @@ async def get_dashboard_overview():
         "evidence_mix": _build_evidence_mix(reports),
         "flow_sankey": _build_flow_sankey(tasks, reports),
         "capability_metrics": _build_capability_metrics(reports, consultation_invites, generated_at),
+        "data_warnings": data_warnings,
     }

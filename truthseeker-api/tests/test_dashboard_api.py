@@ -167,8 +167,10 @@ class DashboardApiTests(TestCase):
                 "evidence_mix",
                 "flow_sankey",
                 "capability_metrics",
+                "data_warnings",
             },
         )
+        self.assertEqual(body["data_warnings"], [])
         self.assertEqual(
             body["kpis"],
             {

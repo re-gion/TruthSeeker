@@ -47,8 +47,8 @@ CONVERGENCE_THRESHOLD=0.05
 
 说明：
 
-- `SUPABASE_JWT_SECRET` 设为 `NOT_SET` 时，认证中间件会跳过。
-- `REALITY_DEFENDER_API_KEY_2`、`Kimi_API_KEY`、`Virus_Total`、`Kimi_Base_URL` 仍保留为兼容旧环境名的别名。
+- `APP_ENV=production` 时必须配置真实 `SUPABASE_JWT_SECRET`，否则后端会拒绝启动；本地开发设为 `NOT_SET` 时认证中间件会跳过。
+- `Reality_Defender`、`Kimi_API_KEY`、`Virus_Total`、`Kimi_Base_URL` 仍保留为兼容旧环境名的别名。
 
 ## 目录概览
 

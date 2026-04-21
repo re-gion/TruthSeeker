@@ -893,6 +893,13 @@ export function DashboardClient({ viewModel }: DashboardClientProps) {
               </div>
             ) : null}
 
+            {viewModel.capabilityState === "warning" ? (
+              <div className="flex items-center gap-3 rounded-[22px] border border-[#F59E0B]/25 bg-[#F59E0B]/8 px-4 py-3 text-sm text-white/74">
+                <AlertTriangle className="size-4 shrink-0 text-[#FCD34D]" />
+                <span>{viewModel.dataWarnings[0] ?? "内部数据源部分异常，当前指标可能不完整。"}</span>
+              </div>
+            ) : null}
+
             <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
               {KPI_META.map((item, index) => {
                 const rawValue = viewModel.kpis[item.id]

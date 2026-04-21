@@ -1,6 +1,6 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-04-20
+> 更新时间：2026-04-21
 
 ## 1. 目录结构
 
@@ -35,7 +35,9 @@ truthseeker-api/
 │   │   ├── exception_handler.py
 │   │   └── rate_limit.py
 │   ├── services/
+│   │   ├── auth_config.py
 │   │   ├── evidence_files.py
+│   │   ├── text_validation.py
 │   │   ├── analysis_persistence.py
 │   │   ├── report_integrity.py
 │   │   ├── audit_log.py
@@ -113,7 +115,7 @@ interface UploadedEvidenceFile {
 
 正常启动时，后端优先从任务记录读取文件清单；如果文件缺少 `file_url`，根据 `storage_path` 生成 24 小时 signed URL。
 
-恢复研判时，前端使用同一 `task_id` 并传 `resume=true`，后端用 LangGraph `Command(resume=...)` 和同一 `thread_id` 恢复。
+恢复研判时，前端使用同一 `task_id` 并传 `resume=true`，后端优先用 LangGraph `Command(resume=...)` 和同一 `thread_id` 恢复。若内存 checkpoint 因进程重启丢失，后端会基于 `analysis_states` 的最近 Agent 快照和 `consultation_messages` 重建 Commander 可裁决状态。
 
 ## 4. LangGraph 拓扑
 
@@ -140,6 +142,7 @@ flowchart TD
 
 已有核心迁移：
 
+- `20260415_baseline_schema_rls.sql`
 - `20260416_full_fix.sql`
 - `20260420_consultation_messages.sql`
 - `20260420_report_hash_audit_logs.sql`
@@ -155,6 +158,8 @@ flowchart TD
 - `audit_logs`
 
 `reports.report_hash` 为 SHA-256 稳定哈希，用于报告防篡改展示。
+
+`20260415_baseline_schema_rls.sql` 包含从零建库所需的核心表、索引和 RLS policy。后续增量迁移继续保持幂等，评审或新环境可按文件名顺序执行。
 
 `audit_logs` 记录关键闭环动作：
 
@@ -187,6 +192,8 @@ flowchart TD
 - 专家邀请校验 `GET /api/v1/consultation/invite/{token}`
 - 会诊消息读取 `GET /api/v1/consultation/{task_id}/messages?invite_token=...`
 - 专家提交意见 `POST /api/v1/consultation/{task_id}/inject`，必须提供有效邀请令牌
+
+`APP_ENV=production` 时必须配置真实 `SUPABASE_JWT_SECRET`，否则后端拒绝启动。本地开发可使用 `NOT_SET` 关闭认证中间件，但不能按生产安全口径部署。
 
 ## 7. 暂不实现
 

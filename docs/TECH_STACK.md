@@ -49,7 +49,6 @@
 ```env
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-# NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
@@ -68,6 +67,7 @@ KIMI_BASE_URL=https://api.moonshot.cn/v1
 OPENAI_API_KEY=
 QWEN_API_KEY=
 
+APP_ENV=development
 FRONTEND_URL=http://localhost:3000
 MAX_ROUNDS=5
 CONVERGENCE_THRESHOLD=0.05
@@ -79,6 +79,8 @@ CONVERGENCE_THRESHOLD=0.05
 - `Virus_Total`
 - `Kimi_API_KEY`
 - `Kimi_Base_URL`
+
+`APP_ENV=production` 时 `SUPABASE_JWT_SECRET` 不能为 `NOT_SET`，否则后端会拒绝启动。
 
 ## 备注
 

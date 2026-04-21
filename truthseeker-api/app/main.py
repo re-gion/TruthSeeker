@@ -12,8 +12,14 @@ from app.config import settings
 from app.middleware.auth import AuthMiddleware
 from app.middleware.exception_handler import http_exception_handler, unhandled_exception_handler
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.services.auth_config import validate_auth_configuration
 
 logger = logging.getLogger(__name__)
+
+AUTH_MIDDLEWARE_ENABLED = validate_auth_configuration(
+    environment=settings.APP_ENV,
+    jwt_secret=settings.SUPABASE_JWT_SECRET,
+)
 
 
 def setup_logging():
@@ -38,7 +44,7 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("TruthSeeker API starting - Supabase: %s", settings.SUPABASE_URL)
-    if settings.SUPABASE_JWT_SECRET == "NOT_SET":
+    if not AUTH_MIDDLEWARE_ENABLED:
         logger.warning("SUPABASE_JWT_SECRET not configured — auth middleware disabled")
     yield
     logger.info("TruthSeeker API shutting down")
@@ -65,7 +71,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-if settings.SUPABASE_JWT_SECRET and settings.SUPABASE_JWT_SECRET != "NOT_SET":
+if AUTH_MIDDLEWARE_ENABLED:
     app.add_middleware(AuthMiddleware, supabase_jwt_secret=settings.SUPABASE_JWT_SECRET)
 app.add_middleware(RateLimitMiddleware, limit=30, window=60)
 

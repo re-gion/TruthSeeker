@@ -10,7 +10,7 @@ export async function signUp(formData: FormData) {
         password: formData.get("password") as string,
     })
     if (error) return { error: error.message }
-    redirect("/")
+    return { success: true }
 }
 
 export async function signIn(formData: FormData) {

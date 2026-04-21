@@ -37,6 +37,85 @@ def normalize_final_verdict(final_verdict: dict[str, Any] | None) -> dict[str, A
     return normalized
 
 
+def _as_record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def build_resume_state_from_rows(
+    *,
+    task_id: str,
+    user_id: str,
+    input_files: dict[str, Any],
+    input_type: str,
+    priority_focus: str,
+    case_prompt: str,
+    evidence_files: list[dict[str, Any]],
+    max_rounds: int,
+    expert_messages: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild enough graph state to finalize a consultation after process restart."""
+    forensics_result: dict[str, Any] | None = None
+    osint_result: dict[str, Any] | None = None
+    challenger_feedback: dict[str, Any] | None = None
+    evidence_board: list[Any] = []
+    challenges: list[Any] = []
+    timeline_events: list[Any] = []
+    round_number = 1
+
+    for row in rows:
+        round_number = max(round_number, int(row.get("round_number") or 1))
+        snapshot = _as_record(row.get("result_snapshot"))
+        if snapshot.get("forensics"):
+            forensics_result = _as_record(snapshot.get("forensics"))
+        if snapshot.get("osint"):
+            osint_result = _as_record(snapshot.get("osint"))
+        if snapshot.get("challenger"):
+            challenger_feedback = _as_record(snapshot.get("challenger"))
+
+        board = _as_record(row.get("evidence_board"))
+        evidence_board.extend(_as_list(board.get("evidence")))
+        challenges.extend(_as_list(board.get("challenges")))
+        timeline_events.extend(_as_list(board.get("timeline_events")))
+
+    return {
+        "task_id": task_id,
+        "user_id": user_id,
+        "input_files": input_files,
+        "input_type": input_type,
+        "priority_focus": priority_focus,
+        "case_prompt": case_prompt,
+        "evidence_files": evidence_files,
+        "current_round": round_number,
+        "max_rounds": min(max_rounds, 5),
+        "convergence_threshold": 0.05,
+        "forensics_result": forensics_result,
+        "osint_result": osint_result,
+        "challenger_feedback": challenger_feedback,
+        "final_verdict": None,
+        "agent_weights": {},
+        "previous_weights": {},
+        "evidence_board": evidence_board,
+        "confidence_history": [],
+        "challenges": challenges,
+        "logs": [],
+        "is_converged": False,
+        "termination_reason": None,
+        "degradation_status": {},
+        "expert_messages": expert_messages,
+        "consultation_resume": {
+            "action": "resume_from_persistence",
+            "resumed_at": utc_now_iso(),
+            "expert_message_count": len(expert_messages),
+        },
+        "timeline_events": timeline_events,
+    }
+
+
 def build_report_row(
     task_id: str,
     final_verdict: dict[str, Any],

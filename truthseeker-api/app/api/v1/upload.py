@@ -8,15 +8,24 @@ from pathlib import Path
 import filetype
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
-from storage3.types import FileOptions
 
 from app.services.audit_log import record_audit_event
 from app.services.evidence_files import infer_modality
-from app.utils.supabase_client import supabase
+from app.services.text_validation import validate_text_plain_file
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+supabase = None
+
+
+def _get_supabase():
+    global supabase
+    if supabase is None:
+        from app.utils.supabase_client import supabase as active_supabase
+
+        supabase = active_supabase
+    return supabase
 
 # 安全：MIME 白名单（不可变集合）
 ALLOWED_MIME = frozenset({
@@ -58,7 +67,7 @@ def _safe_ext(filename: str) -> str:
     return safe or "bin"
 
 
-def _verify_file_type(tmp_path: str, declared_mime: str) -> str | None:
+def _verify_file_type(tmp_path: str, declared_mime: str, filename: str = "") -> str | None:
     """
     校验文件真实类型。优先用 filetype 库，回退到 magic bytes。
     返回真实 MIME，若不匹配白名单则返回 None。
@@ -73,16 +82,15 @@ def _verify_file_type(tmp_path: str, declared_mime: str) -> str | None:
         header = f.read(32)
     if not header:
         # 空文件 — 仅允许 text/plain
-        return "text/plain" if declared_mime == "text/plain" else None
+        return "text/plain" if declared_mime == "text/plain" and validate_text_plain_file(tmp_path, filename) else None
 
     detected = _magic_mime(header)
     if detected:
         return detected if detected in ALLOWED_MIME else None
 
     # 无法识别的二进制文件 — 拒绝
-    # 纯文本文件无固定 magic，信任声明但限制为 text/plain
     if declared_mime == "text/plain":
-        return "text/plain"
+        return "text/plain" if validate_text_plain_file(tmp_path, filename) else None
 
     return None
 
@@ -132,7 +140,7 @@ async def upload_file(
                 tmp.write(chunk)
 
         # 3. Magic bytes 校验（U-1 修复）
-        real_mime = _verify_file_type(tmp_path, file.content_type)
+        real_mime = _verify_file_type(tmp_path, file.content_type, file.filename or "upload")
         if real_mime is None:
             logger.warning(
                 "File type mismatch: declared=%s, real=unknown, user=%s",
@@ -144,15 +152,17 @@ async def upload_file(
             )
 
         # 4. 上传到 Supabase Storage
+        from storage3.types import FileOptions
+
         storage_path = f"{folder}/{os.path.basename(tmp_path)}"
         with open(tmp_path, "rb") as f:
-            supabase.storage.from_("media").upload(
+            _get_supabase().storage.from_("media").upload(
                 storage_path, f, file_options=FileOptions(content_type=real_mime),
             )
 
         # 5. 生成签名 URL（有效 24 小时，U-5 修复）
         try:
-            signed = supabase.storage.from_("media").create_signed_url(
+            signed = _get_supabase().storage.from_("media").create_signed_url(
                 storage_path, 86400,
             )
             file_url = signed.get("signedURL") or signed.get("signedUrl")

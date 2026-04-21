@@ -9,11 +9,20 @@ from pydantic import BaseModel, Field
 
 from app.services.audit_log import record_audit_event
 from app.services.evidence_files import derive_input_type, normalize_uploaded_files, require_evidence_files
-from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+supabase = None
+
+
+def _get_supabase():
+    global supabase
+    if supabase is None:
+        from app.utils.supabase_client import supabase as active_supabase
+
+        supabase = active_supabase
+    return supabase
 
 
 class CreateTaskRequest(BaseModel):
@@ -99,7 +108,7 @@ async def create_task(req: CreateTaskRequest, request: Request):
     
     try:
         # 插入到 Supabase 'tasks' 表
-        response = supabase.table("tasks").insert(task_data).execute()
+        response = _get_supabase().table("tasks").insert(task_data).execute()
         if not response.data:
             raise HTTPException(status_code=500, detail="Failed to create task in database")
         record_audit_event(
@@ -121,7 +130,7 @@ async def get_task(task_id: str, request: Request):
     """从 Supabase 查询任务详情"""
     try:
         user_id = getattr(request.state, "user_id", None)
-        query = supabase.table("tasks").select("*").eq("id", task_id)
+        query = _get_supabase().table("tasks").select("*").eq("id", task_id)
         if user_id and user_id != "anonymous":
             query = query.eq("user_id", user_id)
         response = query.execute()
@@ -140,11 +149,11 @@ async def list_tasks(request: Request, limit: int = 20):
     """列出最近的任务"""
     try:
         user_id = getattr(request.state, "user_id", None)
-        query = supabase.table("tasks").select("*")
+        query = _get_supabase().table("tasks").select("*")
         if user_id and user_id != "anonymous":
             query = query.eq("user_id", user_id)
         response = query.order("created_at", desc=True).limit(limit).execute()
         return [TaskResponse(**t) for t in response.data]
     except Exception as e:
         logger.error("Error listing tasks: %s", e)
-        return []
+        raise HTTPException(status_code=503, detail="任务数据源暂时不可用，请稍后重试")

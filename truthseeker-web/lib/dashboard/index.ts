@@ -68,7 +68,8 @@ export interface DashboardSankeyLink {
 export interface DashboardViewModel {
   generatedAt: string
   externalInsights: ExternalInsightModule[]
-  capabilityState: "ready" | "error"
+  capabilityState: "ready" | "warning" | "error"
+  dataWarnings: string[]
   kpis: DashboardKpis
   trendSeries: DashboardTrendSeries[]
   threatMix: DashboardDistributionItem[]
@@ -98,6 +99,7 @@ export interface DashboardApiResponse {
     links?: unknown
   } | null
   capability_metrics?: unknown
+  data_warnings?: unknown
 }
 
 type FetchLike = typeof fetch
@@ -285,6 +287,18 @@ function normalizeCapabilityMetrics(payload: unknown): DashboardCapabilityMetric
     .filter((metric): metric is DashboardCapabilityMetric => metric !== null && metric.id.length > 0)
 }
 
+function normalizeDataWarnings(payload: unknown): string[] {
+  if (!Array.isArray(payload)) return []
+
+  return payload
+    .map((item) => {
+      if (typeof item === "string") return item.trim()
+      const record = readRecord(item)
+      return record ? readString(record.message) : ""
+    })
+    .filter((item): item is string => item.length > 0)
+}
+
 function normalizeSankey(payload: DashboardApiResponse["flow_sankey"]): DashboardViewModel["flowSankey"] {
   const nodes = Array.isArray(payload?.nodes)
     ? payload.nodes
@@ -330,6 +344,7 @@ export function createFallbackDashboardViewModel(
     generatedAt,
     externalInsights: DASHBOARD_EXTERNAL_INSIGHTS,
     capabilityState,
+    dataWarnings: [],
     kpis: {
       totalTasks: 0,
       highRiskTasks: 0,
@@ -360,10 +375,13 @@ export function normalizeDashboardResponse(
     return createFallbackDashboardViewModel(fallbackGeneratedAt, "error")
   }
 
+  const dataWarnings = normalizeDataWarnings(payload.data_warnings)
+
   return {
     generatedAt: readString(payload.generated_at) || fallbackGeneratedAt,
     externalInsights: DASHBOARD_EXTERNAL_INSIGHTS,
-    capabilityState: "ready",
+    capabilityState: dataWarnings.length > 0 ? "warning" : "ready",
+    dataWarnings,
     kpis: {
       totalTasks: Math.round(toNumber(payload.kpis?.total_tasks) ?? 0),
       highRiskTasks: Math.round(toNumber(payload.kpis?.high_risk_tasks) ?? 0),

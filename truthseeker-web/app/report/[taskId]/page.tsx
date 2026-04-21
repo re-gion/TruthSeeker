@@ -5,6 +5,7 @@ import { useParams } from "next/navigation"
 import Link from "next/link"
 import { motion } from "motion/react"
 import StarBackground from "@/components/ui/StarBackground"
+import { renderReportMarkdown } from "@/lib/report-markdown"
 
 interface ReportData {
     report: {
@@ -154,7 +155,7 @@ export default function SharedReportPage() {
                     <div
                         className="prose prose-invert prose-sm max-w-none text-[#C0C0C0] prose-headings:text-white prose-strong:text-white prose-code:text-[#D4FF12]"
                         dangerouslySetInnerHTML={{
-                            __html: simpleMarkdown(data.markdown),
+                            __html: renderReportMarkdown(data.markdown),
                         }}
                     />
                 </motion.div>
@@ -179,24 +180,4 @@ export default function SharedReportPage() {
             </main>
         </div>
     )
-}
-
-/** Minimal markdown → HTML for report display */
-function simpleMarkdown(md: string): string {
-    return md
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-        .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-        .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`(.+?)`/g, "<code>$1</code>")
-        .replace(/^- (.+)$/gm, "<li>$1</li>")
-        .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
-        .replace(/\n{2,}/g, "</p><p>")
-        .replace(/^(?!<[huplo])/gm, (m, offset, str) => {
-            const before = str[offset - 1]
-            return before === ">" || before === undefined ? m : ""
-        })
 }

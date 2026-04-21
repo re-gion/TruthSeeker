@@ -14,7 +14,11 @@ from pydantic import BaseModel, Field
 
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
-from app.services.analysis_persistence import AnalysisPersistenceService, normalize_final_verdict
+from app.services.analysis_persistence import (
+    AnalysisPersistenceService,
+    build_resume_state_from_rows,
+    normalize_final_verdict,
+)
 from app.services.audit_log import record_audit_event
 from app.services.evidence_files import (
     UploadedEvidenceFile,
@@ -48,7 +52,7 @@ class DetectRequest(BaseModel):
     case_prompt: Optional[str] = None
     user_id: Optional[str] = None
     priority_focus: str = "balanced"
-    max_rounds: int = 3
+    max_rounds: int = Field(3, ge=1, le=5)
     resume: bool = False
 
 
@@ -172,6 +176,21 @@ def _fetch_consultation_messages(task_id: str) -> list[dict[str, Any]]:
         return []
 
 
+def _fetch_analysis_state_rows(task_id: str) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("analysis_states")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        logger.warning("Failed to fetch analysis states for %s: %s", task_id, exc)
+        return []
+
+
 def _extract_interrupt_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -236,6 +255,75 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
 
     async def run_graph() -> None:
         nonlocal final_verdict_data, interrupted
+
+        async def recover_resume_from_persistence(original_error: Exception) -> bool:
+            nonlocal final_verdict_data
+            if not request.resume:
+                return False
+
+            rows = _fetch_analysis_state_rows(task_id)
+            if not rows:
+                return False
+
+            logger.warning(
+                "LangGraph checkpoint resume failed for %s, rebuilding persisted state: %s",
+                task_id,
+                original_error,
+            )
+            from app.agents.nodes.commander import commander_node
+
+            expert_messages = _fetch_consultation_messages(task_id)
+            resume_state = build_resume_state_from_rows(
+                task_id=task_id,
+                user_id=user_id,
+                input_files=input_files,
+                input_type=input_type,
+                priority_focus=request.priority_focus,
+                case_prompt=case_prompt,
+                evidence_files=evidence_files,
+                max_rounds=request.max_rounds,
+                expert_messages=expert_messages,
+                rows=rows,
+            )
+            updates = await commander_node(resume_state)  # type: ignore[arg-type]
+
+            await queue.put(_sse({
+                "type": "consultation_resumed",
+                "task_id": task_id,
+                "mode": "persistence_recovery",
+            }))
+
+            for log_entry in updates.get("logs", []):
+                await queue.put(_sse({"type": "agent_log", "node": "commander", "log": log_entry}))
+
+            if updates.get("timeline_events"):
+                await queue.put(_sse({"type": "timeline_update", "events": updates["timeline_events"]}))
+            if updates.get("agent_weights"):
+                await queue.put(_sse({"type": "weights_update", "weights": updates["agent_weights"]}))
+            if not updates.get("final_verdict"):
+                return False
+
+            final_verdict_data = normalize_final_verdict(updates["final_verdict"])
+            await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
+
+            persistence.persist_update(task_id, "commander", updates)
+            persistence.mark_task_completed(task_id, final_verdict_data)
+            record_audit_event(
+                action="consultation_resume",
+                task_id=task_id,
+                user_id=user_id,
+                metadata={
+                    "mode": "persistence_recovery",
+                    "expert_message_count": len(expert_messages),
+                },
+            )
+            await queue.put(_sse({
+                "type": "complete",
+                "task_id": task_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }))
+            return True
+
         try:
             if request.resume:
                 if Command is None:
@@ -373,6 +461,8 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 }))
         except Exception as exc:
             logger.error("SSE stream error for task %s: %s", task_id, exc)
+            if await recover_resume_from_persistence(exc):
+                return
             persistence.mark_task_failed(task_id, error_summary="检测过程发生异常，请稍后重试")
             record_audit_event(
                 action="detect_failed",
@@ -413,6 +503,12 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
 async def detect_stream(request: DetectRequest, raw_request: Request):
     """SSE 流式检测端点。"""
     user_id = getattr(raw_request.state, "user_id", None) or "anonymous"
+    if request.task_id:
+        task = _fetch_task(request.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="检测任务不存在")
+        _assert_task_owner(task, user_id)
+
     return StreamingResponse(
         sse_event_generator(request, user_id),
         media_type="text/event-stream",

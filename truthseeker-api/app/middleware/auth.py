@@ -29,6 +29,7 @@ PUBLIC_POST_PATH_SUFFIXES: frozenset[str] = frozenset({
 
 PUBLIC_GET_CONSULTATION_SUFFIXES: frozenset[str] = frozenset({
     "/messages",
+    "/unread",
 })
 
 

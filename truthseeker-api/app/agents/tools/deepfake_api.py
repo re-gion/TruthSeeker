@@ -6,8 +6,8 @@ Reality Defender API 流程:
 3. GET /api/media/users/{request_id} → 轮询获取检测结果
 """
 import asyncio
+import hashlib
 import logging
-import random
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -36,6 +36,27 @@ DEFAULT_EXTENSIONS = {
     "image": ".jpg",
     "text": ".txt",
 }
+
+
+def _stable_float(seed: str, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    value = int(digest[:12], 16) / float(0xFFFFFFFFFFFF)
+    return minimum + (maximum - minimum) * value
+
+
+def _stable_int(seed: str, minimum: int, maximum: int) -> int:
+    if maximum <= minimum:
+        return minimum
+    value = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16)
+    return minimum + value % (maximum - minimum + 1)
+
+
+def _stable_sample(items: list[str], seed: str, count: int) -> list[str]:
+    ranked = sorted(
+        items,
+        key=lambda item: hashlib.sha256(f"{seed}:{item}".encode("utf-8")).hexdigest(),
+    )
+    return ranked[:count]
 
 
 def _get_api_key() -> str:
@@ -248,9 +269,10 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
 
 async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> dict:
     """模拟 Deepfake 检测结果（降级/测试用）"""
-    await asyncio.sleep(random.uniform(1.5, 3.0))
+    await asyncio.sleep(0.1)
 
-    deepfake_prob = random.uniform(0.3, 0.95)
+    seed = f"{media_type}:{file_url}"
+    deepfake_prob = _stable_float(f"{seed}:probability", minimum=0.3, maximum=0.95)
     is_deepfake = deepfake_prob > 0.5
 
     indicators = []
@@ -262,7 +284,7 @@ async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> di
             "频谱分析显示声纹克隆特征",
             "帧间时序一致性低于阈值（0.62）",
         ]
-        indicators = random.sample(candidates, k=random.randint(2, 4))
+        indicators = _stable_sample(candidates, seed, _stable_int(f"{seed}:indicator-count", 2, 4))
     else:
         indicators = ["帧间一致性正常", "面部特征自然", "无 GAN 伪影检测"]
 
@@ -276,7 +298,7 @@ async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> di
         "audio_score": None,
         "details": {
             "indicators": indicators,
-            "frames_analyzed": random.randint(30, 120) if media_type == "video" else 1,
+            "frames_analyzed": _stable_int(f"{seed}:frames", 30, 120) if media_type == "video" else 1,
             "anomaly_score": deepfake_prob,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),

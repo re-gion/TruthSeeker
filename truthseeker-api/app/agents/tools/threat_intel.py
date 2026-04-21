@@ -91,7 +91,7 @@ async def _mock_url_analysis(url: str) -> dict:
     high_risk_keywords = ["phishing", "malware", "hack", "steal", "fake", "scam"]
     medium_risk_keywords = ["free", "click", "win", "prize", "urgent", "verify"]
 
-    h = hash(url) % 100
+    h = int(hashlib.sha256(url.encode("utf-8")).hexdigest()[:8], 16) % 100
 
     has_high_risk = any(kw in url_lower for kw in high_risk_keywords)
     has_medium_risk = any(kw in url_lower for kw in medium_risk_keywords)

@@ -201,8 +201,22 @@ async def get_consultation_messages(task_id: str, request: Request, invite_token
 
 
 @router.get("/{task_id}/unread")
-async def get_unread_messages(task_id: str, after: Optional[str] = None):
+async def get_unread_messages(
+    task_id: str,
+    request: Request,
+    after: Optional[str] = None,
+    invite_token: Optional[str] = None,
+):
     """获取未读的专家会诊消息（Agent 节点调用）"""
+    is_authenticated = bool(getattr(request.state, "is_authenticated", False))
+    if not is_authenticated:
+        _validate_invite_token(task_id, invite_token)
+    else:
+        task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+        if not task_resp.data:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        _assert_task_owner(task_resp.data[0], request)
+
     query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
     if after:
         query = query.gt("created_at", after)

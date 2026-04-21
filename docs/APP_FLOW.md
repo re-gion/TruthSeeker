@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-04-20
+> 更新时间：2026-04-21
 
 ## 1. 输入边界
 
@@ -57,9 +57,9 @@ flowchart TD
 - Forensics 与 OSINT 每轮并行执行。
 - 视频、音频、图片进入视听鉴伪 Agent；文本文件只进入情报溯源 Agent。
 - 逻辑质询 Agent 在前两个专家产出后审查冲突、置信度和证据充分性。
-- 高冲突时触发 LangGraph in-process interrupt/checkpointer 暂停，任务状态写为 `waiting_consultation`。
-- 主持人点击“继续研判”后，前端用同一个 `taskId` 发送 `resume=true`，后端用同一 `thread_id` 恢复。
-- 进程内恢复只保证后端进程未重启时有效。后端重启后需要重新启动检测流程。
+- 高冲突时触发 LangGraph interrupt/checkpointer 暂停，任务状态写为 `waiting_consultation`。
+- 主持人点击“继续研判”后，前端用同一个 `taskId` 发送 `resume=true`，后端优先用同一 `thread_id` 恢复。
+- 如果后端进程重启导致内存 checkpoint 丢失，后端会从 `analysis_states`、`consultation_messages` 和任务文件清单重建可裁决状态，并由 Commander 生成最终报告；这不是完整持久化 LangGraph checkpoint，但能避免会诊任务直接丢失。
 
 ## 4. SSE 事件
 
@@ -102,6 +102,8 @@ flowchart TD
 `report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 
 审计日志写入 `audit_logs`，覆盖 upload、task_create、detect_start、detect_failed、detect_completed、report_generated、report_downloaded、share_created、share_viewed、consultation_message、consultation_resume。
+
+前端检测台的 Markdown 下载、PDF 下载和分享页都以后端 canonical 报告为准；浏览器本地拼接的 Markdown 只保留为辅助模板，不再作为完成任务后的主下载来源。
 
 ## 7. 暂不实现
 

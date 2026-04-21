@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-04-20（P0/P1/P2 闭环修复后核验）
+> **最后审查日期**: 2026-04-21（调研报告问题修复后核验）
 
 ---
 
@@ -31,7 +31,7 @@
 - [x] 后端只信任 JWT 中的 `request.state.user_id`，忽略客户端传入的 `user_id`。
 - [x] 外部专家凭邀请令牌提交会诊意见；主持人创建邀请和继续研判必须登录。
 - [x] Forensics 与 OSINT 每轮并行执行，Challenger 在二者产出后质询。
-- [x] 高冲突时通过 LangGraph in-process interrupt/checkpointer 暂停为 `waiting_consultation`。
+- [x] 高冲突时通过 LangGraph in-process interrupt/checkpointer 暂停为 `waiting_consultation`，checkpoint 丢失时可基于持久化快照兜底裁决。
 - [x] 主持人使用同一 `taskId` 触发 `resume=true` 继续研判。
 - [x] 会诊面板加载历史消息，并显示等待会诊/继续研判状态。
 
@@ -44,6 +44,22 @@
 - [x] `docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md` 已同步最新流程。
 - [ ] 案例库真实加载功能暂不实现。
 - [ ] pgvector / 向量库暂不实现。
+
+## 2026-04-21 调研报告问题修复 ✅
+
+- [x] 补 `20260415_baseline_schema_rls.sql`，让核心表、索引和 RLS policy 在仓库内可从零复现。
+- [x] 生产环境强制要求真实 `SUPABASE_JWT_SECRET`，避免 `NOT_SET` 被误用于生产鉴权。
+- [x] 前端 MD 下载改走后端 canonical 报告接口，和 PDF、分享页保持同一来源。
+- [x] Dashboard 和任务列表不再把后端数据源异常伪装成空数据；Dashboard 会返回并展示 `data_warnings`。
+- [x] 文本上传增加扩展名、编码和控制字符比例校验，降低二进制伪装为文本的风险。
+- [x] 降级 mock 改为 SHA-256 稳定派生，避免同一输入跨进程出现不同风险分数。
+- [x] 会诊恢复在内存 checkpoint 丢失时，可从 `analysis_states` 和会诊消息重建 Commander 可裁决状态。
+- [x] 分享报告页支持 Markdown 表格渲染，报告权重表不再显示为原始 `|` 文本。
+- [x] 注册成功后保留页面成功态，不再立即跳转导致提示不可见。
+- [x] 删除 Forensics Agent 中不可达的文本检测分支，文本检材只由 OSINT 处理。
+- [ ] 案例库真实加载功能暂不实现。
+- [ ] FedPaRS 训练底座运行时代码暂不实现，白皮书/PRD 保持目标架构叙事。
+- [ ] 部署配置暂不实现。
 
 ## Layer 1: 核心鉴伪能力（MVP） ✅ 已完成
 
@@ -64,8 +80,8 @@
 - [x] Supabase Client 配置（client.ts + server.ts，使用 @supabase/ssr）
 - [x] 用户认证（注册、登录、登出，使用 Server Actions）
 - [x] 认证中间件 `middleware.ts`（路由保护）
-- [x] **数据库 Schema 迁移** — tasks 表已通过 Supabase 迁移创建
-- [x] **RLS 策略** — 已配置（users_own_tasks + anon_tasks_insert）
+- [x] **数据库 Schema 迁移** — 仓库已补核心表基线迁移；远端环境仍需按迁移执行验证
+- [x] **RLS 策略** — 仓库已补核心 RLS policy；远端环境仍需按迁移执行验证
 - [x] 任务 API（POST/GET /api/v1/tasks，含 Supabase 持久化 + 降级）
 
 ### Phase 1.2: 双 Agent 核心流程 ✅
@@ -131,7 +147,7 @@
 - [x] 专家会诊面板（`ExpertPanel.tsx`，实时聊天 + 消息同步）
 
 #### 3.1.3 报告与导出
-- [x] Markdown 报告生成（`lib/report.ts`，结构化模板 + 浏览器下载）
+- [x] Markdown 报告生成（后端 canonical 报告下载；前端模板保留为辅助生成逻辑）
 - [x] PDF 导出
 - [x] 报告分享链接
 
@@ -187,20 +203,20 @@
 - [x] **State 新增字段** — degradation_status、expert_messages、timeline_events
 
 ### 数据库与持久化
-- [x] 通过 Supabase 迁移创建 tasks 表 Schema
-- [x] 配置 RLS 策略（用户只能访问自己的任务）
+- [x] 通过 Supabase 基线迁移定义 tasks 表 Schema
+- [x] 配置 RLS 策略（仓库迁移已包含用户任务隔离 policy）
 - [x] 创建 `.env.example` 文件（前端 + 后端）
 
 ### 后端安全与健壮性
 - [x] 后端认证中间件（验证 Supabase JWT）
-- [ ] 全局异常处理器
-- [ ] 结构化日志
+- [x] 全局异常处理器（`exception_handler.py`，统一 JSON 错误格式）
+- [x] 结构化日志（`setup_logging()`，管道分隔格式 + 第三方库降噪）
 - [x] 文件上传端点（接收文件 → 存储 → 返回 URL）
 
 ### 测试
-- [ ] 后端单元测试（Agent 节点、条件边）
-- [ ] API 集成测试
-- [ ] 前后端联调测试
+- [x] 后端单元测试 — 77 项 pytest 覆盖纯函数、降级管理、收敛路由、报告完整性、认证配置、文本校验、会诊恢复（2026-04-21 验证通过）
+- [x] API 集成测试 — report/consultation/dashboard 端点 mock DB 测试通过
+- [ ] 前后端联调测试（需真实 Supabase 环境）
 
 ### 前端补全（先不做案例库真实加载功能）
 - [x] Dashboard 接入真实数据（替换硬编码）

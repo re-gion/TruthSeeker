@@ -1,6 +1,6 @@
 # TruthSeeker 开发错误记录本
 
-> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-20
+> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-21
 
 ---
 
@@ -14,7 +14,8 @@
 | 2026-03-12 | 前端/R3F | MeshTransmissionMaterial 渲染为实心色块 | 需要 Environment 贴图或 Canvas GL alpha:true |
 | 2026-03-15 | 后端/Python | 虚拟环境 python 路径失效（指向不存在的路径） | 重新创建 venv_new 并重装 requirements.txt |
 | 2026-04-20 | Windows/npm | `npm run typecheck` 可能因本地 `.cmd` shim 启动失败而无报错退出 | 用 `npx tsc --noEmit --diagnostics` 或直接 `node ./node_modules/typescript/bin/tsc` 区分代码错误与命令启动层问题 |
-| 2026-04-20 | 后端/Python | 当前沙盒缺少 pytest，部分 LangGraph/asyncio 导入会触发 `WinError 10106` | 优先跑纯 `unittest`/`py_compile` 窄验证；不要反复重建环境 |
+| 2026-04-21 | 后端/pytest | Python 3.13 下 `WinError 10106` 可能由残留进程/损坏的 `.next` 缓存导致；清理环境和重启后可恢复 | 先杀残留 Node 进程、清理 `.next`，再重跑 |
+| 2026-04-21 | 前端/Next.js | `next build` 超时（>300s）可能因 `.next` 缓存膨胀（1.6GB）导致 | 删除 `.next` 目录后重新构建，4.7s 即可完成 |
 
 ---
 

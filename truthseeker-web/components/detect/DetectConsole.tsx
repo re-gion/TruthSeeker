@@ -13,7 +13,7 @@ import { ExpertPanel } from "@/components/collaboration/ExpertPanel"
 import { EvidenceTimeline } from "@/components/detect/EvidenceTimeline"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
-import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, generateMarkdownReport, downloadMarkdownReport, downloadPdfReport } from "@/lib/report"
+import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReport, downloadPdfReport } from "@/lib/report"
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
@@ -321,15 +321,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         )}
                         {isComplete && (
                             <button
-                                onClick={() => {
-                                    const md = generateMarkdownReport({
-                                        taskId, inputType: taskContext.inputType, logs,
-                                        forensicsResult, osintResult,
-                                        challengerFeedback, finalVerdict,
-                                        agentWeights, currentRound,
-                                    })
-                                    downloadMarkdownReport(md, `truthseeker-report-${taskId.slice(0, 8)}.md`)
-                                }}
+                                onClick={async () => downloadCanonicalMarkdownReport(taskId, await getAuthToken())}
                                 className="text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors"
                             >
                                 MD 报告

@@ -1,26 +1,17 @@
 """Forensics Agent - 视听鉴伪Agent，调用真实检测 API + LLM 推理"""
-import asyncio
 from datetime import datetime, timezone
-from typing import Optional
-
-import httpx
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.fallback import fallback_metadata_analysis, minimal_forensics_result, shared_degradation
 from app.agents.tools.llm_client import forensics_interpret
-from app.agents.tools.text_detection import analyze_text
-from app.utils.supabase_client import supabase as supabase_client
-
-# 文本内容最大字符数（避免过长文本超出 LLM token 限制）
-TEXT_MAX_CHARS = 10000
 
 
 async def forensics_node(state: TruthSeekerState) -> dict:
     """
     视听鉴伪Agent：
-    1. 根据输入类型选择检测通道（媒体 → Reality Defender，文本 → AI 生成检测）
-    2. 解析检测结果，提取帧级/音频/视觉/文本证据
+    1. 只处理视频、音频、图片检材；文本检材由 OSINT Agent 处理
+    2. 调用 Reality Defender 或稳定降级分析，提取帧级/音频/视觉证据
     3. LLM 深度解读，生成结构化鉴证报告
     """
     task_id = state["task_id"]
@@ -100,142 +91,75 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     result: dict = {"model": "unknown", "details": {}}
     degradation_status = "full"
 
-    # ================================================================
-    #  文本检测通道
-    # ================================================================
-    if input_type == "text":
-        log("action", "📝 检测到文本输入，启动文本 AI 生成检测...")
-        text_content = ""
+    log("action", "📡 正在连接 Reality Defender 深度鉴伪服务...")
+    degradation_status = shared_degradation.get_degradation_level("reality_defender")
 
-        if primary_url and not primary_url.startswith("mock://"):
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.get(primary_url, follow_redirects=True)
-                    text_content = resp.text[:TEXT_MAX_CHARS]
-            except Exception:
-                text_content = ""
-
-        if not text_content:
-            try:
-                task_resp = supabase_client.table("tasks").select("description").eq("id", task_id).execute()
-                if task_resp.data:
-                    text_content = task_resp.data[0].get("description", "")
-            except Exception:
-                pass
-
-        if not text_content:
-            text_content = "（无法获取文本内容）"
-
-        try:
-            text_result = await analyze_text(text_content)
-            is_deepfake = text_result.get("is_ai_generated", False)
-            deepfake_prob = text_result.get("ai_probability", 0.0)
-            confidence = text_result.get("confidence", 0.5)
-            indicators = text_result.get("anomalies", [])
-            result = {
-                "is_deepfake": is_deepfake,
-                "confidence": confidence,
-                "deepfake_probability": deepfake_prob,
-                "model": "text_detection",
-                "details": {
-                    "ai_probability": deepfake_prob,
-                    "manipulation_score": text_result.get("manipulation_score", 0.0),
-                    "structural_analysis": text_result.get("structural_analysis", {}),
-                    "key_claims": text_result.get("key_claims", []),
-                },
-            }
-
-            if is_deepfake:
-                log("finding", f"🚨 文本检测发现 AI 生成特征！AI概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
-            else:
-                log("finding", f"✅ 文本未检测到明显 AI 生成特征，AI概率: {deepfake_prob:.1%}")
-
-            for anomaly in indicators[:3]:
-                log("finding", f"  → {anomaly}")
-
-        except Exception as e:
-            log("action", f"❌ 文本检测异常: {e}")
-            confidence = 0.2
-            indicators = [f"文本检测失败: {e}"]
-            result = {
-                "is_deepfake": False, "confidence": 0.2,
-                "deepfake_probability": 0.0, "model": "degraded",
-                "degraded": True, "details": {"error": str(e)},
-            }
-
-    # ================================================================
-    #  媒体检测通道 (默认)
-    # ================================================================
-    else:
-        log("action", "📡 正在连接 Reality Defender 深度鉴伪服务...")
+    try:
+        result = await analyze_media(primary_url, input_type)
+        shared_degradation.report_success("reality_defender")
         degradation_status = shared_degradation.get_degradation_level("reality_defender")
 
-        try:
-            result = await analyze_media(primary_url, input_type)
-            shared_degradation.report_success("reality_defender")
-            degradation_status = shared_degradation.get_degradation_level("reality_defender")
+        model_used = result.get("model", "unknown")
+        if model_used.startswith("mock"):
+            log("action", "⚠️  Reality Defender API 不可用，使用降级模式分析")
+        else:
+            log("action", f"✅ Reality Defender API 连接成功")
 
-            model_used = result.get("model", "unknown")
-            if model_used.startswith("mock"):
-                log("action", "⚠️  Reality Defender API 不可用，使用降级模式分析")
-            else:
-                log("action", f"✅ Reality Defender API 连接成功")
+        deepfake_prob = result.get("deepfake_probability", 0.0)
+        is_deepfake = result.get("is_deepfake", False)
+        confidence = result.get("confidence", 0.0)
+        model_scores = result.get("models", [])
+        frame_inferences = result.get("frame_inferences", [])
+        audio_score = result.get("audio_score")
+        indicators = result.get("details", {}).get("indicators", [])
 
-            deepfake_prob = result.get("deepfake_probability", 0.0)
-            is_deepfake = result.get("is_deepfake", False)
-            confidence = result.get("confidence", 0.0)
-            model_scores = result.get("models", [])
-            frame_inferences = result.get("frame_inferences", [])
-            audio_score = result.get("audio_score")
-            indicators = result.get("details", {}).get("indicators", [])
+        if is_deepfake:
+            log("finding", f"🚨 检测到 Deepfake 篡改！伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
+            if frame_inferences:
+                suspicious_frames = [f for f in frame_inferences if f.get("label", "").upper() == "FAKE"]
+                log("finding", f"🎬 可疑帧: {len(suspicious_frames)}/{len(frame_inferences)} 帧被标记为伪造")
+            if audio_score is not None:
+                log("finding", f"🔊 音频轨道评分: {audio_score:.1%}")
+        else:
+            log("finding", f"✅ 未检测到明显 Deepfake 篡改，伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
 
-            if is_deepfake:
-                log("finding", f"🚨 检测到 Deepfake 篡改！伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
-                if frame_inferences:
-                    suspicious_frames = [f for f in frame_inferences if f.get("label", "").upper() == "FAKE"]
-                    log("finding", f"🎬 可疑帧: {len(suspicious_frames)}/{len(frame_inferences)} 帧被标记为伪造")
-                if audio_score is not None:
-                    log("finding", f"🔊 音频轨道评分: {audio_score:.1%}")
-            else:
-                log("finding", f"✅ 未检测到明显 Deepfake 篡改，伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
+        if model_scores:
+            for ms in model_scores[:3]:
+                log("finding", f"  → 模型 {ms.get('name', '?')}: {ms.get('label', '?')} ({ms.get('score', 0):.1%})")
 
-            if model_scores:
-                for ms in model_scores[:3]:
-                    log("finding", f"  → 模型 {ms.get('name', '?')}: {ms.get('label', '?')} ({ms.get('score', 0):.1%})")
+        for indicator in indicators[:3]:
+            log("finding", f"  → {indicator}")
 
-            for indicator in indicators[:3]:
-                log("finding", f"  → {indicator}")
+    except Exception as e:
+        shared_degradation.report_failure("reality_defender", e)
+        degradation_status = shared_degradation.get_degradation_level("reality_defender")
+        log("action", f"❌ Reality Defender API 调用异常: {type(e).__name__}: {e}")
+        log("action", f"🔄 降级策略: degradation_level={degradation_status}")
 
-        except Exception as e:
-            shared_degradation.report_failure("reality_defender", e)
-            degradation_status = shared_degradation.get_degradation_level("reality_defender")
-            log("action", f"❌ Reality Defender API 调用异常: {type(e).__name__}: {e}")
-            log("action", f"🔄 降级策略: degradation_level={degradation_status}")
-
-            if degradation_status == "degraded":
-                log("action", "📊 使用元数据启发式降级分析...")
-                try:
-                    result = await fallback_metadata_analysis(primary_url, input_type)
-                    is_deepfake = result.get("is_deepfake", False)
-                    confidence = result.get("confidence", 0.3)
-                    deepfake_prob = result.get("deepfake_probability", 0.0)
-                    model_scores = result.get("models", [])
-                    frame_inferences = result.get("frame_inferences", [])
-                    audio_score = result.get("audio_score")
-                    indicators = result.get("details", {}).get("indicators", [])
-                except Exception as e2:
-                    log("action", f"❌ 降级分析也失败: {e2}")
-                    result = minimal_forensics_result(input_type)
-                    is_deepfake = False
-                    confidence = 0.2
-                    deepfake_prob = 0.0
-                    indicators = ["所有 API 不可用，建议人工复核"]
-            else:
+        if degradation_status == "degraded":
+            log("action", "📊 使用元数据启发式降级分析...")
+            try:
+                result = await fallback_metadata_analysis(primary_url, input_type)
+                is_deepfake = result.get("is_deepfake", False)
+                confidence = result.get("confidence", 0.3)
+                deepfake_prob = result.get("deepfake_probability", 0.0)
+                model_scores = result.get("models", [])
+                frame_inferences = result.get("frame_inferences", [])
+                audio_score = result.get("audio_score")
+                indicators = result.get("details", {}).get("indicators", [])
+            except Exception as e2:
+                log("action", f"❌ 降级分析也失败: {e2}")
                 result = minimal_forensics_result(input_type)
                 is_deepfake = False
                 confidence = 0.2
                 deepfake_prob = 0.0
                 indicators = ["所有 API 不可用，建议人工复核"]
+        else:
+            result = minimal_forensics_result(input_type)
+            is_deepfake = False
+            confidence = 0.2
+            deepfake_prob = 0.0
+            indicators = ["所有 API 不可用，建议人工复核"]
 
     # ================================================================
     #  共享后续逻辑 — 证据板 + LLM + 结果汇总
