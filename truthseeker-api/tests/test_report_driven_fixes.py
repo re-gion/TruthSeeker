@@ -1,5 +1,8 @@
 import os
+import importlib
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +19,29 @@ def run_sync_coroutine(coro):
     except StopIteration as stop:
         return stop.value
     raise RuntimeError("coroutine unexpectedly awaited")
+
+
+def import_with_asyncio_fallback(module_name: str):
+    try:
+        return importlib.import_module(module_name)
+    except OSError as exc:
+        if "WinError 10106" not in str(exc):
+            raise
+        for key in list(sys.modules):
+            if key == "asyncio" or key.startswith("asyncio."):
+                del sys.modules[key]
+        fake_asyncio = types.ModuleType("asyncio")
+
+        async def sleep(_delay=0):
+            return None
+
+        async def to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        fake_asyncio.sleep = sleep
+        fake_asyncio.to_thread = to_thread
+        sys.modules["asyncio"] = fake_asyncio
+        return importlib.import_module(module_name)
 
 
 class AuthConfigurationTests(unittest.TestCase):
@@ -102,6 +128,125 @@ class StableFallbackTests(unittest.TestCase):
 
         self.assertIn("hashlib.sha256", source)
         self.assertNotIn("hash(url)", source)
+
+
+class PdfFallbackTests(unittest.TestCase):
+    def test_pdf_generation_falls_back_when_weasyprint_system_libs_are_unavailable(self):
+        report_generator = import_with_asyncio_fallback("app.services.report_generator")
+
+        original_generate_markdown_report = report_generator.generate_markdown_report
+        original_import_module = report_generator.importlib.import_module
+
+        async def fake_generate_markdown_report(_task_id):
+            return "# TruthSeeker 报告\n\n中文内容可导出。"
+
+        def fake_import_module(name):
+            if name == "weasyprint":
+                raise OSError("cannot load library 'libgobject-2.0-0'")
+            return original_import_module(name)
+
+        report_generator.generate_markdown_report = fake_generate_markdown_report
+        report_generator.importlib.import_module = fake_import_module
+        try:
+            pdf_bytes = run_sync_coroutine(report_generator.generate_pdf_report("task-1"))
+        finally:
+            report_generator.generate_markdown_report = original_generate_markdown_report
+            report_generator.importlib.import_module = original_import_module
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertGreater(len(pdf_bytes), 1000)
+
+
+class RealityDefenderDiagnosticsTests(unittest.TestCase):
+    def test_mock_deepfake_result_records_fallback_reason_and_key_presence(self):
+        deepfake_api = import_with_asyncio_fallback("app.agents.tools.deepfake_api")
+
+        result = run_sync_coroutine(
+            deepfake_api.mock_deepfake_analysis(
+                "mock://image-1",
+                "image",
+                fallback_reason="network_unavailable",
+                api_key_configured=True,
+            )
+        )
+
+        self.assertTrue(result["degraded"])
+        self.assertEqual(result["details"]["fallback_reason"], "network_unavailable")
+        self.assertTrue(result["details"]["api_key_configured"])
+
+
+class ReportPersistenceTests(unittest.TestCase):
+    def test_upsert_report_updates_existing_report_without_requiring_task_id_unique_constraint(self):
+        from app.services.analysis_persistence import AnalysisPersistenceService
+
+        class FakeQuery:
+            def __init__(self, table_name, db):
+                self.table_name = table_name
+                self.db = db
+                self.filters = {}
+                self.payload = None
+                self.operation = None
+
+            def select(self, _columns):
+                return self
+
+            def eq(self, key, value):
+                self.filters[key] = value
+                return self
+
+            def insert(self, payload):
+                self.operation = "insert"
+                self.payload = payload
+                return self
+
+            def update(self, payload):
+                self.operation = "update"
+                self.payload = payload
+                return self
+
+            def execute(self):
+                table = self.db.setdefault(self.table_name, [])
+                if self.operation == "insert":
+                    table.append(self.payload)
+                    return SimpleNamespace(data=[self.payload])
+                if self.operation == "update":
+                    for row in table:
+                        if all(row.get(k) == v for k, v in self.filters.items()):
+                            row.update(self.payload)
+                            return SimpleNamespace(data=[row])
+                    return SimpleNamespace(data=[])
+
+                rows = table
+                for key, value in self.filters.items():
+                    rows = [row for row in rows if row.get(key) == value]
+                return SimpleNamespace(data=rows)
+
+        class FakeClient:
+            def __init__(self):
+                self.db = {
+                    "reports": [
+                        {
+                            "id": "report-1",
+                            "task_id": "task-1",
+                            "share_token": "keep-token",
+                            "summary": "old",
+                        }
+                    ],
+                    "audit_logs": [],
+                }
+
+            def table(self, table_name):
+                return FakeQuery(table_name, self.db)
+
+        client = FakeClient()
+        service = AnalysisPersistenceService(client=client)
+        service.upsert_report("task-1", {"verdict": "suspicious", "confidence": 0.81, "llm_ruling": "new"})
+
+        reports = client.db["reports"]
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["share_token"], "keep-token")
+        self.assertEqual(reports[0]["summary"], "new")
+        self.assertTrue(reports[0]["report_hash"])
 
 
 class ConsultationResumeRecoveryTests(unittest.TestCase):

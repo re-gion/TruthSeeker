@@ -1,6 +1,7 @@
 """报告生成服务 — Markdown + PDF 报告"""
 import asyncio
 import importlib
+import io
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -210,11 +211,15 @@ async def generate_pdf_report(task_id: str) -> bytes:
         pdf_bytes = HTML(string=html_full).write_pdf()
         return pdf_bytes
     except ImportError as exc:
-        logger.warning("weasyprint not installed: %s", exc)
-        raise HTTPException(status_code=503, detail="PDF 生成服务不可用，请稍后重试")
+        logger.warning("weasyprint not installed, using Pillow PDF fallback: %s", exc)
+        return _render_markdown_pdf_with_pillow(md_content)
     except Exception as e:
-        logger.error("weasyprint PDF generation failed: %s", e)
-        raise HTTPException(status_code=500, detail="PDF 生成失败")
+        logger.warning("weasyprint PDF generation failed, using Pillow PDF fallback: %s", e)
+        try:
+            return _render_markdown_pdf_with_pillow(md_content)
+        except Exception as fallback_exc:
+            logger.error("Pillow PDF fallback failed: %s", fallback_exc)
+            raise HTTPException(status_code=500, detail="PDF 生成失败")
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +282,107 @@ def _group_logs_by_round(logs: list) -> dict:
         round_num = log.get("round", log.get("round_number", 0))
         grouped.setdefault(round_num, []).append(log)
     return dict(sorted(grouped.items()))
+
+
+def _load_pdf_font(size: int):
+    from PIL import ImageFont
+
+    candidates = [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\simsun.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/PingFang.ttc",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _display_markdown_line(line: str) -> tuple[str, int]:
+    stripped = line.strip()
+    if not stripped:
+        return "", 0
+    if stripped.startswith("#"):
+        level = len(stripped) - len(stripped.lstrip("#"))
+        return stripped[level:].strip(), min(level, 3)
+    if stripped.startswith("|"):
+        return stripped.replace("|", "  "), 0
+    return stripped, 0
+
+
+def _wrap_text_for_width(text: str, font, max_width: int, draw) -> list[str]:
+    if not text:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        candidate = f"{current}{char}"
+        if current and draw.textlength(candidate, font=font) > max_width:
+            lines.append(current)
+            current = char
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _render_markdown_pdf_with_pillow(markdown_content: str) -> bytes:
+    from PIL import Image, ImageDraw
+
+    width, height = 1240, 1754  # A4 at roughly 150 DPI
+    margin_x = 90
+    margin_y = 88
+    body_font = _load_pdf_font(24)
+    h1_font = _load_pdf_font(40)
+    h2_font = _load_pdf_font(32)
+    h3_font = _load_pdf_font(28)
+    fonts = {0: body_font, 1: h1_font, 2: h2_font, 3: h3_font}
+
+    pages: list[Image.Image] = []
+    page = Image.new("RGB", (width, height), "#ffffff")
+    draw = ImageDraw.Draw(page)
+    y = margin_y
+
+    def new_page() -> None:
+        nonlocal page, draw, y
+        pages.append(page)
+        page = Image.new("RGB", (width, height), "#ffffff")
+        draw = ImageDraw.Draw(page)
+        y = margin_y
+
+    def add_text(text: str, level: int) -> None:
+        nonlocal y
+        font = fonts.get(level, body_font)
+        fill = "#111827" if level == 0 else "#0f3b5f"
+        line_height = 34 if level == 0 else 48
+        spacing = 10 if level == 0 else 18
+        for wrapped in _wrap_text_for_width(text, font, width - margin_x * 2, draw):
+            if y + line_height > height - margin_y:
+                new_page()
+            draw.text((margin_x, y), wrapped, font=font, fill=fill)
+            y += line_height
+        y += spacing
+
+    for raw_line in markdown_content.splitlines():
+        text, level = _display_markdown_line(raw_line)
+        if not text:
+            y += 20
+            if y > height - margin_y:
+                new_page()
+            continue
+        add_text(text, level)
+
+    pages.append(page)
+    output = io.BytesIO()
+    first, rest = pages[0], pages[1:]
+    first.save(output, format="PDF", save_all=True, append_images=rest, resolution=150.0)
+    return output.getvalue()
 
 
 def _resolve_final_result(task: dict, report: dict | None) -> Optional[dict]:

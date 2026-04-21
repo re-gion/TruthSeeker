@@ -271,9 +271,13 @@ class AnalysisPersistenceService:
             self.upsert_report(task_id, updates["final_verdict"])
 
     def upsert_report(self, task_id: str, final_verdict: dict[str, Any]) -> None:
-        existing_token = self._fetch_share_token(task_id)
+        existing_report = self._fetch_report(task_id)
+        existing_token = existing_report.get("share_token") if existing_report else None
         report_row = build_report_row(task_id, final_verdict, existing_share_token=existing_token)
-        self._safe_upsert("reports", report_row, on_conflict="task_id")
+        if existing_report and existing_report.get("id"):
+            self._safe_update_by_id("reports", report_row, existing_report["id"])
+        else:
+            self._safe_insert("reports", report_row)
         record_audit_event(
             action="report_generated",
             task_id=task_id,
@@ -292,13 +296,13 @@ class AnalysisPersistenceService:
         }
         self._safe_update("tasks", payload, task_id)
 
-    def _fetch_share_token(self, task_id: str) -> str | None:
+    def _fetch_report(self, task_id: str) -> dict[str, Any] | None:
         try:
-            resp = self.client.table("reports").select("share_token").eq("task_id", task_id).execute()
+            resp = self.client.table("reports").select("id,share_token").eq("task_id", task_id).execute()
             if resp.data:
-                return resp.data[0].get("share_token")
+                return resp.data[0]
         except Exception as exc:
-            logger.warning("Failed to fetch share token for %s: %s", task_id, exc)
+            logger.warning("Failed to fetch report for %s: %s", task_id, exc)
         return None
 
     def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> None:
@@ -318,6 +322,12 @@ class AnalysisPersistenceService:
             self.client.table(table_name).update(payload).eq("id", task_id).execute()
         except Exception as exc:
             logger.error("Failed to update %s for task %s: %s (payload keys: %s)", table_name, task_id, exc, list(payload.keys()))
+
+    def _safe_update_by_id(self, table_name: str, payload: dict[str, Any], row_id: str) -> None:
+        try:
+            self.client.table(table_name).update(payload).eq("id", row_id).execute()
+        except Exception as exc:
+            logger.error("Failed to update %s row %s: %s (payload keys: %s)", table_name, row_id, exc, list(payload.keys()))
 
     def _safe_upsert(self, table_name: str, payload: dict[str, Any], *, on_conflict: str) -> None:
         try:

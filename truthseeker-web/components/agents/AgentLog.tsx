@@ -107,7 +107,7 @@ export function AgentLog({ logs, maxHeight = "360px" }: AgentLogProps) {
 
     // 自动滚动到底部
     useEffect(() => {
-        if (bottomRef.current) {
+        if (bottomRef.current && typeof bottomRef.current.scrollIntoView === "function") {
             bottomRef.current.scrollIntoView({ behavior: "smooth" })
         }
     }, [logsWithKeys]) // 依赖整个数组，确保内容变化时也滚动
@@ -128,7 +128,10 @@ export function AgentLog({ logs, maxHeight = "360px" }: AgentLogProps) {
     // 处理maxHeight单位
     const containerStyle = useMemo(() => {
         const height = typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight
-        return { maxHeight: height }
+        return {
+            maxHeight: height,
+            height: height === "100%" ? "100%" : undefined,
+        }
     }, [maxHeight])
 
     if (logs.length === 0) {
@@ -148,7 +151,8 @@ export function AgentLog({ logs, maxHeight = "360px" }: AgentLogProps) {
 
     return (
         <div
-            className="overflow-y-auto space-y-2 pr-1 font-mono text-xs"
+            data-testid="agent-log-scroll"
+            className="min-h-0 overflow-y-auto overscroll-contain space-y-2 pr-2 font-mono text-xs"
             style={containerStyle}
         >
             <AnimatePresence initial={false}>

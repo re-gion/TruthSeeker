@@ -5,7 +5,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.services.analysis_persistence import normalize_final_verdict
+from app.services.analysis_persistence import build_report_row, normalize_final_verdict
 from app.services.audit_log import record_audit_event
 from app.services.report_generator import generate_markdown_report
 from app.utils.supabase_client import supabase
@@ -39,21 +39,45 @@ def _assert_task_owner(task_id: str, request: Request) -> None:
         raise HTTPException(status_code=403, detail="无权分享该任务报告")
 
 
+def _fetch_report(task_id: str) -> dict | None:
+    resp = supabase.table("reports").select("id, share_token, report_hash").eq("task_id", task_id).execute()
+    return resp.data[0] if resp.data else None
+
+
+def _create_report_from_completed_task(task_id: str, share_token: str) -> dict:
+    task_resp = supabase.table("tasks").select("id,status,result").eq("id", task_id).execute()
+    if not task_resp.data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task = task_resp.data[0]
+    task_result = task.get("result")
+    if task.get("status") != "completed" or not isinstance(task_result, dict):
+        raise HTTPException(status_code=404, detail="报告尚未生成")
+
+    report_row = build_report_row(task_id, task_result, existing_share_token=share_token)
+    try:
+        resp = supabase.table("reports").insert(report_row).execute()
+        return resp.data[0] if resp.data else report_row
+    except Exception as exc:
+        logger.error("Failed to create report row for share task %s: %s", task_id, exc)
+        raise HTTPException(status_code=500, detail="报告分享准备失败")
+
+
 @router.post("/{task_id}", response_model=ShareResponse)
 async def create_share_link(task_id: str, request: Request):
     """为指定任务生成报告分享链接"""
     _assert_task_owner(task_id, request)
-    resp = supabase.table("reports").select("id, share_token, report_hash").eq("task_id", task_id).execute()
-    if not resp.data:
-        raise HTTPException(status_code=404, detail="报告尚未生成")
+    report = _fetch_report(task_id)
 
-    report = resp.data[0]
-
-    if report.get("share_token"):
+    if not report:
+        token = secrets.token_urlsafe(16)
+        report = _create_report_from_completed_task(task_id, token)
+    elif report.get("share_token"):
         token = report["share_token"]
     else:
         token = secrets.token_urlsafe(16)
         supabase.table("reports").update({"share_token": token}).eq("id", report["id"]).execute()
+        report["share_token"] = token
 
     record_audit_event(
         action="share_created",

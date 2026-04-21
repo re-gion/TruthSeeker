@@ -23,7 +23,19 @@ export function InviteButton({ taskId }: { taskId: string }) {
             const { invite_url: inviteUrl } = await response.json()
             const absoluteUrl = new URL(inviteUrl, window.location.origin)
 
-            await navigator.clipboard.writeText(absoluteUrl.toString())
+            const text = absoluteUrl.toString()
+            try {
+                await navigator.clipboard.writeText(text)
+            } catch {
+                const textarea = document.createElement("textarea")
+                textarea.value = text
+                textarea.style.position = "fixed"
+                textarea.style.opacity = "0"
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand("copy")
+                document.body.removeChild(textarea)
+            }
             setCopied(true)
             window.setTimeout(() => setCopied(false), 2000)
         } catch (error) {

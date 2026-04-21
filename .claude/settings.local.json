@@ -44,7 +44,8 @@
       "Bash(node node_modules/next/dist/bin/next build)",
       "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false)",
       "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false --incremental false)",
-      "Bash(node node_modules/vitest/vitest.mjs run --reporter=verbose)"
+      "Bash(node node_modules/vitest/vitest.mjs run --reporter=verbose)",
+      "Bash(netstat -ano)"
     ],
     "deny": [
       "Bash(rm -rf *)",

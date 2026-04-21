@@ -1,10 +1,8 @@
-"""JWT 认证中间件 — 验证 Supabase 签发的 token"""
+"""JWT 认证中间件 — 纯 ASGI 实现，兼容 SSE StreamingResponse"""
 import logging
 
 import jwt
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+from jwt import PyJWKClient
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +37,6 @@ def _is_public(path: str, method: str = "GET") -> bool:
     for prefix in PUBLIC_PREFIXES:
         if path.startswith(prefix):
             return True
-    # GET-only 公开路径：仅 GET 请求放行
     if method.upper() == "GET":
         for prefix in PUBLIC_GET_PREFIXES:
             if path.startswith(prefix):
@@ -55,73 +52,124 @@ def _is_public(path: str, method: str = "GET") -> bool:
     return False
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """可选 JWT 认证：有 token 则提取 user_id，无 token 则为匿名"""
+class AuthMiddleware:
+    """JWT 认证 — 纯 ASGI 中间件，兼容 SSE 流式响应。
 
-    def __init__(self, app, supabase_jwt_secret: str):
-        super().__init__(app)
+    BaseHTTPMiddleware 会消费 StreamingResponse 的 body 导致 SSE 断裂，
+    改用纯 ASGI 让流式响应直接透传。
+    """
+
+    def __init__(self, app, supabase_jwt_secret: str, supabase_url: str = ""):
+        self.app = app
         self.jwt_secret = supabase_jwt_secret
+        self.jwks_client: PyJWKClient | None = None
 
-    async def dispatch(self, request: Request, call_next):
-        # 公开路径：仍然尝试提取 user_id 用于追踪（X-4 修复）
-        if _is_public(request.url.path, request.method):
-            request.state.user_id = "anonymous"
-            request.state.is_authenticated = False
-            self._try_extract_user(request)
-            return await call_next(request)
+        if supabase_url:
+            jwks_url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+            self.jwks_client = PyJWKClient(jwks_url, cache_keys=True)
+            logger.info("JWKS client initialized: %s", jwks_url)
 
-        # 受保护路径：必须认证
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {"error": True, "status_code": 401, "detail": "未提供认证令牌"},
-                status_code=401,
-            )
-
-        token = auth_header[7:]
-        try:
-            payload = jwt.decode(
-                token,
-                self.jwt_secret,
-                algorithms=["HS256"],
-                audience="authenticated",  # A-2 修复：校验 audience
-            )
-            sub = payload.get("sub")
-            if not sub:
-                return JSONResponse(
-                    {"error": True, "status_code": 401, "detail": "令牌缺少用户标识"},
-                    status_code=401,
+    def _verify_token(self, token: str) -> dict:
+        """验证 JWT — 优先 JWKS（ES256），回退 HS256"""
+        if self.jwks_client:
+            try:
+                signing_key = self.jwks_client.get_signing_key_from_jwt(token)
+                return jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["ES256"],
+                    audience="authenticated",
                 )
-            request.state.user_id = sub
-            request.state.is_authenticated = True
+            except jwt.InvalidTokenError:
+                pass
 
-        except jwt.ExpiredSignatureError:
-            return JSONResponse({"error": True, "status_code": 401, "detail": "令牌已过期"}, status_code=401)
-        except jwt.InvalidTokenError as e:
-            logger.warning("Invalid JWT: %s", e)
-            return JSONResponse({"error": True, "status_code": 401, "detail": "无效的认证令牌"}, status_code=401)
+        return jwt.decode(
+            token,
+            self.jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
 
-        try:
-            return await call_next(request)
-        except Exception as e:
-            logger.error("Request processing error after auth: %s", e)
-            return JSONResponse({"error": True, "status_code": 500, "detail": "服务器内部错误"}, status_code=500)
+    def _json_response(self, scope: dict, status: int, detail: str):
+        """构造 JSON 错误响应的 ASGI 发送序列"""
+        import json as _json
 
-    def _try_extract_user(self, request: Request) -> None:
-        """尝试从公开路由的请求中提取 user_id（X-4 修复）"""
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        body = _json.dumps(
+            {"error": True, "status_code": status, "detail": detail},
+            ensure_ascii=False,
+        ).encode()
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        return [
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": headers,
+            },
+            {"type": "http.response.body", "body": body},
+        ]
+
+    def _parse_headers(self, scope: dict) -> dict[str, str]:
+        """从 ASGI scope 解析请求头"""
+        return {
+            name.decode().lower(): value.decode()
+            for name, value in scope.get("headers", [])
+        }
+
+    async def __call__(self, scope: dict, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
             return
-        token = auth_header[7:]
-        try:
-            payload = jwt.decode(
-                token, self.jwt_secret,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-            sub = payload.get("sub")
-            if sub:
-                request.state.user_id = sub
-                request.state.is_authenticated = True
-        except jwt.InvalidTokenError:
-            pass  # 公开路由，token 无效不影响访问
+
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+        headers = self._parse_headers(scope)
+        auth_header = headers.get("authorization", "")
+        user_id = "anonymous"
+        is_authenticated = False
+
+        if method.upper() == "OPTIONS" or _is_public(path, method):
+            # 公开路由：尝试提取用户但不阻断
+            if auth_header.startswith("Bearer "):
+                try:
+                    payload = self._verify_token(auth_header[7:])
+                    sub = payload.get("sub")
+                    if sub:
+                        user_id = sub
+                        is_authenticated = True
+                except jwt.InvalidTokenError:
+                    pass
+        else:
+            # 受保护路由：必须提供有效 token
+            if not auth_header.startswith("Bearer "):
+                for msg in self._json_response(scope, 401, "未提供认证令牌"):
+                    await send(msg)
+                return
+
+            try:
+                payload = self._verify_token(auth_header[7:])
+                sub = payload.get("sub")
+                if not sub:
+                    for msg in self._json_response(scope, 401, "令牌缺少用户标识"):
+                        await send(msg)
+                    return
+                user_id = sub
+                is_authenticated = True
+            except jwt.ExpiredSignatureError:
+                for msg in self._json_response(scope, 401, "令牌已过期"):
+                    await send(msg)
+                return
+            except jwt.InvalidTokenError as e:
+                logger.warning("Invalid JWT: %s", e)
+                for msg in self._json_response(scope, 401, "无效的认证令牌"):
+                    await send(msg)
+                return
+
+        # 注入 user_id 到 scope 的 state 中
+        scope.setdefault("state", {})
+        scope["state"]["user_id"] = user_id
+        scope["state"]["is_authenticated"] = is_authenticated
+
+        await self.app(scope, receive, send)

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
-import { createClient } from "@/lib/supabase/client"
 import { getAuthToken } from "@/lib/auth"
 
 export type AgentEvent =
@@ -33,6 +32,25 @@ export interface AgentLogEntry {
     round?: number
 }
 
+export interface AgentHistoryResponse {
+    task?: Record<string, unknown> | null
+    agent_logs?: Record<string, unknown>[]
+    analysis_states?: Record<string, unknown>[]
+    report?: Record<string, unknown> | null
+}
+
+export interface StreamStateFromHistory {
+    logs: AgentLogEntry[]
+    forensicsResult: Record<string, unknown> | null
+    osintResult: Record<string, unknown> | null
+    challengerFeedback: Record<string, unknown> | null
+    agentWeights: Record<string, number>
+    finalVerdict: Record<string, unknown> | null
+    currentRound: number
+    isComplete: boolean
+    isWaitingConsultation: boolean
+}
+
 interface UseAgentStreamOptions {
     taskId: string
     inputType?: string
@@ -43,6 +61,7 @@ interface UseAgentStreamOptions {
     autoStart?: boolean
     maxRounds?: number
     role?: 'host' | 'expert' | 'viewer'
+    inviteToken?: string | null
     channel?: RealtimeChannel | null
 }
 
@@ -72,6 +91,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+    return isObject(value) ? value : null
+}
+
+function readNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
 function readLogEntry(value: unknown): AgentLogEntry | null {
     if (!isObject(value)) return null
 
@@ -91,6 +118,61 @@ function readLogEntry(value: unknown): AgentLogEntry | null {
         content,
         timestamp: typeof value.timestamp === "string" ? value.timestamp : new Date().toISOString(),
         round: typeof value.round === "number" ? value.round : undefined,
+    }
+}
+
+function readPersistedLogEntry(value: unknown): AgentLogEntry | null {
+    if (!isObject(value)) return null
+    const content = typeof value.content === "string" ? value.content : ""
+    if (!content) return null
+    return {
+        agent: typeof value.agent_name === "string" ? value.agent_name : typeof value.agent === "string" ? value.agent : "system",
+        type: typeof value.log_type === "string" ? value.log_type : typeof value.type === "string" ? value.type : "action",
+        content,
+        timestamp: typeof value.timestamp === "string" ? value.timestamp : typeof value.created_at === "string" ? value.created_at : new Date().toISOString(),
+        round: readNumber(value.round_number) ?? readNumber(value.round),
+    }
+}
+
+export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): StreamStateFromHistory {
+    const logs = Array.isArray(history.agent_logs)
+        ? history.agent_logs.map(readPersistedLogEntry).filter((entry): entry is AgentLogEntry => entry !== null)
+        : []
+
+    let forensicsResult: Record<string, unknown> | null = null
+    let osintResult: Record<string, unknown> | null = null
+    let challengerFeedback: Record<string, unknown> | null = null
+    let finalVerdict: Record<string, unknown> | null = null
+    let currentRound = 1
+
+    const states = Array.isArray(history.analysis_states) ? history.analysis_states : []
+    for (const row of states) {
+        currentRound = Math.max(currentRound, readNumber(row.round_number) ?? 1)
+        const snapshot = readRecord(row.result_snapshot)
+        if (!snapshot) continue
+        forensicsResult = readRecord(snapshot.forensics) ?? forensicsResult
+        osintResult = readRecord(snapshot.osint) ?? osintResult
+        challengerFeedback = readRecord(snapshot.challenger) ?? challengerFeedback
+        finalVerdict = readRecord(snapshot.final_verdict) ?? finalVerdict
+    }
+
+    const report = readRecord(history.report)
+    const task = readRecord(history.task)
+    finalVerdict = readRecord(report?.verdict_payload) ?? finalVerdict ?? readRecord(task?.result)
+
+    const agentWeights = readRecord(finalVerdict?.agent_weights) as Record<string, number> | null
+    const status = typeof task?.status === "string" ? task.status : ""
+
+    return {
+        logs,
+        forensicsResult,
+        osintResult,
+        challengerFeedback,
+        agentWeights: agentWeights ?? {},
+        finalVerdict,
+        currentRound,
+        isComplete: status === "completed" || Boolean(finalVerdict),
+        isWaitingConsultation: status === "waiting_consultation",
     }
 }
 
@@ -119,6 +201,7 @@ export function useAgentStream({
     autoStart = true,
     maxRounds = 3,
     role = 'host',
+    inviteToken,
     channel
 }: UseAgentStreamOptions): UseAgentStreamReturn {
     const [events, setEvents] = useState<AgentEvent[]>([])
@@ -313,6 +396,45 @@ export function useAgentStream({
     const resume = useCallback(() => {
         void runStream(true)
     }, [runStream])
+
+    useEffect(() => {
+        if (role !== "expert") return
+        let cancelled = false
+
+        async function loadAgentHistory() {
+            try {
+                const url = new URL(`${API_BASE}/api/v1/consultation/${taskId}/agent-history`)
+                if (inviteToken) url.searchParams.set("invite_token", inviteToken)
+                const response = await fetch(url.toString())
+                if (!response.ok) throw new Error(`history HTTP ${response.status}`)
+                const history = await response.json() as AgentHistoryResponse
+                if (cancelled) return
+
+                const mapped = mapAgentHistoryToStreamState(history)
+                setLogs((prev) => prev.length > 0 ? prev : mapped.logs)
+                setForensicsResult(mapped.forensicsResult)
+                setOsintResult(mapped.osintResult)
+                setChallengerFeedback(mapped.challengerFeedback)
+                setFinalVerdict(mapped.finalVerdict)
+                setAgentWeights(mapped.agentWeights)
+                setCurrentRound(mapped.currentRound)
+                setIsComplete(mapped.isComplete)
+                setIsWaitingConsultation(mapped.isWaitingConsultation)
+                setIsRunning(!mapped.isComplete && !mapped.isWaitingConsultation)
+            } catch (err) {
+                if (!cancelled) {
+                    console.error("[useAgentStream] Failed to load agent history:", err)
+                    setIsRunning(false)
+                }
+            }
+        }
+
+        void loadAgentHistory()
+
+        return () => {
+            cancelled = true
+        }
+    }, [inviteToken, role, taskId])
 
     useEffect(() => {
         if (role === 'expert') {

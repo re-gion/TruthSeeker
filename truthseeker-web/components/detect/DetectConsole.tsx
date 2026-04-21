@@ -132,6 +132,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         priorityFocus: taskContext.priorityFocus,
         autoStart: role === "host" && taskLoaded,
         role,
+        inviteToken,
         channel,
     })
     const forensicsSnapshot = forensicsResult ? extractAnalysisSnapshot(forensicsResult) : null
@@ -400,13 +401,13 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         osintNode={
                             <>
                                 <AgentCard name="情报溯源Agent" agentKey="osint" icon={<Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("osint", !!osintResult)} confidence={osintSnapshot ? osintSnapshot.confidence : undefined} description="网络威胁情报 · 路由追踪" />
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" /></div>
+                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" /></div>
                             </>
                         }
                         forensicsNode={
                             <>
                                 <AgentCard name="视听鉴伪Agent" agentKey="forensics" icon={<Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined} description="Deepfake 模型检测 · 异常提取" />
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" /></div>
+                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" /></div>
                             </>
                         }
                         challengerNode={
@@ -415,14 +416,17 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 {!!challengerSnapshot?.requiresMoreEvidence && (
                                     <div className="bg-[#F59E0B]/20 border border-[#F59E0B]/50 rounded-lg p-2 text-xs text-[#F59E0B]">🔄 发现矛盾，触发重审</div>
                                 )}
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-auto min-h-0"><AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" /></div>
+                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" /></div>
                             </>
                         }
                         commanderNode={
                             <>
                                 <AgentCard name="研判指挥Agent" agentKey="commander" icon={<Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={verdictSnapshot ? verdictSnapshot.confidence : undefined} description="多维向量收敛中心 · 最终判决" />
-                                <div className="flex-1 overflow-auto min-h-0 flex flex-col">
-                                    {finalVerdict ? <VerdictBadge verdict={finalVerdict} /> : <div className="rounded-xl liquid-glass p-2 border border-white/10 flex-1"><AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" /></div>}
+                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0 flex flex-col gap-2">
+                                    {finalVerdict && <div className="shrink-0"><VerdictBadge verdict={finalVerdict} /></div>}
+                                    <div className="flex-1 min-h-0">
+                                        <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
+                                    </div>
                                 </div>
                             </>
                         }
@@ -444,7 +448,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             confidence={osintSnapshot ? osintSnapshot.confidence : undefined}
                             description="网络威胁情报 · 路由追踪 · 元数据校验"
                         />
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden">
+                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
                             <AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" />
                         </div>
                     </motion.div>
@@ -462,7 +466,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined}
                             description="Deepfake 模型检测 · 像素级异常提取"
                         />
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden">
+                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
                             <AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" />
                         </div>
                     </motion.div>
@@ -496,7 +500,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             )}
                         </AnimatePresence>
 
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden">
+                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
                             <AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" />
                         </div>
                     </motion.div>
@@ -519,17 +523,20 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 {finalVerdict ? (
                                     <motion.div
                                         key="verdict"
-                                        className="flex-1"
+                                        className="flex-1 min-h-0 flex flex-col gap-3"
                                         initial={{ opacity: 0, scale: 0.95 }}
                                         animate={{ opacity: 1, scale: 1 }}
                                     >
                                         <VerdictBadge verdict={finalVerdict} />
+                                        <div className="rounded-xl glass-card p-3 flex-1 min-h-0">
+                                            <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
+                                        </div>
                                     </motion.div>
                                 ) : (
                                     <motion.div
                                         key="logs"
                                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                                        className="rounded-xl glass-card p-3 flex-1"
+                                        className="rounded-xl glass-card p-3 flex-1 min-h-0"
                                     >
                                         <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
                                     </motion.div>

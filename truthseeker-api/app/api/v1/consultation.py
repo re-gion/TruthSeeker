@@ -200,6 +200,52 @@ async def get_consultation_messages(task_id: str, request: Request, invite_token
     return {"messages": resp.data}
 
 
+@router.get("/{task_id}/agent-history")
+async def get_agent_history(task_id: str, request: Request, invite_token: Optional[str] = None):
+    """获取已持久化的智能体检测记录，供专家邀请链接和主持人刷新页面后回放。"""
+    is_authenticated = bool(getattr(request.state, "is_authenticated", False))
+    if not is_authenticated:
+        _validate_invite_token(task_id, invite_token)
+    else:
+        task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+        if not task_resp.data:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        _assert_task_owner(task_resp.data[0], request)
+
+    task_resp = supabase.table("tasks").select("id,title,status,input_type,result,metadata").eq("id", task_id).execute()
+    if not task_resp.data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    logs_resp = (
+        supabase.table("agent_logs")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("timestamp", desc=False)
+        .execute()
+    )
+    states_resp = (
+        supabase.table("analysis_states")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    reports_resp = (
+        supabase.table("reports")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("generated_at", desc=True)
+        .execute()
+    )
+
+    return {
+        "task": task_resp.data[0],
+        "agent_logs": logs_resp.data or [],
+        "analysis_states": states_resp.data or [],
+        "report": reports_resp.data[0] if reports_resp.data else None,
+    }
+
+
 @router.get("/{task_id}/unread")
 async def get_unread_messages(
     task_id: str,
@@ -239,9 +285,7 @@ def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
     invite = resp.data[0]
     if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")
-    if invite.get("status") == "used":
-        raise HTTPException(status_code=400, detail="邀请令牌已被使用")
-    # 标记为已使用，防止重复使用
+    # 标记为已使用，但允许专家刷新页面或重新进入同一链接读取上下文。
     try:
         supabase.table("consultation_invites").update({"status": "used"}).eq("id", invite["id"]).execute()
     except Exception as exc:

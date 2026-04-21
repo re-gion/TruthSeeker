@@ -101,7 +101,13 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
         model_used = result.get("model", "unknown")
         if model_used.startswith("mock"):
-            log("action", "⚠️  Reality Defender API 不可用，使用降级模式分析")
+            details = result.get("details", {}) if isinstance(result.get("details"), dict) else {}
+            fallback_reason = details.get("fallback_reason", "unknown")
+            api_key_configured = details.get("api_key_configured")
+            if api_key_configured:
+                log("action", f"⚠️  Reality Defender API 已读取 Key，但调用失败（{fallback_reason}），使用降级模式分析")
+            else:
+                log("action", "⚠️  Reality Defender API Key 未读取到，使用降级模式分析")
         else:
             log("action", f"✅ Reality Defender API 连接成功")
 

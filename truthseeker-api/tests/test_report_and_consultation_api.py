@@ -14,6 +14,7 @@ class FakeQuery:
         self.filters = {}
         self.payload = None
         self.order_by = None
+        self.operation = None
 
     def select(self, _columns):
         return self
@@ -32,24 +33,27 @@ class FakeQuery:
 
     def insert(self, payload):
         self.payload = payload
+        self.operation = "insert"
         return self
 
     def update(self, payload):
         self.payload = payload
+        self.operation = "update"
         return self
 
     def upsert(self, payload, **_kwargs):
         self.payload = payload
+        self.operation = "upsert"
         return self
 
     def execute(self):
         table = self.db.setdefault(self.table_name, [])
 
-        if self.payload is not None and self.table_name == "consultation_invites":
+        if self.payload is not None and self.operation == "insert":
             table.append(self.payload)
             return SimpleNamespace(data=[self.payload])
 
-        if self.payload is not None and self.table_name == "reports":
+        if self.payload is not None and self.operation in ("update", "upsert"):
             for row in table:
                 if all(row.get(k) == v for k, v in self.filters.items()):
                     row.update(self.payload)
@@ -90,6 +94,41 @@ def test_create_share_link_reuses_existing_token(monkeypatch):
     assert response.status_code == 200
     assert response.json()["share_token"] == "existing-token"
     assert response.json()["share_url"].endswith("/report/existing-token")
+
+
+def test_create_share_link_builds_report_from_completed_task_when_missing(monkeypatch):
+    from app.api.v1 import share as share_module
+
+    monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+
+    db = {
+        "tasks": [
+            {
+                "id": "task-1",
+                "status": "completed",
+                "result": {
+                    "verdict": "suspicious",
+                    "confidence": 0.72,
+                    "analysis_summary": "已完成研判",
+                    "key_evidence": ["取证命中"],
+                    "recommendations": ["人工复核"],
+                },
+            }
+        ],
+        "reports": [],
+    }
+    monkeypatch.setattr(share_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    response = client.post("/api/v1/share/task-1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["share_token"]
+    assert body["share_url"].endswith(f"/report/{body['share_token']}")
+    assert db["reports"][0]["task_id"] == "task-1"
+    assert db["reports"][0]["share_token"] == body["share_token"]
+    assert db["reports"][0]["report_hash"]
 
 
 def test_create_consultation_invite_returns_tokenized_url(monkeypatch):
@@ -157,6 +196,86 @@ def test_validate_expired_consultation_invite_returns_410(monkeypatch):
     response = client.get("/api/v1/consultation/invite/expired-token")
 
     assert response.status_code == 410
+
+
+def test_used_consultation_invite_can_still_read_messages(monkeypatch):
+    from app.api.v1 import consultation as consultation_module
+
+    db = {
+        "consultation_invites": [
+            {
+                "id": "invite-1",
+                "task_id": "task-10",
+                "token": "used-token",
+                "status": "used",
+                "expires_at": "2999-01-01T00:00:00+00:00",
+            }
+        ],
+        "consultation_messages": [
+            {
+                "task_id": "task-10",
+                "role": "expert",
+                "message": "建议人工复核",
+                "expert_name": "expert",
+                "created_at": "2026-04-21T00:00:00+00:00",
+            }
+        ],
+    }
+    monkeypatch.setattr(consultation_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    response = client.get("/api/v1/consultation/task-10/messages?invite_token=used-token")
+
+    assert response.status_code == 200
+    assert response.json()["messages"][0]["message"] == "建议人工复核"
+
+
+def test_agent_history_available_to_expert_invite(monkeypatch):
+    from app.api.v1 import consultation as consultation_module
+
+    db = {
+        "consultation_invites": [
+            {
+                "id": "invite-1",
+                "task_id": "task-10",
+                "token": "invite-token",
+                "status": "pending",
+                "expires_at": "2999-01-01T00:00:00+00:00",
+            }
+        ],
+        "tasks": [{"id": "task-10", "status": "completed", "result": {"verdict": "suspicious"}}],
+        "agent_logs": [
+            {
+                "task_id": "task-10",
+                "round_number": 1,
+                "agent_name": "forensics",
+                "log_type": "finding",
+                "content": "检测完成",
+                "timestamp": "2026-04-21T00:00:00+00:00",
+            }
+        ],
+        "analysis_states": [
+            {
+                "task_id": "task-10",
+                "round_number": 1,
+                "current_agent": "forensics",
+                "result_snapshot": {"forensics": {"confidence": 0.7}},
+                "evidence_board": {"evidence": []},
+                "created_at": "2026-04-21T00:00:01+00:00",
+            }
+        ],
+        "reports": [{"task_id": "task-10", "verdict_payload": {"verdict": "suspicious", "confidence": 0.8}}],
+    }
+    monkeypatch.setattr(consultation_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    response = client.get("/api/v1/consultation/task-10/agent-history?invite_token=invite-token")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agent_logs"][0]["content"] == "检测完成"
+    assert body["analysis_states"][0]["result_snapshot"]["forensics"]["confidence"] == 0.7
+    assert body["report"]["verdict_payload"]["verdict"] == "suspicious"
 
 
 def test_create_share_link_rejects_cross_user_task(monkeypatch):

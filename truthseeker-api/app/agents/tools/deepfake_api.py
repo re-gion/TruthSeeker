@@ -225,7 +225,12 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
     """
     api_key = _get_api_key()
     if not api_key:
-        return await mock_deepfake_analysis(file_url, media_type)
+        return await mock_deepfake_analysis(
+            file_url,
+            media_type,
+            fallback_reason="missing_api_key",
+            api_key_configured=False,
+        )
 
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
@@ -258,16 +263,37 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
 
     except httpx.HTTPStatusError as e:
         logger.warning("[Reality Defender] HTTP Error %d: %s", e.response.status_code, e.response.text[:200])
-        return await mock_deepfake_analysis(file_url, media_type)
+        return await mock_deepfake_analysis(
+            file_url,
+            media_type,
+            fallback_reason=f"http_{e.response.status_code}",
+            api_key_configured=True,
+        )
     except httpx.TimeoutException as e:
         logger.warning("[Reality Defender] 超时: %s", e)
-        return await mock_deepfake_analysis(file_url, media_type)
+        return await mock_deepfake_analysis(
+            file_url,
+            media_type,
+            fallback_reason="timeout",
+            api_key_configured=True,
+        )
     except Exception as e:
         logger.error("[Reality Defender] 错误: %s: %s", type(e).__name__, e)
-        return await mock_deepfake_analysis(file_url, media_type)
+        return await mock_deepfake_analysis(
+            file_url,
+            media_type,
+            fallback_reason=f"{type(e).__name__}: {e}",
+            api_key_configured=True,
+        )
 
 
-async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> dict:
+async def mock_deepfake_analysis(
+    file_url: str,
+    media_type: str = "video",
+    *,
+    fallback_reason: str = "mock_mode",
+    api_key_configured: bool = False,
+) -> dict:
     """模拟 Deepfake 检测结果（降级/测试用）"""
     await asyncio.sleep(0.1)
 
@@ -293,6 +319,7 @@ async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> di
         "confidence": deepfake_prob if is_deepfake else (1.0 - deepfake_prob),
         "deepfake_probability": deepfake_prob,
         "model": "mock_analyzer_v1",
+        "degraded": True,
         "models": [],
         "frame_inferences": [],
         "audio_score": None,
@@ -300,6 +327,8 @@ async def mock_deepfake_analysis(file_url: str, media_type: str = "video") -> di
             "indicators": indicators,
             "frames_analyzed": _stable_int(f"{seed}:frames", 30, 120) if media_type == "video" else 1,
             "anomaly_score": deepfake_prob,
+            "fallback_reason": fallback_reason,
+            "api_key_configured": api_key_configured,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

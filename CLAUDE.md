@@ -70,6 +70,12 @@ VIRUSTOTAL_API_KEY=
 REALITY_DEFENDER_API_KEY=
 ```
 
+## 测试账号
+
+- 邮箱：gionre98@gmail.com
+- 密码：@Zhangyujing0906
+- 所有需要登录的测试、验证场景均使用此账号，不要再额外创建测试账号
+
 ## 任务管理
 
 - **task.md** — 唯一任务来源，按顺序执行，完成后打勾
