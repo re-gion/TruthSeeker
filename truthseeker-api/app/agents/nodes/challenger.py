@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - only used when LangGraph is installed
 
 async def challenger_node(state: TruthSeekerState) -> dict:
     """
-    逻辑质询Agent Agent：
+    逻辑质询Agent：
     1. 审查 Forensics + OSINT 证据的一致性（规则检查 + LLM 推理）
     2. 检查置信度是否达到阈值
     3. 发现矛盾点时触发质疑，要求补充证据
@@ -43,7 +43,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         logs.append(entry)
         return entry
 
-    log("thinking", f"⚖️  逻辑质询Agent Agent 启动（第 {round_num} 轮）...")
+    log("thinking", f"⚖️  逻辑质询Agent 启动（第 {round_num} 轮）...")
     log("thinking", f"📋 接收到 {len(evidence_board)} 条证据，开始交叉验证...")
     if case_prompt:
         log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")

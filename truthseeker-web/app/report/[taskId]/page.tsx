@@ -5,7 +5,8 @@ import { useParams } from "next/navigation"
 import Link from "next/link"
 import { motion } from "motion/react"
 import StarBackground from "@/components/ui/StarBackground"
-import { renderReportMarkdown } from "@/lib/report-markdown"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface ReportData {
     report: {
@@ -124,9 +125,11 @@ export default function SharedReportPage() {
                                 </div>
                             )}
                             {data.report.summary && (
-                                <p className="mt-3 text-sm text-[#C0C0C0] leading-relaxed">
-                                    {data.report.summary}
-                                </p>
+                                <div className="mt-3 text-sm text-[#C0C0C0] leading-relaxed report-summary">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                        {data.report.summary}
+                                    </ReactMarkdown>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -137,7 +140,7 @@ export default function SharedReportPage() {
                         {data.task.input_type && <span>类型: {data.task.input_type}</span>}
                         {data.report.generated_at && (
                             <span>
-                                生成时间: {new Date(data.report.generated_at).toLocaleString("zh-CN")}
+                                裁决时间: {new Date(data.report.generated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
                             </span>
                         )}
                         {data.report.report_hash && <span>报告 Hash: {data.report.report_hash}</span>}
@@ -152,12 +155,11 @@ export default function SharedReportPage() {
                     className="glass-card rounded-xl p-6 border border-white/5"
                 >
                     <h2 className="text-lg font-bold text-[#C0C0C0] mb-4">详细分析报告</h2>
-                    <div
-                        className="prose prose-invert prose-sm max-w-none text-[#C0C0C0] prose-headings:text-white prose-strong:text-white prose-code:text-[#D4FF12]"
-                        dangerouslySetInnerHTML={{
-                            __html: renderReportMarkdown(data.markdown),
-                        }}
-                    />
+                    <div className="report-markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {data.markdown}
+                        </ReactMarkdown>
+                    </div>
                 </motion.div>
 
                 {/* CTA */}

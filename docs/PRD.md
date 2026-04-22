@@ -103,7 +103,7 @@
 | **音频伪造检测** | Resemble Detect / ElevenLabs检测API /自建Whisper+Classifier |语音克隆检测、频谱异常分析 |
 | **恶意URL识别** | VirusTotal API / Google Safe Browsing / URLVoid |域名信誉查询、威胁情报关联 |
 | **开源情报查询** | Shodan / Censys / WHOIS XML API | IP归属、域名注册信息、资产测绘 |
-| **多模态大模型** | Kimi/Moonshot (moonshot-v1-8k) |伪装专家分析、跨模态关联推理 |
+| **多模态大模型** | Kimi/Moonshot (kimi-k2.5) |伪装专家分析、跨模态关联推理 |
 
 ---
 

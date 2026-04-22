@@ -7,17 +7,23 @@ import { createClient } from "@/lib/supabase/client"
 
 const ACCEPTED_TYPES = [
     "video/mp4",
+    "video/quicktime",
     "video/webm",
     "audio/mpeg",
     "audio/wav",
+    "audio/mp4",
+    "audio/aac",
+    "audio/ogg",
+    "audio/flac",
     "image/jpeg",
     "image/png",
+    "image/gif",
     "image/webp",
     "text/plain",
 ]
-const ACCEPTED_EXT = ".mp4,.webm,.mp3,.wav,.jpg,.jpeg,.png,.webp,.txt"
+const ACCEPTED_EXT = ".mp4,.mov,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.jpg,.jpeg,.png,.gif,.webp,.txt"
 const MAX_FILES = 5
-const MAX_SIZE = 500 * 1024 * 1024
+const MAX_SIZE = 250 * 1024 * 1024
 
 const promptTemplates = [
     "请判断该内容是否存在 AI 伪造、拼接或篡改痕迹，并给出关键依据。",
@@ -89,7 +95,7 @@ export function FileUploader() {
         }
         const oversize = nextFiles.find((file) => file.size > MAX_SIZE)
         if (oversize) {
-            setError(`${oversize.name} 超过 500MB`)
+            setError(`${oversize.name} 超过大小限制（视频 250MB / 音频 20MB / 图片 50MB / 文本 5MB）`)
             return
         }
 

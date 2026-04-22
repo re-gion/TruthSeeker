@@ -3,8 +3,10 @@ import asyncio
 import importlib
 import io
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -107,8 +109,10 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
         verdict = result.get("verdict", "N/A")
         confidence = result.get("confidence", "N/A")
+        ruling_time = report.get("generated_at") if report else task.get("completed_at")
         lines.append(f"- **裁决结论**: {verdict}")
         lines.append(f"- **置信度**: {_fmt_confidence(confidence)}")
+        lines.append(f"- **裁决时间**: {_fmt_time(ruling_time)}")
         key_evidence = result.get("key_evidence", [])
         if key_evidence:
             lines.append("- **关键证据**:")
@@ -177,7 +181,8 @@ async def generate_markdown_report(task_id: str) -> str:
     # ---- 页脚 ----
     lines.append("---")
     lines.append("")
-    lines.append(f"*报告生成时间: {datetime.now(timezone.utc).isoformat()}*")
+    now_cn = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
+    lines.append(f"*报告生成时间: {now_cn.strftime('%Y-%m-%d %H:%M:%S')}*")
     lines.append(f"*TruthSeeker - 跨模态 Deepfake 鉴伪与溯源系统*")
 
     return "\n".join(lines)
@@ -227,12 +232,13 @@ async def generate_pdf_report(task_id: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 def _fmt_time(value: Optional[str]) -> str:
-    """格式化时间戳"""
+    """格式化时间戳为北京时间"""
     if not value:
         return "N/A"
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        dt_cn = dt.astimezone(ZoneInfo("Asia/Shanghai"))
+        return dt_cn.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, AttributeError):
         return str(value)
 
@@ -255,8 +261,19 @@ def _extract_agent_result(analysis_states: list, agent_name: str) -> Optional[di
     return None
 
 
+def _maybe_fmt_time(value) -> str:
+    """如果值像 ISO 8601 时间戳，则转为北京时间；否则原样返回。"""
+    if not isinstance(value, str):
+        return str(value)
+    # 匹配常见 ISO 8601 格式，如 2026-04-22T10:29:49.349138+00:00
+    import re
+    if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", value):
+        return _fmt_time(value)
+    return value
+
+
 def _dict_to_markdown(data: dict, indent: int = 0) -> str:
-    """将字典递归转为 Markdown 列表"""
+    """将字典递归转为 Markdown 列表，自动把 ISO 时间戳转为北京时间"""
     lines = []
     prefix = "  " * indent
     for key, value in data.items():
@@ -269,9 +286,9 @@ def _dict_to_markdown(data: dict, indent: int = 0) -> str:
                 if isinstance(item, dict):
                     lines.append(_dict_to_markdown(item, indent + 1))
                 else:
-                    lines.append(f"{prefix}  - {item}")
+                    lines.append(f"{prefix}  - {_maybe_fmt_time(item)}")
         else:
-            lines.append(f"{prefix}- **{key}**: {value}")
+            lines.append(f"{prefix}- **{key}**: {_maybe_fmt_time(value)}")
     return "\n".join(lines)
 
 
@@ -303,16 +320,40 @@ def _load_pdf_font(size: int):
     return ImageFont.load_default()
 
 
+def _clean_markdown_markup(text: str) -> str:
+    """移除 Markdown 标记符号，用于纯文本 / Pillow PDF fallback 渲染"""
+    # 粗体 **text**
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    # 斜体 *text*（确保不处理已被替换的或连续 *）
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
+    # 行内代码 `text`
+    text = re.sub(r"`(.+?)`", r"\1", text)
+    # 链接 [text](url) -> text
+    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
+    return text
+
+
 def _display_markdown_line(line: str) -> tuple[str, int]:
     stripped = line.strip()
     if not stripped:
         return "", 0
     if stripped.startswith("#"):
         level = len(stripped) - len(stripped.lstrip("#"))
-        return stripped[level:].strip(), min(level, 3)
+        text = _clean_markdown_markup(stripped[level:].strip())
+        return text, min(level, 3)
     if stripped.startswith("|"):
-        return stripped.replace("|", "  "), 0
-    return stripped, 0
+        text = stripped.replace("|", "  ")
+        text = _clean_markdown_markup(text)
+        return text, 0
+    # 移除列表与引用标记
+    if stripped.startswith("- "):
+        stripped = stripped[2:]
+    elif stripped.startswith("* "):
+        stripped = stripped[2:]
+    elif stripped.startswith("> "):
+        stripped = stripped[2:]
+    text = _clean_markdown_markup(stripped)
+    return text, 0
 
 
 def _wrap_text_for_width(text: str, font, max_width: int, draw) -> list[str]:

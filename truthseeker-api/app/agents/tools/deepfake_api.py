@@ -24,9 +24,17 @@ RD_BASE = "https://api.prd.realitydefender.xyz"
 # 文件类型映射: input_type → (extension, supported_types)
 FILE_TYPE_MAP = {
     "video": [".mp4", ".mov"],
-    "audio": [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"],
+    "audio": [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".alac"],
     "image": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
     "text": [".txt"],
+}
+
+# Per-type size limits (aligned with Reality Defender API docs)
+SIZE_LIMITS = {
+    "image": 50 * 1024 * 1024,   # 50 MB
+    "audio": 20 * 1024 * 1024,   # 20 MB
+    "video": 250 * 1024 * 1024,  # 250 MB
+    "text": 5 * 1024 * 1024,     # 5 MB
 }
 
 # 默认文件扩展名
@@ -96,12 +104,22 @@ async def _request_presigned_url(
     resp.raise_for_status()
     data = resp.json()
 
-    response_data = data.get("response", data)
+    response_data = data.get("response") or data
+    if not isinstance(response_data, dict):
+        raise ValueError(f"RD presigned response unexpected format: {data}")
+
     signed_url = response_data.get("signedUrl", "")
-    request_id = response_data.get("requestId", response_data.get("request_id", ""))
+    # RD 响应格式变更: requestId 可能在顶层，也可能在 response 内部
+    request_id = (
+        data.get("requestId", data.get("request_id", ""))
+        or response_data.get("requestId", response_data.get("request_id", ""))
+    )
 
     if not signed_url:
         raise ValueError(f"RD presigned response missing signedUrl: {data}")
+
+    if not request_id:
+        logger.warning("RD presigned response missing requestId; full response: %s", data)
 
     return signed_url, request_id
 
@@ -141,8 +159,13 @@ async def _poll_result(
         data = resp.json()
 
         response_data = data.get("response", data)
-        status = response_data.get("status", "").upper()
 
+        # New format: resultsSummary present means analysis is complete
+        if response_data.get("resultsSummary"):
+            return response_data
+
+        # Old format: check top-level status
+        status = response_data.get("status", "").upper()
         if status in ("COMPLETE", "COMPLETED", "DONE"):
             return response_data
         elif status in ("FAILED", "ERROR"):
@@ -155,29 +178,13 @@ async def _poll_result(
 def _parse_rd_result(rd_data: dict) -> dict:
     """解析 Reality Defender 返回结果为标准化格式
 
-    RD 返回中 ensemble 结果是最可靠的，优先使用
+    Supports both new format (resultsSummary) and old format (ensemble).
+    New format: resultsSummary.status (AUTHENTIC/FAKE/SUSPICIOUS/NOT_APPLICABLE/UNABLE_TO_EVALUATE)
+                resultsSummary.metadata.finalScore (0-100 scale)
     """
-    # 尝试获取 ensemble 结果
-    ensemble = rd_data.get("ensemble", {})
-    models = rd_data.get("models", [])
-
-    # 提取 deepfake 分数 —— ensemble 优先
-    if ensemble:
-        deepfake_score = float(ensemble.get("score", 0.0))
-        is_deepfake = ensemble.get("label", "").upper() == "FAKE"
-    elif models:
-        # 如果没有 ensemble，从第一个模型获取
-        first_model = models[0] if models else {}
-        deepfake_score = float(first_model.get("score", 0.0))
-        is_deepfake = first_model.get("label", "").upper() == "FAKE"
-    else:
-        # 尝试顶层字段
-        deepfake_score = float(rd_data.get("score", 0.0))
-        is_deepfake = rd_data.get("label", "").upper() == "FAKE"
-
     # 收集各模型独立分数
     model_scores = []
-    for m in models:
+    for m in rd_data.get("models", []):
         model_scores.append({
             "name": m.get("name", m.get("model", "unknown")),
             "score": float(m.get("score", 0.0)),
@@ -194,20 +201,63 @@ def _parse_rd_result(rd_data: dict) -> dict:
             "label": fi.get("label", "unknown"),
         })
 
-    # 音频独立分数
     audio_score = rd_data.get("audioScore") or rd_data.get("audio_score")
+
+    # --- 优先使用新格式 resultsSummary ---
+    results_summary = rd_data.get("resultsSummary")
+    if results_summary:
+        status = results_summary.get("status", "").upper()
+        metadata = results_summary.get("metadata", {})
+        final_score_raw = metadata.get("finalScore")
+
+        # API 返回 0-100，转为 0-1
+        deepfake_probability = float(final_score_raw) / 100.0 if final_score_raw is not None else 0.0
+
+        if status == "FAKE":
+            is_deepfake = True
+        elif status == "SUSPICIOUS":
+            is_deepfake = True
+        elif status == "NOT_APPLICABLE":
+            reasons = metadata.get("reasons", [])
+            reason_msg = "; ".join(r.get("message", "") for r in reasons) if reasons else ""
+            logger.warning("[Reality Defender] NOT_APPLICABLE: %s", reason_msg)
+            is_deepfake = False
+            deepfake_probability = 0.0
+        elif status == "UNABLE_TO_EVALUATE":
+            error_info = results_summary.get("error", {})
+            raise RuntimeError(f"RD unable to evaluate: {error_info.get('message', 'unknown')}")
+        else:
+            # AUTHENTIC
+            is_deepfake = False
+    else:
+        # --- 回退旧格式 ensemble ---
+        ensemble = rd_data.get("ensemble", {})
+        if ensemble:
+            deepfake_probability = float(ensemble.get("score", 0.0))
+            is_deepfake = ensemble.get("label", "").upper() == "FAKE"
+        elif model_scores:
+            first = model_scores[0]
+            deepfake_probability = float(first["score"])
+            is_deepfake = first["label"].upper() == "FAKE"
+        else:
+            deepfake_probability = float(rd_data.get("score", 0.0))
+            is_deepfake = rd_data.get("label", "").upper() == "FAKE"
+
+    confidence = deepfake_probability if is_deepfake else (1.0 - deepfake_probability)
 
     return {
         "is_deepfake": is_deepfake,
-        "confidence": deepfake_score if is_deepfake else (1.0 - deepfake_score),
-        "deepfake_probability": deepfake_score,
+        "confidence": confidence,
+        "deepfake_probability": deepfake_probability,
         "model": "reality_defender",
         "models": model_scores,
         "frame_inferences": frame_inferences,
         "audio_score": audio_score,
+        "indicators": [],
         "details": {
-            "ensemble": ensemble,
-            "total_models": len(models),
+            "results_summary": results_summary,
+            "ensemble": rd_data.get("ensemble", {}),
+            "total_models": len(model_scores),
             "request_id": rd_data.get("requestId", rd_data.get("request_id", "")),
         },
         "raw_response": rd_data,
@@ -236,6 +286,14 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
         async with httpx.AsyncClient(timeout=180.0) as client:
             # 步骤1: 下载源文件
             file_data, filename = await _download_file(file_url)
+
+            # 校验文件大小（以 Reality Defender API 文档为准）
+            size_limit = SIZE_LIMITS.get(media_type, 50 * 1024 * 1024)
+            if len(file_data) > size_limit:
+                raise ValueError(
+                    f"文件大小 {len(file_data) / 1024 / 1024:.1f}MB "
+                    f"超过 {media_type} 类型上限 {size_limit / 1024 / 1024:.0f}MB"
+                )
 
             # 确保文件名有正确扩展名
             base, ext = os.path.splitext(filename)

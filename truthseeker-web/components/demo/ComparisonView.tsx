@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import Image from "next/image"
 import { ScanFace, AlertTriangle, ShieldCheck } from "lucide-react"
 
 export function ComparisonView() {
@@ -75,14 +74,7 @@ export function ComparisonView() {
                         <div className="absolute inset-0 mix-blend-overlay opacity-30" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noiseFilter\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.65\' numOctaves=\'3\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noiseFilter)\'/%3E%3C/svg%3E")' }}></div>
                     </div>
 
-                    <Image
-                        src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=1200"
-                        alt="Authentic content"
-                        fill
-                        sizes="(max-width: 1024px) 100vw, 1200px"
-                        className="object-cover opacity-80"
-                        draggable={false}
-                    />
+                    <div className="absolute inset-0 opacity-80 bg-gradient-to-br from-[#1a2a3a] via-[#2a3a4a] to-[#1a2a3a]" />
                 </div>
 
                 {/* Forged Image (Foreground, clipped) */}
@@ -96,14 +88,7 @@ export function ComparisonView() {
                         <span className="text-[#EF4444]/30 font-mono tracking-widest">SYNTHETIC ARTIFACTS</span>
                     </div>
 
-                    <Image
-                        src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=1200"
-                        alt="Forged content"
-                        fill
-                        sizes="(max-width: 1024px) 100vw, 1200px"
-                        className="absolute inset-0 object-cover opacity-80 mix-blend-lighten filter sepia-[.3] hue-rotate-15 contrast-125 saturate-150"
-                        draggable={false}
-                    />
+                    <div className="absolute inset-0 opacity-80 bg-gradient-to-br from-[#3a2a1a] via-[#4a3a2a] to-[#3a2a1a] mix-blend-lighten" />
 
                     {/* Artificial artifacts overlays */}
                     <div className="absolute inset-0 border-[3px] border-[#EF4444]/0">

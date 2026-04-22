@@ -45,7 +45,20 @@
       "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false)",
       "Bash(node node_modules/typescript/bin/tsc --noEmit --pretty false --incremental false)",
       "Bash(node node_modules/vitest/vitest.mjs run --reporter=verbose)",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "mcp__chrome-devtools__new_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__evaluate_script",
+      "Bash(ls .venv/Scripts/python.exe)",
+      "Bash(.venv/Scripts/python.exe -c \"import PIL; print\\('PIL version:', PIL.__version__\\)\")",
+      "Bash(.venv/Scripts/pip.exe install *)",
+      "Bash(ls .venv/Scripts/pip*)",
+      "Bash(ls .venv/bin/pip*)",
+      "Bash(which python *)",
+      "Bash(ls .venv/)",
+      "Bash(ls pyproject.toml requirements.txt)",
+      "Bash(./venv_new/Scripts/pip.exe install *)",
+      "Bash(venv_new/Scripts/python.exe -c ' *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

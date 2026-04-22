@@ -96,7 +96,10 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
     try:
         result = await analyze_media(primary_url, input_type)
-        shared_degradation.report_success("reality_defender")
+        if result.get("degraded"):
+            shared_degradation.report_failure("reality_defender", RuntimeError(result.get("details", {}).get("fallback_reason", "degraded_result")))
+        else:
+            shared_degradation.report_success("reality_defender")
         degradation_status = shared_degradation.get_degradation_level("reality_defender")
 
         model_used = result.get("model", "unknown")

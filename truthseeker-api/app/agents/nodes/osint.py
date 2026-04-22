@@ -14,7 +14,7 @@ TEXT_MAX_CHARS = 10000
 
 async def osint_node(state: TruthSeekerState) -> dict:
     """
-    情报溯源Agent Agent：
+    情报溯源Agent：
     1. 提取输入中的 URL/域名
     2. 查询威胁情报（VirusTotal/mock）
     3. 分析元数据（EXIF、Whois 等）
@@ -40,7 +40,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         logs.append(entry)
         return entry
 
-    log("thinking", f"🕵️  情报溯源Agent Agent 启动，任务 ID: {task_id}")
+    log("thinking", f"🕵️  情报溯源Agent 启动，任务 ID: {task_id}")
     log("thinking", "🌐 正在扫描输入内容，提取可疑 URL 和域名特征...")
     if case_prompt:
         log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")

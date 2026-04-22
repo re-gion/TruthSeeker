@@ -53,6 +53,12 @@ Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)
 - motion ^12.34.3 / @react-three/fiber ^9.5.0 / @react-three/drei ^10.7.7
 - @supabase/ssr ^0.8.0
 
+## 本地开发环境
+
+- **前端**: `truthseeker-web/` 目录，直接 `npm run dev` 或 `pnpm dev`
+- **后端虚拟环境**: `truthseeker-api/venv_new/`（激活命令: `venv_new\Scripts\activate`）
+- 安装后端依赖必须使用 `venv_new/Scripts/pip.exe`，不是系统 Python
+
 ## 环境变量
 
 ```bash

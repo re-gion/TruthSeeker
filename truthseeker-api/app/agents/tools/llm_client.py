@@ -23,17 +23,20 @@ logger = logging.getLogger(__name__)
 _llm_cache: dict[str, ChatOpenAI] = {}
 
 
-def get_llm(model_name: str = "moonshot-v1-8k") -> ChatOpenAI:
+def get_llm(model_name: str | None = None) -> ChatOpenAI:
     """Return a cached ChatOpenAI instance configured for Kimi/Moonshot API."""
-    if model_name not in _llm_cache:
-        _llm_cache[model_name] = ChatOpenAI(
-            model=model_name,
+    name = model_name or settings.KIMI_MODEL
+    if name not in _llm_cache:
+        # kimi-k2.5 只支持 temperature=1，其他模型可用 0.3
+        temperature = 1.0 if name.startswith("kimi-k2") else 0.3
+        _llm_cache[name] = ChatOpenAI(
+            model=name,
             base_url=settings.KIMI_BASE_URL,
             api_key=settings.KIMI_API_KEY,
-            temperature=0.3,
+            temperature=temperature,
             max_tokens=2048,
         )
-    return _llm_cache[model_name]
+    return _llm_cache[name]
 
 
 # ---------------------------------------------------------------------------
@@ -47,16 +50,26 @@ async def _invoke_llm(
     fallback_text: str,
 ) -> str:
     """Common LLM call pattern: build chain → invoke → fallback on error."""
-    llm = get_llm()
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", human_template),
     ])
+
+    # 首选模型
+    llm = get_llm()
     chain = prompt | llm | StrOutputParser()
     try:
         return await chain.ainvoke(variables)
     except Exception as exc:
-        logger.exception("LLM 调用失败: %s", exc)
+        logger.warning("首选模型 %s 调用失败: %s", settings.KIMI_MODEL, exc)
+
+    # fallback 模型
+    fallback_llm = get_llm(settings.KIMI_FALLBACK_MODEL)
+    fallback_chain = prompt | fallback_llm | StrOutputParser()
+    try:
+        return await fallback_chain.ainvoke(variables)
+    except Exception as exc:
+        logger.exception("Fallback 模型 %s 也调用失败: %s", settings.KIMI_FALLBACK_MODEL, exc)
         return f"[降级模式: LLM不可用] {fallback_text}"
 
 
@@ -72,6 +85,7 @@ async def forensics_interpret(raw_api_result: dict, input_type: str, case_prompt
             "你需要对传入的原始检测结果进行专业解读，撰写结构清晰、术语准确的中文取证分析报告。"
             "报告应包含：1) 检测结论（是否为伪造及置信度）；2) 关键技术指标分析；"
             "3) 检测模型的推断细节；4) 潜在影响与风险提示。"
+            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(
@@ -105,6 +119,7 @@ async def osint_interpret(raw_intel: dict, input_type: str, case_prompt: str = "
             "你需要对传入的原始情报数据进行专业研判，撰写结构清晰、逻辑严密的中文情报评估报告。"
             "报告应包含：1) 威胁等级判定；2) 关键指标与异常信号分析；"
             "3) 来源可信度评估；4) 关联风险与溯源线索。"
+            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(
@@ -143,6 +158,7 @@ async def challenger_cross_validate(
             "请撰写结构化的中文交叉验证报告，包含："
             "1) 证据一致性总览；2) 矛盾与差异点；3) 薄弱环节与不确定性；"
             "4) 需要进一步调查的问题；5) 整体证据链强度评级(强/中/弱)。"
+            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(
@@ -187,6 +203,7 @@ async def commander_ruling(
             "报告必须包含：1) 最终裁决结论（伪造/真实/无法判定）；"
             "2) 置信度评估与证据链完整性分析；3) 各智能体结论对比与权重考量；"
             "4) 关键分歧点及处理意见；5) 后续取证建议与风险提示。"
+            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
         ),
         human_template=(

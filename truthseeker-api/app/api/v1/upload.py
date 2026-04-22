@@ -27,11 +27,13 @@ def _get_supabase():
         supabase = active_supabase
     return supabase
 
-# 安全：MIME 白名单（不可变集合）
+# 安全：MIME 白名单（不可变集合，对齐 Reality Defender API 支持的格式）
 ALLOWED_MIME = frozenset({
-    "video/mp4", "video/webm",
-    "audio/mpeg", "audio/wav",
-    "image/jpeg", "image/png", "image/webp",
+    "video/mp4", "video/quicktime", "video/webm",
+    "audio/mpeg", "audio/wav", "audio/x-wav",
+    "audio/mp4", "audio/aac", "audio/ogg",
+    "audio/flac", "audio/x-flac",
+    "image/jpeg", "image/png", "image/gif", "image/webp",
     "text/plain",
 })
 
@@ -39,9 +41,27 @@ ALLOWED_MIME = frozenset({
 MAGIC_MIME_MAP: dict[bytes, str] = {
     b"\xff\xd8\xff": "image/jpeg",
     b"\x89PNG": "image/png",
-    b"RIFF": "audio/wav",       # RIFF...WAVE
-    b"\x1a\x45\xdf\xa5": "video/webm",  # EBML/Matroska/WebM
+    b"GIF87a": "image/gif",
+    b"GIF89a": "image/gif",
+    b"RIFF": "audio/wav",
+    b"OggS": "audio/ogg",
+    b"fLaC": "audio/flac",
+    b"\x1a\x45\xdf\xa5": "video/webm",
 }
+
+# Per-type size limits (aligned with Reality Defender API docs)
+SIZE_LIMITS: dict[str, int] = {
+    "image": 50 * 1024 * 1024,    # 50 MB
+    "audio": 20 * 1024 * 1024,    # 20 MB
+    "video": 250 * 1024 * 1024,   # 250 MB
+    "text": 5 * 1024 * 1024,      # 5 MB
+}
+DEFAULT_SIZE_LIMIT = 250 * 1024 * 1024  # 250 MB
+
+
+def _get_size_limit(mime: str) -> int:
+    prefix = mime.split("/")[0]
+    return SIZE_LIMITS.get(prefix, DEFAULT_SIZE_LIMIT)
 
 
 def _magic_mime(header: bytes) -> str | None:
@@ -95,9 +115,6 @@ def _verify_file_type(tmp_path: str, declared_mime: str, filename: str = "") -> 
     return None
 
 
-MAX_SIZE = 500 * 1024 * 1024  # 500 MB
-
-
 @router.post("/")
 async def upload_file(
     request: Request,
@@ -117,6 +134,7 @@ async def upload_file(
     folder = _sanitize_folder(effective_user_id)
     ext = _safe_ext(file.filename or "upload")
     tmp_path: str | None = None
+    max_size = _get_size_limit(file.content_type)
 
     try:
         total = 0
@@ -129,12 +147,12 @@ async def upload_file(
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > MAX_SIZE:
-                    # 超限立即中止
+                if total > max_size:
+                    limit_mb = max_size // (1024 * 1024)
                     os.unlink(tmp_path)
                     tmp_path = None
                     return JSONResponse(
-                        {"detail": "文件大小不能超过 500MB"},
+                        {"detail": f"文件大小不能超过 {limit_mb}MB"},
                         status_code=400,
                     )
                 tmp.write(chunk)

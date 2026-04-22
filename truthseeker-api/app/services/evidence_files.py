@@ -5,7 +5,15 @@ from typing import Any, Literal, TypedDict
 
 
 MAX_EVIDENCE_FILES = 5
-MAX_EVIDENCE_FILE_SIZE = 500 * 1024 * 1024
+
+# Per-type limits (aligned with Reality Defender API)
+_SIZE_LIMITS = {
+    "image": 50 * 1024 * 1024,    # 50 MB
+    "audio": 20 * 1024 * 1024,    # 20 MB
+    "video": 250 * 1024 * 1024,   # 250 MB
+    "text": 5 * 1024 * 1024,      # 5 MB
+}
+MAX_EVIDENCE_FILE_SIZE = 250 * 1024 * 1024  # global upper bound
 
 EvidenceModality = Literal["video", "audio", "image", "text"]
 
@@ -46,12 +54,15 @@ def normalize_uploaded_files(raw_files: list[dict[str, Any]] | None) -> list[Upl
         name = str(item.get("name") or item.get("filename") or f"file-{index}").strip()
         mime_type = str(item.get("mime_type") or item.get("mimeType") or item.get("content_type") or "").strip()
         size_bytes = int(item.get("size_bytes") or item.get("size") or 0)
-        if size_bytes > MAX_EVIDENCE_FILE_SIZE:
-            raise ValueError(f"{name} 超过 500MB")
+        modality_val = item.get("modality") or infer_modality(mime_type, name)
+        size_limit = _SIZE_LIMITS.get(modality_val, MAX_EVIDENCE_FILE_SIZE)
+        if size_bytes > size_limit:
+            limit_mb = size_limit // (1024 * 1024)
+            raise ValueError(f"{name} 超过 {limit_mb}MB（{modality_val} 类型上限）")
 
         storage_path = str(item.get("storage_path") or item.get("storagePath") or "").strip()
         file_url = str(item.get("file_url") or item.get("fileUrl") or "").strip()
-        modality = item.get("modality") or infer_modality(mime_type, name)
+        modality = modality_val
 
         normalized_item: UploadedEvidenceFile = {
             "id": str(item.get("id") or f"file-{index}"),
