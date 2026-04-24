@@ -2,7 +2,9 @@
 
 import { useCallback, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import Image from "next/image"
 import { motion, AnimatePresence } from "motion/react"
+import { BrainCircuit, Film, FileSearch, Mic } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
 const ACCEPTED_TYPES = [
@@ -26,9 +28,31 @@ const MAX_FILES = 5
 const MAX_SIZE = 250 * 1024 * 1024
 
 const promptTemplates = [
-    "请判断该内容是否存在 AI 伪造、拼接或篡改痕迹，并给出关键依据。",
-    "请从画面、音频、文本一致性、来源可信度和传播风险三个角度展开分析。",
-    "请优先识别是否涉及诈骗、舆情操纵或深度伪造传播链，并输出处置建议。",
+    {
+        label: "深伪取证",
+        summary: "换脸/合成/篡改痕迹",
+        prompt: "请以数字取证专家视角判断该内容是否存在 AI 伪造、换脸、合成语音、画面拼接或局部篡改痕迹。请优先列出可观察到的关键证据，包括面部边缘、眼口同步、光照阴影、压缩伪影、音画一致性和异常帧，并给出可信度判断。",
+    },
+    {
+        label: "跨模态一致性",
+        summary: "画面/音频/文本互证",
+        prompt: "请重点检查视频画面、音频声纹、字幕文本、上下文描述之间是否一致。请指出人物身份、口型与语音、场景时间、背景物体、文本叙述之间的冲突点，并说明这些冲突是否足以支持伪造、剪辑误导或断章取义的判断。",
+    },
+    {
+        label: "溯源传播链",
+        summary: "URL/来源/扩散风险",
+        prompt: "请围绕来源可信度与传播链进行分析：识别文件或链接中的来源线索、域名与账号可信度、可能的首发渠道、传播路径和二次加工痕迹。若存在诈骗、舆情操纵、钓鱼引流或恶意扩散风险，请给出风险等级和建议处置动作。",
+    },
+    {
+        label: "诈骗风险",
+        summary: "冒充身份/诱导转账",
+        prompt: "请判断该内容是否可能用于诈骗或身份冒充场景。重点检查是否存在伪造领导、亲友、客服、金融机构或官方媒体口吻，以及诱导转账、索要验证码、制造紧迫感、承诺收益等风险信号。请输出可疑话术、证据片段和用户防护建议。",
+    },
+    {
+        label: "司法报告",
+        summary: "证据链/结论/建议",
+        prompt: "请按专家报告格式分析该材料，输出：一、检测结论；二、关键证据；三、各 Agent 可能关注的疑点；四、证据链完整性与不足；五、是否建议人工复核；六、面向司法、平台治理或企业安全场景的处置建议。请避免只给笼统结论。",
+    },
 ]
 const aspectOptions = ["多模态取证优先", "跨模态一致性", "传播链溯源", "高风险案件"]
 
@@ -77,6 +101,7 @@ export function FileUploader() {
     const [selectedFiles, setSelectedFiles] = useState<File[]>([])
     const [error, setError] = useState<string | null>(null)
     const [casePrompt, setCasePrompt] = useState("")
+    const [templateIndex, setTemplateIndex] = useState(0)
     const [shareToCasebase, setShareToCasebase] = useState(false)
     const [selectedFocus, setSelectedFocus] = useState("多模态取证优先")
 
@@ -84,6 +109,17 @@ export function FileUploader() {
         () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
         [selectedFiles],
     )
+
+    const cycleTemplate = useCallback(() => {
+        const nextIndex = (templateIndex + 1) % promptTemplates.length
+        setTemplateIndex(nextIndex)
+        setCasePrompt(promptTemplates[nextIndex].prompt)
+    }, [templateIndex])
+
+    const applyTemplate = useCallback((index: number) => {
+        setTemplateIndex(index)
+        setCasePrompt(promptTemplates[index].prompt)
+    }, [])
 
     const addFiles = useCallback((incoming: FileList | File[]) => {
         setError(null)
@@ -274,9 +310,12 @@ export function FileUploader() {
                         <div className="flex items-start justify-between gap-4 mb-5">
                             <div>
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">多媒体上传区</div>
-                                <div className="mt-1 text-sm text-black/50 dark:text-white/45">最多 5 个文件，视频、音频、图片文件会交给视听鉴伪Agent，文本文件会交给情报溯源Agent处理。</div>
+                                <div className="mt-1 text-sm text-black/50 dark:text-white/45 whitespace-nowrap">最多 5 个文件，视频、音频、图片文件会交给视听鉴伪Agent，文本文件会交给情报溯源Agent处理。</div>
                             </div>
-                            <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">MP4 / WebM / MP3 / WAV / JPG / PNG / WebP / TXT<br />单文件最大 500MB</div>
+                            <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">
+                                <div>MP4 / WebM / MP3 / WAV / JPG / PNG /</div>
+                                <div>WebP / TXT · 单文件最大 500MB</div>
+                            </div>
                         </div>
 
                         {uploading ? (
@@ -293,12 +332,29 @@ export function FileUploader() {
                                 </p>
                             </div>
                         ) : (
-                            <div className="rounded-[1.5rem] border border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.62)_0%,rgba(244,241,236,0.72)_100%)] px-6 py-8 text-center dark:border-white/10 dark:bg-black/20">
-                                <p className="text-[#1E1E22] text-xl font-semibold dark:text-white">拖拽或点击上传检材</p>
-                                <p className="mt-2 text-sm text-black/55 leading-relaxed dark:text-white/50">可混合提交视频、音频、图片和文本文件。</p>
-                                <div className="mt-5 flex flex-wrap justify-center gap-2">
-                                    {["VIDEO", "AUDIO", "IMAGE", "TEXT"].map((type) => (
-                                        <span key={type} className="rounded-full border border-black/8 bg-black/[0.04] px-3 py-1 text-[11px] font-mono text-black/45 dark:border-white/10 dark:bg-white/5 dark:text-white/45">{type}</span>
+                            <div className="relative overflow-hidden rounded-[1.5rem] border border-black/8 bg-[radial-gradient(circle_at_50%_20%,rgba(99,102,241,0.14),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.72)_0%,rgba(244,241,236,0.82)_100%)] px-6 py-10 text-center dark:border-white/10 dark:bg-[radial-gradient(circle_at_50%_20%,rgba(99,102,241,0.22),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0.03)_100%)]">
+                                <div className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "radial-gradient(#fff 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
+                                <Image
+                                    src="/loading-icon.svg"
+                                    alt="智能检材扫描"
+                                    width={80}
+                                    height={80}
+                                    className="relative mx-auto mb-5 h-20 w-20 drop-shadow-[0_0_18px_rgba(145,224,33,0.35)]"
+                                    priority={false}
+                                />
+                                <p className="relative text-[#1E1E22] text-xl font-semibold dark:text-white">拖拽或点击上传检材</p>
+                                <p className="relative mt-2 text-sm text-black/55 leading-relaxed dark:text-white/50">可混合提交视频、音频、图片和文本文件。</p>
+                                <div className="relative mt-5 flex flex-wrap justify-center gap-2">
+                                    {[
+                                        ["VIDEO", Film],
+                                        ["AUDIO", Mic],
+                                        ["IMAGE", FileSearch],
+                                        ["TEXT", BrainCircuit],
+                                    ].map(([type, Icon]) => (
+                                        <span key={type as string} className="inline-flex items-center gap-1.5 rounded-full border border-black/8 bg-black/[0.04] px-3 py-1 text-[11px] font-mono text-black/45 dark:border-white/10 dark:bg-white/5 dark:text-white/45">
+                                            <Icon className="h-3 w-3" />
+                                            {type as string}
+                                        </span>
                                     ))}
                                 </div>
                             </div>
@@ -327,9 +383,6 @@ export function FileUploader() {
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">检测提示词</div>
                                 <div className="mt-1 text-sm text-black/50 dark:text-white/45">会同步给视听鉴伪、情报溯源、逻辑质询和研判指挥Agent。</div>
                             </div>
-                            <button type="button" onClick={() => setCasePrompt(promptTemplates[0])} className="rounded-xl border border-[#6366F1]/20 bg-[#6366F1]/8 px-4 py-2 text-sm font-medium text-[#4F46E5] hover:bg-[#6366F1]/12 transition-colors dark:border-[#6366F1]/25 dark:bg-[#6366F1]/12 dark:text-[#C7C9FF] dark:hover:bg-[#6366F1]/18">
-                                提示词模板
-                            </button>
                         </div>
                         <textarea
                             value={casePrompt}
@@ -337,9 +390,20 @@ export function FileUploader() {
                             placeholder="例如：请重点判断该视频是否存在换脸、合成语音与传播链异常，并输出关键证据与处置建议。"
                             className="min-h-[180px] w-full resize-none rounded-[1.25rem] border border-black/8 bg-white/60 px-5 py-4 text-base leading-7 text-[#1F1F23] placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#6366F1]/25 focus:border-[#6366F1]/30 transition-all dark:border-white/10 dark:bg-black/20 dark:text-white dark:placeholder:text-white/25 dark:focus:ring-[#6366F1]/40 dark:focus:border-[#6366F1]/40"
                         />
-                        <div className="mt-5 flex flex-wrap gap-2">
-                            {promptTemplates.map((template) => (
-                                <button key={template} type="button" onClick={() => setCasePrompt(template)} className="rounded-full border border-black/8 bg-black/[0.04] px-3 py-1.5 text-xs text-black/55 hover:bg-black/[0.07] hover:text-black transition-colors dark:border-white/10 dark:bg-white/5 dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white">{template.slice(0, 14)}...</button>
+                        <div className="mt-5 flex gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+                            {promptTemplates.map((template, index) => (
+                                <button
+                                    key={template.label}
+                                    type="button"
+                                    onClick={() => applyTemplate(index)}
+                                    className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] leading-none transition-colors ${templateIndex === index
+                                        ? "border-[#6366F1]/30 bg-[#6366F1]/12 text-[#4F46E5] dark:border-[#6366F1]/35 dark:bg-[#6366F1]/18 dark:text-[#C7C9FF]"
+                                        : "border-black/8 bg-black/[0.04] text-black/55 hover:bg-black/[0.07] hover:text-black dark:border-white/10 dark:bg-white/5 dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white"
+                                        }`}
+                                >
+                                    <span className="font-semibold">{template.label}</span>
+                                    <span className="ml-1 opacity-65">{template.summary}</span>
+                                </button>
                             ))}
                         </div>
                     </div>
@@ -352,6 +416,9 @@ export function FileUploader() {
                                 </button>
                                 <button type="button" onClick={() => setCasePrompt("")} disabled={uploading} className="rounded-2xl border border-black/8 bg-black/[0.04] px-5 py-3 text-sm font-medium text-black/70 hover:bg-black/[0.07] hover:text-black transition-colors disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white">
                                     清空提示词
+                                </button>
+                                <button type="button" onClick={cycleTemplate} disabled={uploading} className="rounded-2xl border border-[#6366F1]/20 bg-[#6366F1]/8 px-5 py-3 text-sm font-medium text-[#4F46E5] hover:bg-[#6366F1]/12 transition-colors disabled:opacity-50 dark:border-[#6366F1]/25 dark:bg-[#6366F1]/12 dark:text-[#C7C9FF] dark:hover:bg-[#6366F1]/18">
+                                    换一个模板
                                 </button>
                             </div>
                             <label className="flex items-center gap-3 rounded-2xl border border-black/8 bg-white/55 px-4 py-3 cursor-pointer dark:border-white/10 dark:bg-black/20">

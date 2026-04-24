@@ -88,8 +88,8 @@ export function FederatedLearning() {
                         transition={{ duration: 0.8 }}
                         className="w-full lg:w-1/2"
                     >
-                        <div className="mb-4 text-lg sm:text-xl md:text-2xl font-bold tracking-[0.08em] text-white">
-                            核心创新点二：
+                        <div className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-white drop-shadow-[0_0_18px_rgba(255,255,255,0.18)]">
+                            核心创新点二
                         </div>
                         <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">
                             FedPaRS <br />

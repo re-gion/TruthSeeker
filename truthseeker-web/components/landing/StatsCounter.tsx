@@ -84,13 +84,13 @@ export function StatsCounter() {
                 <div className="whitespace-nowrap animate-marquee flex items-center">
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">ROBUST FEDERATED LEARNING</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">MULTI-AGENT DEBATE</span>
-                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">PARSIFAL ARCHITECTURE</span>
+                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FEDPARS ARCHITECTURE</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">CROSS-MODAL DETECTION</span>
 
                     {/* duplicate for continuous loop */}
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">ROBUST FEDERATED LEARNING</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">MULTI-AGENT DEBATE</span>
-                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">PARSIFAL ARCHITECTURE</span>
+                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FEDPARS ARCHITECTURE</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">CROSS-MODAL DETECTION</span>
                 </div>
             </div>

@@ -8,12 +8,11 @@ import { useEffect, useState } from "react"
 
 export function LandingNavbar() {
     const scrollProgress = useScrollProgress()
-    const [isScrolled, setIsScrolled] = useState(
-        () => typeof window !== "undefined" && window.scrollY > 50
-    )
+    const [isScrolled, setIsScrolled] = useState(false)
 
     useEffect(() => {
         const handleScroll = () => setIsScrolled(window.scrollY > 50)
+        handleScroll()
         window.addEventListener("scroll", handleScroll, { passive: true })
         return () => window.removeEventListener("scroll", handleScroll)
     }, [])
