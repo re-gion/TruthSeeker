@@ -28,71 +28,71 @@ export function DebateSystem() {
 
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
                 <div className="mb-20">
-                    <div className="mb-4 text-lg sm:text-xl md:text-2xl font-bold tracking-[0.08em] text-white">
-                        核心创新点三：
+                    <div className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-white drop-shadow-[0_0_18px_rgba(255,255,255,0.18)]">
+                        核心创新点三
                     </div>
                     <h2 className="text-center text-3xl md:text-5xl font-bold tracking-tight">
                         人机协同 <span className="gradient-text">专家会诊机制</span>
                     </h2>
-                    <p className="text-muted-foreground text-lg max-w-5xl mx-auto leading-relaxed text-center mt-6">
-                        TruthSeeker 不只依赖自动检测，而是将多智能体证据板、实时协作频道与专家介入机制打通，形成“机器快速筛查 + 人类深度研判 + 结果回注收敛”的闭环会诊模式。
+                    <p className="text-muted-foreground text-lg max-w-6xl mx-auto leading-relaxed text-center mt-6 whitespace-nowrap">
+                        多智能体快速筛查、专家实时介入、会诊结果回注收敛，形成完整人机协同闭环。
                     </p>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] gap-8 items-stretch">
-                    <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[520px] flex flex-col">
-                        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-white/5">
+                    <div className="rounded-3xl border border-slate-200/80 bg-white/92 backdrop-blur-xl shadow-[0_24px_70px_rgba(15,23,42,0.10)] overflow-hidden min-h-[520px] flex flex-col dark:border-white/10 dark:bg-white/5 dark:shadow-2xl">
+                        <div className="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/90 dark:border-white/10 dark:bg-white/5">
                             <div>
-                                <div className="text-xs uppercase tracking-[0.2em] text-white/40 font-mono">Realtime Consultation</div>
-                                <div className="text-xl font-bold text-white mt-1">专家会诊协同面板</div>
+                                <div className="text-xs uppercase tracking-[0.2em] text-slate-400 font-mono dark:text-white/40">Realtime Consultation</div>
+                                <div className="text-xl font-bold text-slate-900 mt-1 dark:text-white">专家会诊协同面板</div>
                             </div>
-                            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-white/10 dark:bg-black/20">
                                 <span className="relative flex h-2.5 w-2.5">
                                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-400" />
                                 </span>
-                                <span className="text-xs font-mono text-green-300">3 位在线会诊</span>
+                                <span className="text-xs font-mono text-emerald-500 dark:text-green-300">3 位在线会诊</span>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-[0.9fr_1.1fr] gap-0 flex-1">
-                            <div className="border-b md:border-b-0 md:border-r border-white/10 p-6 bg-black/20">
+                            <div className="border-b md:border-b-0 md:border-r border-slate-200/80 p-6 bg-slate-100/90 dark:border-white/10 dark:bg-black/20">
                                 <div className="flex items-center justify-between mb-5">
-                                    <div className="text-sm font-semibold text-white">共享证据板</div>
-                                    <div className="text-[10px] font-mono text-white/40 uppercase">State Board</div>
+                                    <div className="text-sm font-semibold text-slate-900 dark:text-white">共享证据板</div>
+                                    <div className="text-[10px] font-mono text-slate-400 uppercase dark:text-white/40">State Board</div>
                                 </div>
 
                                 <div className="space-y-4">
                                     <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/10 p-4">
                                         <div className="flex items-center justify-between mb-2">
-                                            <span className="text-xs font-mono uppercase tracking-wider text-indigo-300">Forensics</span>
-                                            <span className="text-[11px] text-indigo-200/70">置信度 91%</span>
+                                            <span className="text-xs font-mono uppercase tracking-wider text-indigo-500 dark:text-indigo-300">Forensics</span>
+                                            <span className="text-[11px] text-indigo-500/80 dark:text-indigo-200/70">置信度 91%</span>
                                         </div>
-                                        <p className="text-sm text-white/80 leading-relaxed">检测到嘴型与音轨存在轻微错位，关键帧面部边缘出现生成式融合痕迹。</p>
+                                        <p className="text-sm text-slate-900/85 leading-relaxed dark:text-white/80">检测到嘴型与音轨存在轻微错位，关键帧面部边缘出现生成式融合痕迹。</p>
                                     </div>
 
                                     <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
                                         <div className="flex items-center justify-between mb-2">
-                                            <span className="text-xs font-mono uppercase tracking-wider text-emerald-300">OSINT</span>
-                                            <span className="text-[11px] text-emerald-200/70">传播链已关联</span>
+                                            <span className="text-xs font-mono uppercase tracking-wider text-emerald-500 dark:text-emerald-300">OSINT</span>
+                                            <span className="text-[11px] text-emerald-500/80 dark:text-emerald-200/70">传播链已关联</span>
                                         </div>
-                                        <p className="text-sm text-white/80 leading-relaxed">可疑内容最早出现在新注册域名关联账号，扩散路径与历史诈骗样本高度相似。</p>
+                                        <p className="text-sm text-slate-900/85 leading-relaxed dark:text-white/80">可疑内容最早出现在新注册域名关联账号，扩散路径与历史诈骗样本高度相似。</p>
                                     </div>
 
                                     <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
                                         <div className="flex items-center justify-between mb-2">
-                                            <span className="text-xs font-mono uppercase tracking-wider text-amber-300">Challenge</span>
-                                            <span className="text-[11px] text-amber-200/70">等待人工确认</span>
+                                            <span className="text-xs font-mono uppercase tracking-wider text-amber-500 dark:text-amber-300">Challenge</span>
+                                            <span className="text-[11px] text-amber-500/80 dark:text-amber-200/70">等待人工确认</span>
                                         </div>
-                                        <p className="text-sm text-white/80 leading-relaxed">需排查压缩伪影干扰，建议由人工复核证据充分性并决定是否追加高精度复判。</p>
+                                        <p className="text-sm text-slate-900/85 leading-relaxed dark:text-white/80">需排查压缩伪影干扰，建议由人工复核证据充分性并决定是否追加高精度复判。</p>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="p-6 flex flex-col bg-gradient-to-b from-white/5 to-transparent">
+                            <div className="p-6 flex flex-col bg-gradient-to-b from-white to-slate-50/80 dark:from-white/5 dark:to-transparent">
                                 <div className="flex items-center justify-between mb-5">
-                                    <div className="text-sm font-semibold text-white">专家会诊频道</div>
-                                    <div className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-[11px] text-indigo-300">邀请专家会诊</div>
+                                    <div className="text-sm font-semibold text-slate-900 dark:text-white">专家会诊频道</div>
+                                    <div className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-[11px] text-indigo-500 dark:text-indigo-300">邀请专家会诊</div>
                                 </div>
 
                                 <div className="flex-1 space-y-4">
@@ -106,8 +106,8 @@ export function DebateSystem() {
                                             主
                                         </div>
                                         <div className="max-w-[85%]">
-                                            <div className="text-[11px] text-indigo-300 mb-1">主持人 · 09:41</div>
-                                            <div className="rounded-2xl rounded-tl-sm border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-sm text-white/90 leading-relaxed">
+                                            <div className="text-[11px] text-indigo-500 mb-1 dark:text-indigo-300">主持人 · 09:41</div>
+                                            <div className="rounded-2xl rounded-tl-sm border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-sm text-slate-900/85 leading-relaxed dark:text-white/90">
                                                 已同步当前证据板，请专家重点判断“边缘融合痕迹”是否可能由平台二次压缩造成。
                                             </div>
                                         </div>
@@ -124,8 +124,8 @@ export function DebateSystem() {
                                             专
                                         </div>
                                         <div className="max-w-[85%]">
-                                            <div className="text-[11px] text-[#D4FF12] mb-1">外部专家 · 09:42</div>
-                                            <div className="rounded-2xl rounded-tl-sm border border-[#D4FF12]/20 bg-[#D4FF12]/8 px-4 py-3 text-sm text-white/90 leading-relaxed">
+                                            <div className="text-[11px] text-lime-500 mb-1 dark:text-[#D4FF12]">外部专家 · 09:42</div>
+                                            <div className="rounded-2xl rounded-tl-sm border border-[#D4FF12]/20 bg-[#D4FF12]/8 px-4 py-3 text-sm text-slate-900/85 leading-relaxed dark:text-white/90">
                                                 仅凭单帧边缘特征不足以定性，建议提高嘴型-语音同步权重，并追加历史相似样本交叉比对。
                                             </div>
                                         </div>
@@ -142,16 +142,16 @@ export function DebateSystem() {
                                             AI
                                         </div>
                                         <div className="max-w-[85%]">
-                                            <div className="text-[11px] text-cyan-300 mb-1">系统回注 · 09:43</div>
-                                            <div className="rounded-2xl rounded-tl-sm border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm text-white/90 leading-relaxed">
+                                            <div className="text-[11px] text-cyan-500 mb-1 dark:text-cyan-300">系统回注 · 09:43</div>
+                                            <div className="rounded-2xl rounded-tl-sm border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm text-slate-900/85 leading-relaxed dark:text-white/90">
                                                 已采纳专家质询，触发高精度复判与跨样本复核流程，更新结果将回写 Evidence Board 并继续收敛。
                                             </div>
                                         </div>
                                     </motion.div>
                                 </div>
 
-                                <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 flex items-center justify-between gap-3">
-                                    <div className="text-sm text-white/45">提交质询意见 / 标记疑点 / 确认结论</div>
+                                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-200 px-4 py-3 flex items-center justify-between gap-3 dark:border-white/10 dark:bg-black/30">
+                                    <div className="text-sm text-slate-600 dark:text-white/45">提交质询意见 / 标记疑点 / 确认结论</div>
                                     <div className="px-4 py-2 rounded-full bg-[#D4FF12] text-black text-xs font-bold whitespace-nowrap">发送会诊意见</div>
                                 </div>
                             </div>

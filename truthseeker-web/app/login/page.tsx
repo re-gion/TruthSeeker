@@ -24,13 +24,13 @@ export default function LoginPage() {
 
     return (
         <main className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[#020107] dark:bg-[#020107] selection:bg-[#6366F1]/30">
-            <div className="absolute inset-0 z-0 pointer-events-none">
+            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
                 <Image
                     src="/auth-bg.png"
                     alt=""
                     fill
                     sizes="100vw"
-                    className="absolute left-1/2 top-1/2 h-[102%] w-[113.75%] max-w-none -translate-x-1/2 -translate-y-1/2 -scale-y-100 object-cover opacity-90 dark:opacity-90"
+                    className="absolute inset-0 h-full w-full object-contain object-center opacity-90 dark:opacity-90"
                     draggable={false}
                 />
                 <div className="absolute inset-0 bg-gradient-to-b from-[#6366F1]/5 via-transparent to-[#020107]/60" />
