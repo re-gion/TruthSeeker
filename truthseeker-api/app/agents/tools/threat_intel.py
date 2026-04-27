@@ -96,42 +96,45 @@ async def _mock_url_analysis(url: str) -> dict:
     has_high_risk = any(kw in url_lower for kw in high_risk_keywords)
     has_medium_risk = any(kw in url_lower for kw in medium_risk_keywords)
 
-    if has_high_risk or h > 85:
-        threat_score = 0.75 + (h % 20) / 100
-        indicators = [
-            "域名注册时间较短（< 30天）",
-            "URL 包含可疑关键词",
-            "未发现有效 SSL 证书",
-        ]
-        malicious = 8
-    elif has_medium_risk or h > 60:
-        threat_score = 0.35 + (h % 30) / 100
-        indicators = ["URL 结构存在可疑参数", "域名声誉评分偏低"]
-        malicious = 2
+    # 仅保留基于 URL 字符串真实关键词匹配的指标，删除虚构外部情报
+    indicators = []
+    if has_high_risk:
+        indicators.append("URL 字符串包含高风险关键词")
+    if has_medium_risk:
+        indicators.append("URL 字符串包含中等风险关键词")
+    if not indicators:
+        indicators = ["未发现明显本地威胁特征"]
+
+    if has_high_risk:
+        threat_score = 0.3
+    elif has_medium_risk:
+        threat_score = 0.15
     else:
-        threat_score = max(0.0, (h % 20) / 100 - 0.05)
-        indicators = ["未发现明显威胁指标"] if threat_score > 0 else []
-        malicious = 0
+        threat_score = 0.0
 
     # mock:// 协议直接返回低威胁
     if url.startswith("mock://"):
         threat_score = 0.05
         indicators = ["模拟数据，无实际威胁"]
-        malicious = 0
+
+    # 保留本地启发式分析结果，但明确区分 VT 数据不可用
+    indicators_with_note = indicators + ["VirusTotal 未实际调用 — 结果不可用"]
 
     return {
         "threat_score": min(1.0, threat_score),
-        "indicators": indicators,
+        "indicators": indicators_with_note,
         "domain_info": {
             "url": url,
             "analysis_method": "mock_heuristic",
         },
         "virustotal": {
-            "malicious": malicious,
+            "malicious": 0,
             "suspicious": 0,
-            "total_engines": 72,
+            "total_engines": 0,
             "note": "模拟数据（未配置 VirusTotal API Key）",
+            "scan_available": False,
         },
+        "degraded": True,
     }
 
 
@@ -239,7 +242,7 @@ async def scan_file_hash(file_url: str) -> dict:
 
     # 查询 VirusTotal
     if not vt_key:
-        return result
+        return {**result, "status": "no_key"}
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -248,11 +251,11 @@ async def scan_file_hash(file_url: str) -> dict:
                 headers={"x-apikey": vt_key},
             )
             if resp.status_code == 404:
-                # 哈希未在 VT 中找到
-                return result
+                # 哈希未在 VT 中找到 — 这是正常结果，不是降级
+                return {**result, "status": "not_found"}
 
             if resp.status_code != 200:
-                return result
+                return {**result, "status": "error"}
 
             data = resp.json().get("data", {}).get("attributes", {})
             last_analysis = data.get("last_analysis_stats", {})
@@ -267,9 +270,10 @@ async def scan_file_hash(file_url: str) -> dict:
                 "threat_score": min(1.0, (malicious + suspicious * 0.5) / total),
                 "hash": hash_str,
                 "scan_available": True,
+                "status": "ok",
             }
     except Exception:
-        return result
+        return {**result, "status": "error"}
 
 
 async def extract_media_metadata(file_url: str, file_type: str) -> dict:

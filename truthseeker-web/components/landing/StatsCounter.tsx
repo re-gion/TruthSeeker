@@ -4,16 +4,7 @@ import { motion } from "motion/react"
 import { useCountUp } from "@/hooks/useCountUp"
 import { useEffect, useRef, useState } from "react"
 
-interface StatValue {
-    value: number
-    label: string
-    duration: number
-    isFloat?: boolean
-    suffix?: string
-    prefix?: string
-}
-
-function StatItem({ stat, index, isVisible }: { stat: StatValue; index: number; isVisible: boolean }) {
+function StatItem({ stat, index, isVisible }: { stat: any; index: number; isVisible: boolean }) {
     const count = useCountUp(stat.value, stat.duration, isVisible)
 
     return (
@@ -69,7 +60,7 @@ export function StatsCounter() {
     ]
 
     return (
-        <section ref={sectionRef} className="relative py-8 overflow-hidden">
+        <section ref={sectionRef} className="relative py-24 overflow-hidden">
             {/* Container */}
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-12 md:gap-8">
@@ -84,13 +75,13 @@ export function StatsCounter() {
                 <div className="whitespace-nowrap animate-marquee flex items-center">
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">ROBUST FEDERATED LEARNING</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">MULTI-AGENT DEBATE</span>
-                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FEDPARS ARCHITECTURE</span>
+                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FedPaRS ARCHITECTURE</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">CROSS-MODAL DETECTION</span>
 
                     {/* duplicate for continuous loop */}
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">ROBUST FEDERATED LEARNING</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">MULTI-AGENT DEBATE</span>
-                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FEDPARS ARCHITECTURE</span>
+                    <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4">FedPaRS ARCHITECTURE</span>
                     <span className="text-[120px] font-black uppercase text-foreground mx-8 px-4 text-outline">CROSS-MODAL DETECTION</span>
                 </div>
             </div>

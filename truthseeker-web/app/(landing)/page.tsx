@@ -38,6 +38,7 @@ export default function LandingPage() {
 
             {/* Layer 1: LIME (#D4FF12) — Stats + Problems */}
             <motion.div
+                initial={{ y: "0%" }}
                 style={{ y: layer1Y }}
                 className="relative z-10 -mt-16 pt-16 pb-6 rounded-t-[8rem] shadow-[0_-20px_50px_rgba(212,255,18,0.15)] bg-[#D4FF12] dark:bg-[#D4FF12] border-t border-[#D4FF12]/30 overflow-hidden text-black"
             >
@@ -49,6 +50,7 @@ export default function LandingPage() {
 
             {/* Layer 2: Default Background — Workflow + Innovation One */}
             <motion.div
+                initial={{ y: "0%" }}
                 style={{ y: layer2Y }}
                 className="relative z-20 -mt-16 pt-24 pb-32 rounded-t-[8rem] shadow-[0_-20px_50px_rgba(0,0,0,0.3)] bg-background border-t border-border overflow-visible"
             >
@@ -58,6 +60,7 @@ export default function LandingPage() {
 
             {/* Layer 3: Default Background — Innovation Two + Innovation Three */}
             <motion.div
+                initial={{ y: "0%" }}
                 style={{ y: layer3Y }}
                 className="relative z-30 -mt-8 pt-28 pb-16 rounded-t-[8rem] shadow-[0_-20px_50px_rgba(0,0,0,0.3)] bg-background border-t border-border overflow-hidden"
             >
@@ -69,6 +72,7 @@ export default function LandingPage() {
 
             {/* Layer 4: LIME (#D4FF12) — Cases + Tech */}
             <motion.div
+                initial={{ y: "0%" }}
                 style={{ y: layer4Y }}
                 className="relative z-40 -mt-16 pt-24 pb-0 rounded-t-[8rem] shadow-[0_-20px_50px_rgba(212,255,18,0.15)] bg-[#D4FF12] dark:bg-[#D4FF12] border-t border-[#D4FF12]/30 overflow-hidden text-black"
             >
@@ -80,6 +84,7 @@ export default function LandingPage() {
 
             {/* Final layer: Footer — Black */}
             <motion.div
+                initial={{ y: "0%" }}
                 style={{ y: footerY }}
                 className="relative z-50 -mt-8 bg-black"
             >

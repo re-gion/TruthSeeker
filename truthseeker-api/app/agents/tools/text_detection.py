@@ -33,7 +33,6 @@ async def analyze_text_llm(text_content: str) -> dict:
         writing_style_analysis 的字典。LLM 调用失败时返回降级结果。
     """
     llm = get_llm()
-    llm = llm.bind(temperature=0.2)  # 降低温度以获得更确定性的 JSON 输出
 
     prompt = ChatPromptTemplate.from_messages([
         (

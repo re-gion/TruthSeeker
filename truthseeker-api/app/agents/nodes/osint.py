@@ -152,7 +152,13 @@ async def osint_node(state: TruthSeekerState) -> dict:
 
         try:
             intel_result = await analyze_urls(urls_to_check)
-            shared_degradation.report_success("virustotal")
+            # 检查返回的是否为 mock 降级数据
+            if intel_result.get("degraded"):
+                shared_degradation.report_failure("virustotal", Exception("VirusTotal API 未配置或调用失败，返回降级数据"))
+                log("action", "⚠️  VirusTotal API 不可用，OSINT 情报处于降级模式")
+            else:
+                shared_degradation.report_success("virustotal")
+                log("action", "✅ VirusTotal 情报查询成功")
             degradation_status = shared_degradation.get_degradation_level("virustotal")
         except Exception as e:
             shared_degradation.report_failure("virustotal", e)
@@ -174,6 +180,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         threat_indicators = intel_result.get("indicators", [])
         domain_info = intel_result.get("domain_info", {})
         virustotal_result = intel_result.get("virustotal", {})
+        is_degraded = intel_result.get("degraded", False)
 
         if threat_score > 0.7:
             log("finding", f"🚨 高威胁！VirusTotal 检测到恶意标记: {virustotal_result.get('malicious', 0) if virustotal_result else 0} 家")
@@ -210,8 +217,15 @@ async def osint_node(state: TruthSeekerState) -> dict:
                 "threat_score": 0.0, "hash": "", "scan_available": False,
             }
         else:
-            # scan_file_hash succeeded (even if no VT key — it returned a result)
-            shared_degradation.report_success("virustotal")
+            # scan_file_hash 返回了结果，需要区分真实成功还是降级
+            vt_status = vt_scan_result.get("status", "")
+            if vt_status in ("ok", "not_found"):
+                shared_degradation.report_success("virustotal")
+            else:
+                shared_degradation.report_failure(
+                    "virustotal",
+                    Exception(f"VirusTotal 文件哈希扫描状态: {vt_status}"),
+                )
 
         degradation_status = shared_degradation.get_degradation_level("virustotal")
 
@@ -261,6 +275,10 @@ async def osint_node(state: TruthSeekerState) -> dict:
             meta_factor += 0.1
 
         threat_score = min(1.0, max(vt_threat, meta_factor * 0.5))
+        is_degraded = (
+            not vt_scan_result.get("scan_available", False)
+            and vt_scan_result.get("status") != "not_found"
+        )
 
         # 构建 domain_info（来自元数据）
         domain_info = {
@@ -292,6 +310,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             "input_type": "text",
         }
         virustotal_result = {"scan_available": False, "reason": "no_ioc_extracted"}
+        is_degraded = False
 
     # 整合文本 AI 检测分析结果到威胁指标
     if text_analysis_result:
@@ -309,14 +328,19 @@ async def osint_node(state: TruthSeekerState) -> dict:
         threat_score = min(1.0, max(threat_score, text_threat_factor))
 
     # 构建证据条目
+    evidence_desc = (
+        f"OSINT 情报分析[降级]：威胁评分 {threat_score:.1%}，"
+        f"发现 {len(threat_indicators)} 条情报线索（VT 情报不可用）"
+        if is_degraded else
+        f"OSINT 情报分析：威胁评分 {threat_score:.1%}，"
+        f"发现 {len(threat_indicators)} 条情报线索"
+    )
+    evidence_confidence = 0.25 if is_degraded else (min(0.95, 0.6 + (1 - threat_score) * 0.35) if threat_score > 0 else 0.75)
     evidence_item: EvidenceItem = {
         "type": "osint",
         "source": "osint_agent",
-        "description": (
-            f"OSINT 情报分析：威胁评分 {threat_score:.1%}，"
-            f"发现 {len(threat_indicators)} 条情报线索"
-        ),
-        "confidence": min(0.95, 0.6 + (1 - threat_score) * 0.35) if threat_score > 0 else 0.75,
+        "description": evidence_desc,
+        "confidence": evidence_confidence,
         "metadata": {
             "threat_score": threat_score,
             "threat_indicators": threat_indicators,
@@ -332,7 +356,10 @@ async def osint_node(state: TruthSeekerState) -> dict:
         log("finding", f"  → {indicator}")
 
     # OSINT 置信度
-    osint_confidence = 1 - threat_score if threat_score > 0 else 0.75
+    if is_degraded:
+        osint_confidence = 0.25
+    else:
+        osint_confidence = 1 - threat_score if threat_score > 0 else 0.75
 
     # 汇总结果
     osint_result = {
@@ -346,6 +373,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "text_sources_analyzed": text_sources_analyzed,
         "text_analysis": text_analysis_result,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "degraded": is_degraded,
     }
 
     risk_level = "高风险" if threat_score > 0.7 else "中等风险" if threat_score > 0.4 else "低风险"

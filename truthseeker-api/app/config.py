@@ -1,10 +1,18 @@
 """Application configuration using pydantic-settings"""
+from pathlib import Path
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 确保无论从哪个工作目录启动，都能加载到 truthseeker-api/.env
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_PATH),
+        env_file_encoding="utf-8",
+    )
 
     # Supabase
     SUPABASE_URL: str = ""

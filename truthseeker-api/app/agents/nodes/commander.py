@@ -53,7 +53,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
 
     # 动态权重：依据各 Agent 的置信度和降级状态调整
     forensics_weight = 0.45 if not forensics.get("degraded") else 0.25
-    osint_weight = 0.30
+    osint_weight = 0.30 if not osint.get("degraded") else 0.15
     challenger_weight = 1.0 - forensics_weight - osint_weight
 
     agent_weights = {

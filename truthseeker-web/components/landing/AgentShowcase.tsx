@@ -1,14 +1,13 @@
 "use client"
 
 import { motion } from "motion/react"
-import Image from "next/image"
 
 export function AgentShowcase() {
     const agents = [
         {
             role: "视听鉴伪Agent",
             name: "Forensics Agent",
-            icon: <Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={32} height={32} className="w-8 h-8" />,
+            icon: <img src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" className="w-8 h-8" />,
             theme: "indigo",
             glowClass: "agent-glow-indigo",
             bgClass: "from-[#6366F1]/20 to-[#A855F7]/5",
@@ -19,7 +18,7 @@ export function AgentShowcase() {
         {
             role: "情报溯源Agent",
             name: "OSINT Agent",
-            icon: <Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={32} height={32} className="w-8 h-8" />,
+            icon: <img src="/agent-icons/osint.svg" alt="情报溯源Agent" className="w-8 h-8" />,
             theme: "green",
             glowClass: "agent-glow-green",
             bgClass: "from-[#10B981]/20 to-[#34D399]/5",
@@ -30,7 +29,7 @@ export function AgentShowcase() {
         {
             role: "逻辑质询Agent",
             name: "Challenger Agent",
-            icon: <Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={32} height={32} className="w-8 h-8" />,
+            icon: <img src="/agent-icons/challenger.svg" alt="逻辑质询Agent" className="w-8 h-8" />,
             theme: "amber",
             glowClass: "agent-glow-amber",
             bgClass: "from-[#F59E0B]/20 to-[#fbbf24]/5",
@@ -41,7 +40,7 @@ export function AgentShowcase() {
         {
             role: "研判指挥Agent",
             name: "Commander Agent",
-            icon: <Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={32} height={32} className="w-8 h-8" />,
+            icon: <img src="/agent-icons/commander.svg" alt="研判指挥Agent" className="w-8 h-8" />,
             theme: "cyan",
             glowClass: "agent-glow-cyan",
             bgClass: "from-[#06B6D4]/20 to-[#22d3ee]/5",
@@ -56,15 +55,14 @@ export function AgentShowcase() {
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
 
                 {/* Section Header */}
-                <div className="mb-16 md:mb-24">
+                <div className="text-center mb-16 md:mb-24">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
-                        transition={{ delay: 0.05 }}
-                        className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-white drop-shadow-[0_0_18px_rgba(255,255,255,0.18)]"
+                        className="inline-block px-5 py-2 rounded-full bg-[#2a2a2e] text-white/80 text-xs font-mono tracking-wider mb-6 border border-[#3a3a3e]"
                     >
-                        核心创新点一
+                        核心架构
                     </motion.div>
 
                     <motion.h2
@@ -72,7 +70,7 @@ export function AgentShowcase() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.1 }}
-                        className="text-center text-3xl md:text-5xl font-bold tracking-tight mb-6"
+                        className="text-3xl md:text-5xl font-bold tracking-tight mb-6"
                     >
                         多智能体 <span className="gradient-text">交叉验证机制</span>
                     </motion.h2>
@@ -82,9 +80,9 @@ export function AgentShowcase() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.2 }}
-                        className="text-muted-foreground text-lg max-w-5xl mx-auto leading-relaxed whitespace-nowrap"
+                        className="text-muted-foreground text-lg max-w-2xl mx-auto leading-relaxed"
                     >
-                        构建多路分发、异步处理、交叉验证的智能化流水线。超越单一模型的判断，实现模拟人类专家“疑案会诊”的群智决策。
+                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家"疑案会诊"的群智决策。
                     </motion.p>
                 </div>
 
