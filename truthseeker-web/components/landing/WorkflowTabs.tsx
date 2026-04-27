@@ -16,8 +16,8 @@ function DebateArchitectureDiagram() {
                 </div>
 
                 <div className="absolute left-[5.5%] top-[12%] z-20 w-[164px] rounded-2xl border border-indigo-500/25 bg-white px-3 py-2.5 shadow-[0_6px_20px_rgba(99,102,241,0.08)]">
-                    <div className="flex items-center gap-2 text-[13px] font-bold text-black/85"><Image src="/agent-icons-v2/forensics.svg" alt="视听鉴伪" width={16} height={16} className="h-4 w-4" />视听鉴伪 Agent</div>
-                    <div className="mt-1.5 text-[11px] leading-5 text-black/60">检测视频、音频、图像异常痕迹</div>
+                    <div className="flex items-center gap-2 text-[13px] font-bold text-black/85"><Image src="/agent-icons-v2/forensics.svg" alt="电子取证" width={16} height={16} className="h-4 w-4" />电子取证 Agent</div>
+                    <div className="mt-1.5 text-[11px] leading-5 text-black/60">统一取证多模态样本与工具矩阵</div>
                 </div>
 
                 <div className="absolute left-[5.5%] bottom-[18%] z-20 w-[164px] rounded-2xl border border-emerald-500/25 bg-white px-3 py-2.5 shadow-[0_6px_20px_rgba(16,185,129,0.08)]">
@@ -146,7 +146,7 @@ export function WorkflowTabs() {
         },
         {
             title: "多智能体交叉验证",
-            description: "视听鉴伪Agent与情报溯源Agent并行取证，逻辑质询Agent开展对抗性攻防验证，研判指挥Agent融合置信度作出最终收敛裁决。",
+            description: "电子取证Agent先完成全模态取证，逻辑质询Agent阶段审查，再进入情报溯源图谱和最终研判收敛。",
             icon: <Scale className="w-6 h-6" />,
             features: ["跨 Agent 异步并行", "红蓝对抗逻辑质询", "动态收敛终止算法"],
             visual: <DebateArchitectureDiagram />

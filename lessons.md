@@ -1,6 +1,6 @@
 # TruthSeeker 开发错误记录本
 
-> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-21
+> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-28
 
 ---
 
@@ -31,3 +31,11 @@
 | Drei 版本 | v10（支持 React 19） | v9（不支持） |
 | Supabase Auth | `@supabase/ssr` | `@supabase/auth-helpers` |
 | shadcn CLI | `shadcn@canary` | `shadcn@latest` |
+
+## 2026-04-28 后端重建注意事项
+
+- `forensics/osint/challenger/commander` 是后端 SSE、前端检测台、报告生成和历史恢复共同依赖的协议 key。可以改变用户可见语义，但不要轻易改 key。
+- 外部工具不可把“未配置、超时、网络失败”的降级结果伪装成真实检测通过；必须返回结构化 `success/degraded/failed`。
+- provenance graph 中无引用但来自模型推理的边必须标记 `model_inferred=true`，报告中不能写成外部事实。
+- FedPaRS 在当前仓库应写成 compatible 运行时或可替换底座，不要把未实现的训练/推理能力写成已完成。
+- Windows npm 在当前机器上可能同时出现 registry DNS 失败和本地代理 `127.0.0.1:7897` 连接失败；依赖安装失败不能直接判断为前端代码问题，需把 package-lock 更新留到网络恢复后再做。不要手改 `package.json` 伪装安装完成，也不要把临时 SVG 图谱组件当作 `@xyflow/react` 的最终替代方案。

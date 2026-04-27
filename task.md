@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-04-21（调研报告问题修复后核验）
+> **最后审查日期**: 2026-04-28（后端阶段式重建与图谱视图核验）
 
 ---
 
@@ -20,7 +20,11 @@
 
 - [x] 前端上传改为最多 5 个文件，单文件 500MB。
 - [x] 文本框改为全局检测提示词，不再允许仅凭提示词创建检测任务。
-- [x] 视频、音频、图片进入视听鉴伪 Agent；文本文件进入情报溯源 Agent。
+- [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> Challenger。
+- [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
+- [x] Kimi 2.6 作为四 Agent 共享多模态推理基座，工具结果 all-settled 后再进入 Agent 推理。
+- [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
+- [ ] 待本机 npm 网络恢复后安装 `@xyflow/react` 并将图谱视图替换为 React Flow 交互渲染；2026-04-28 已在沙箱外重试官方 registry、默认 npmmirror 和显式 `127.0.0.1:7897` 代理，分别失败于 `EAI_FAIL` 与 `connect UNKNOWN 127.0.0.1:7897`。
 - [x] 任务创建保存 `case_prompt`、文件清单、模态和 storage path。
 - [x] 检测页按 `taskId` 从后端任务记录启动检测，不再通过 URL 传 signed file URL。
 - [x] 检测失败会写入 `failed` 状态并向前端发送 `task_failed`。
@@ -30,7 +34,7 @@
 - [x] 上传、建任务、检测、报告下载、创建分享均要求登录。
 - [x] 后端只信任 JWT 中的 `request.state.user_id`，忽略客户端传入的 `user_id`。
 - [x] 外部专家凭邀请令牌提交会诊意见；主持人创建邀请和继续研判必须登录。
-- [x] Forensics 与 OSINT 每轮并行执行，Challenger 在二者产出后质询。
+- [x] 阶段式收敛：每阶段最多 3 轮，质量变化阈值 0.08。
 - [x] 高冲突时通过 LangGraph in-process interrupt/checkpointer 暂停为 `waiting_consultation`，checkpoint 丢失时可基于持久化快照兜底裁决。
 - [x] 主持人使用同一 `taskId` 触发 `resume=true` 继续研判。
 - [x] 会诊面板加载历史消息，并显示等待会诊/继续研判状态。

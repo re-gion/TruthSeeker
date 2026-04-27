@@ -1,262 +1,358 @@
-"""Forensics Agent - 视听鉴伪Agent，调用真实检测 API + LLM 推理"""
-from datetime import datetime, timezone
+"""Forensics Agent - 电子取证 Agent，全模态取证鉴伪编排。"""
+from __future__ import annotations
 
-from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
+import asyncio
+import re
+from datetime import datetime, timezone
+from typing import Any, Awaitable
+
+import httpx
+
+from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.deepfake_api import analyze_media
-from app.agents.tools.fallback import fallback_metadata_analysis, minimal_forensics_result, shared_degradation
-from app.agents.tools.llm_client import forensics_interpret
+from app.agents.tools.llm_client import build_sample_references, forensics_interpret
+from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
+
+MEDIA_MODALITIES = {"video", "audio", "image"}
+TEXT_MAX_CHARS = 10000
+TOOL_TIMEOUT_SECONDS = 210.0
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _tool_key(result: dict[str, Any]) -> tuple[str, str]:
+    return str(result.get("tool", "")), str(result.get("target", ""))
+
+
+def _extract_urls_from_text(text: str) -> list[str]:
+    pattern = re.compile(r'https?://[^\s<>"\'\]\)}）】]+')
+    return list(dict.fromkeys(pattern.findall(text or "")))
+
+
+async def _read_text_sample(file_info: dict[str, Any]) -> str:
+    url = file_info.get("file_url") or file_info.get("storage_path")
+    if not isinstance(url, str) or not url or url.startswith("mock://"):
+        return ""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text[:TEXT_MAX_CHARS]
+
+
+async def _settle_tool(
+    *,
+    tool: str,
+    target: str,
+    coro: Awaitable[dict[str, Any]],
+    timeout: float = TOOL_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    started_at = _now()
+    try:
+        result = await asyncio.wait_for(coro, timeout=timeout)
+        result = result if isinstance(result, dict) else {"value": result}
+        status = "success"
+        degraded = bool(result.get("degraded"))
+        if tool == "virustotal_file_hash" and not result.get("scan_available") and not result.get("hash"):
+            degraded = True
+            result.setdefault("status", "unavailable")
+        if result.get("status") in {"no_key", "error", "unavailable"}:
+            degraded = True
+        if degraded:
+            status = "degraded"
+        return {
+            "tool": tool,
+            "target": target,
+            "status": status,
+            "degraded": degraded,
+            "result": result,
+            "summary": _summarize_tool_result(tool, result),
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "tool": tool,
+            "target": target,
+            "status": "failed",
+            "degraded": True,
+            "error": "timeout",
+            "summary": f"{tool} 超时，未取得检测结果",
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+    except Exception as exc:
+        return {
+            "tool": tool,
+            "target": target,
+            "status": "failed",
+            "degraded": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "summary": f"{tool} 调用失败",
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+
+
+def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
+    if tool == "reality_defender":
+        return (
+            f"deepfake_probability={result.get('deepfake_probability', 0):.2f}, "
+            f"confidence={result.get('confidence', 0):.2f}"
+        )
+    if tool == "virustotal_file_hash":
+        return (
+            f"hash={str(result.get('hash', ''))[:16]}, "
+            f"malicious={result.get('malicious', 0)}, suspicious={result.get('suspicious', 0)}, "
+            f"status={result.get('status', 'unknown')}"
+        )
+    if tool == "virustotal_text_ioc":
+        vt = result.get("virustotal") or {}
+        return f"threat_score={result.get('threat_score', 0):.2f}, malicious={vt.get('malicious', 0)}"
+    return "工具完成"
+
+
+def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
+    files = state.get("evidence_files") or []
+    if files:
+        return [dict(item) for item in files if isinstance(item, dict)]
+
+    input_files = state.get("input_files") or {}
+    merged: list[dict[str, Any]] = []
+    for key in ("forensics", "osint"):
+        value = input_files.get(key)
+        if isinstance(value, list):
+            merged.extend(dict(item) for item in value if isinstance(item, dict))
+    return merged
+
+
+def _previous_successes(state: TruthSeekerState) -> dict[tuple[str, str], dict[str, Any]]:
+    previous = (state.get("tool_results") or {}).get("forensics")
+    if not previous:
+        previous = (state.get("forensics_result") or {}).get("tool_results") or []
+    return {
+        _tool_key(item): item
+        for item in previous
+        if isinstance(item, dict) and item.get("status") == "success"
+    }
 
 
 async def forensics_node(state: TruthSeekerState) -> dict:
     """
-    视听鉴伪Agent：
-    1. 只处理视频、音频、图片检材；文本检材由 OSINT Agent 处理
-    2. 调用 Reality Defender 或稳定降级分析，提取帧级/音频/视觉证据
-    3. LLM 深度解读，生成结构化鉴证报告
+    电子取证 Agent：
+    1. 接收所有模态检材和全局案件提示词；
+    2. 媒体样本调用 Reality Defender，所有文件哈希和文本 IOC 调用 VirusTotal；
+    3. 等待工具 all-settled 后，再交给 Kimi 多模态上下文生成取证报告。
     """
     task_id = state["task_id"]
-    input_type = state.get("input_type", "video")
-    input_files = state.get("input_files", {})
+    input_type = state.get("input_type", "mixed")
     case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
+    phase_rounds = dict(state.get("phase_rounds") or {"forensics": 1, "osint": 1, "commander": 1})
+    phase_round = int(phase_rounds.get("forensics", 1))
+    challenger_feedback = state.get("challenger_feedback") or {}
+    force_rerun = challenger_feedback.get("target_agent") in {"forensics", None} and bool(
+        challenger_feedback.get("requires_more_evidence")
+    )
 
     logs: list[AgentLog] = []
-    evidence: list[EvidenceItem] = []
     timeline_events: list[dict] = []
 
-    def log(log_type: str, content: str) -> AgentLog:
-        entry: AgentLog = {
+    def log(log_type: str, content: str) -> None:
+        logs.append({
             "agent": "forensics",
             "round": round_num,
             "type": log_type,
             "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        logs.append(entry)
-        return entry
+            "timestamp": _now(),
+        })
 
-    log("thinking", f"🔍 鉴伪Agent 启动，任务 ID: {task_id}")
-    log("thinking", f"📁 输入类型: {input_type}")
+    files = _all_evidence_files(state)
+    sample_refs = build_sample_references(files)
+    media_files = [item for item in files if item.get("modality") in MEDIA_MODALITIES]
+    text_files = [item for item in files if item.get("modality") == "text"]
+
+    log("thinking", f"电子取证Agent 启动，任务 ID: {task_id}")
+    log("thinking", f"接收到 {len(files)} 个检材，媒体 {len(media_files)} 个，文本 {len(text_files)} 个")
     if case_prompt:
-        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
+        log("thinking", f"全局检测目标: {case_prompt[:120]}")
 
-    forensics_files = input_files.get("forensics") or []
-    primary_forensics = forensics_files[0] if forensics_files else None
-    if primary_forensics:
-        input_type = primary_forensics.get("modality", input_type)
-    primary_url = (
-        (primary_forensics.get("file_url") or primary_forensics.get("storage_path"))
-        if primary_forensics
-        else input_files.get("primary", input_files.get("url", ""))
-    )
+    previous_successes = _previous_successes(state)
+    settled_results: list[dict[str, Any]] = []
+    tool_tasks: list[Awaitable[dict[str, Any]]] = []
 
-    if input_type == "text" or not primary_url:
-        log("action", "📝 当前任务仅包含文本检材，视听鉴伪Agent跳过，由情报溯源Agent处理文本检测与溯源")
-        return {
-            "forensics_result": {
-                "is_deepfake": False,
-                "deepfake_probability": 0.0,
-                "confidence": 0.5,
-                "forensics_score": 0.5,
-                "model_used": "not_applicable",
-                "model_scores": [],
-                "frame_inferences_count": 0,
-                "audio_score": None,
-                "indicators": ["文本检材不进入视听鉴伪通道"],
-                "degraded": False,
-                "degradation_status": "skipped",
-                "llm_analysis": "文本检材由情报溯源Agent负责检测与溯源。",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-            "evidence_board": [],
-            "confidence_history": list(state.get("confidence_history", [])),
-            "logs": logs,
-            "timeline_events": [{
-                "round": round_num,
-                "agent": "forensics",
-                "event_type": "skipped",
-                "summary": "文本检材跳过视听鉴伪通道",
-            }],
-            "degradation_status": {"reality_defender": "skipped"},
-        }
+    def maybe_reuse(tool: str, target: str) -> bool:
+        if phase_round <= 1 or force_rerun:
+            return False
+        previous = previous_successes.get((tool, target))
+        if previous:
+            settled_results.append({**previous, "reused": True})
+            return True
+        return False
 
-    # 默认值
-    is_deepfake = False
-    confidence = 0.0
-    deepfake_prob = 0.0
-    model_scores: list = []
-    frame_inferences: list = []
-    audio_score = None
-    indicators: list = []
-    result: dict = {"model": "unknown", "details": {}}
-    degradation_status = "full"
+    for media in media_files:
+        target = str(media.get("name") or media.get("file_url") or media.get("storage_path") or "media")
+        url = str(media.get("file_url") or media.get("storage_path") or "")
+        modality = str(media.get("modality") or input_type)
+        if url and not maybe_reuse("reality_defender", target):
+            tool_tasks.append(_settle_tool(
+                tool="reality_defender",
+                target=target,
+                coro=analyze_media(url, modality),
+            ))
 
-    log("action", "📡 正在连接 Reality Defender 深度鉴伪服务...")
-    degradation_status = shared_degradation.get_degradation_level("reality_defender")
+    for item in files:
+        target = str(item.get("name") or item.get("file_url") or item.get("storage_path") or "evidence")
+        url = str(item.get("file_url") or item.get("storage_path") or "")
+        if url and not maybe_reuse("virustotal_file_hash", target):
+            tool_tasks.append(_settle_tool(
+                tool="virustotal_file_hash",
+                target=target,
+                coro=scan_file_hash(url),
+                timeout=60.0,
+            ))
 
-    try:
-        result = await analyze_media(primary_url, input_type)
-        if result.get("degraded"):
-            shared_degradation.report_failure("reality_defender", RuntimeError(result.get("details", {}).get("fallback_reason", "degraded_result")))
-        else:
-            shared_degradation.report_success("reality_defender")
-        degradation_status = shared_degradation.get_degradation_level("reality_defender")
+    text_urls: list[str] = []
+    for item in text_files:
+        try:
+            text_urls.extend(_extract_urls_from_text(await _read_text_sample(item)))
+        except Exception as exc:
+            target = str(item.get("name") or "text")
+            settled_results.append({
+                "tool": "text_ioc_extract",
+                "target": target,
+                "status": "degraded",
+                "degraded": True,
+                "error": f"{type(exc).__name__}: {exc}",
+                "summary": "文本检材读取失败，无法抽取 IOC",
+                "completed_at": _now(),
+            })
 
-        model_used = result.get("model", "unknown")
-        if model_used.startswith("mock"):
-            details = result.get("details", {}) if isinstance(result.get("details"), dict) else {}
-            fallback_reason = details.get("fallback_reason", "unknown")
-            api_key_configured = details.get("api_key_configured")
-            if api_key_configured:
-                log("action", f"⚠️  Reality Defender API 已读取 Key，但调用失败（{fallback_reason}），使用降级模式分析")
-            else:
-                log("action", "⚠️  Reality Defender API Key 未读取到，使用降级模式分析")
-        else:
-            log("action", f"✅ Reality Defender API 连接成功")
+    for url in list(dict.fromkeys(text_urls)):
+        if not maybe_reuse("virustotal_text_ioc", url):
+            tool_tasks.append(_settle_tool(
+                tool="virustotal_text_ioc",
+                target=url,
+                coro=analyze_urls([url]),
+                timeout=45.0,
+            ))
 
-        deepfake_prob = result.get("deepfake_probability", 0.0)
-        is_deepfake = result.get("is_deepfake", False)
-        confidence = result.get("confidence", 0.0)
-        model_scores = result.get("models", [])
-        frame_inferences = result.get("frame_inferences", [])
-        audio_score = result.get("audio_score")
-        indicators = result.get("details", {}).get("indicators", [])
+    if tool_tasks:
+        log("action", f"启动 {len(tool_tasks)} 个外部/降级工具调用，等待 all-settled 结果")
+        settled_results.extend(await asyncio.gather(*tool_tasks))
+    else:
+        log("action", "没有新增工具需要运行，复用上一轮已成功结果")
 
-        if is_deepfake:
-            log("finding", f"🚨 检测到 Deepfake 篡改！伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
-            if frame_inferences:
-                suspicious_frames = [f for f in frame_inferences if f.get("label", "").upper() == "FAKE"]
-                log("finding", f"🎬 可疑帧: {len(suspicious_frames)}/{len(frame_inferences)} 帧被标记为伪造")
-            if audio_score is not None:
-                log("finding", f"🔊 音频轨道评分: {audio_score:.1%}")
-        else:
-            log("finding", f"✅ 未检测到明显 Deepfake 篡改，伪造概率: {deepfake_prob:.1%}，置信度: {confidence:.1%}")
+    rd_results = [
+        item.get("result") or {}
+        for item in settled_results
+        if item.get("tool") == "reality_defender"
+    ]
+    vt_results = [
+        item.get("result") or {}
+        for item in settled_results
+        if str(item.get("tool", "")).startswith("virustotal")
+    ]
+    deepfake_prob = max([float(item.get("deepfake_probability", 0.0) or 0.0) for item in rd_results] or [0.0])
+    rd_conf = max([float(item.get("confidence", 0.0) or 0.0) for item in rd_results] or [0.5])
+    vt_threat = max([float(item.get("threat_score", 0.0) or 0.0) for item in vt_results] or [0.0])
+    vt_malicious = sum(int(item.get("malicious", 0) or 0) for item in vt_results)
 
-        if model_scores:
-            for ms in model_scores[:3]:
-                log("finding", f"  → 模型 {ms.get('name', '?')}: {ms.get('label', '?')} ({ms.get('score', 0):.1%})")
+    is_deepfake = deepfake_prob > 0.5
+    is_suspicious_ioc = vt_threat > 0.4 or vt_malicious > 0
+    confidence = max(0.2, min(0.95, max(rd_conf, 0.55 + vt_threat * 0.25)))
+    degraded = any(item.get("status") in {"degraded", "failed"} for item in settled_results)
+    failed_count = sum(1 for item in settled_results if item.get("status") == "failed")
+    degraded_count = sum(1 for item in settled_results if item.get("status") == "degraded")
+    degradation_level = "failed" if failed_count else "degraded" if degraded_count else "ok"
 
-        for indicator in indicators[:3]:
-            log("finding", f"  → {indicator}")
+    indicators: list[str] = []
+    for item in settled_results:
+        if item.get("summary"):
+            indicators.append(str(item["summary"]))
+    if is_suspicious_ioc:
+        indicators.append("VirusTotal/IOC 结果提示潜在威胁线索")
 
-    except Exception as e:
-        shared_degradation.report_failure("reality_defender", e)
-        degradation_status = shared_degradation.get_degradation_level("reality_defender")
-        log("action", f"❌ Reality Defender API 调用异常: {type(e).__name__}: {e}")
-        log("action", f"🔄 降级策略: degradation_level={degradation_status}")
-
-        if degradation_status == "degraded":
-            log("action", "📊 使用元数据启发式降级分析...")
-            try:
-                result = await fallback_metadata_analysis(primary_url, input_type)
-                is_deepfake = result.get("is_deepfake", False)
-                confidence = result.get("confidence", 0.3)
-                deepfake_prob = result.get("deepfake_probability", 0.0)
-                model_scores = result.get("models", [])
-                frame_inferences = result.get("frame_inferences", [])
-                audio_score = result.get("audio_score")
-                indicators = result.get("details", {}).get("indicators", [])
-            except Exception as e2:
-                log("action", f"❌ 降级分析也失败: {e2}")
-                result = minimal_forensics_result(input_type)
-                is_deepfake = False
-                confidence = 0.2
-                deepfake_prob = 0.0
-                indicators = ["所有 API 不可用，建议人工复核"]
-        else:
-            result = minimal_forensics_result(input_type)
-            is_deepfake = False
-            confidence = 0.2
-            deepfake_prob = 0.0
-            indicators = ["所有 API 不可用，建议人工复核"]
-
-    # ================================================================
-    #  共享后续逻辑 — 证据板 + LLM + 结果汇总
-    # ================================================================
-    forensics_score = confidence
-
-    # LLM 深度解读检测结果
-    llm_analysis = ""
-    log("action", "🧠 正在调用大模型进行深度鉴证推理...")
-    try:
-        llm_analysis = await forensics_interpret(result, input_type, case_prompt)
-        if llm_analysis.startswith("[LLM降级]"):
-            log("action", "⚠️  LLM 推理不可用，使用降级模式")
-        else:
-            log("finding", f"🧠 LLM 鉴证分析完成，生成 {len(llm_analysis)} 字专业报告")
-    except Exception as e:
-        llm_analysis = f"[LLM降级] 鉴证推理异常: {e}"
-        log("action", f"⚠️  LLM 推理异常: {e}")
-
-    # 构建证据条目
-    evidence_type = (
-        "text" if input_type == "text"
-        else "visual" if input_type in ("video", "image")
-        else "audio"
-    )
-    evidence_item: EvidenceItem = {
-        "type": evidence_type,
-        "source": "forensics_agent",
-        "description": (
-            f"鉴证分析：{'检测到 Deepfake 篡改' if is_deepfake else '未检测到明显篡改'}，"
-            f"伪造概率 {deepfake_prob:.1%}，置信度 {confidence:.1%}"
-        ),
+    raw_forensics = {
+        "tool_matrix": settled_results,
+        "is_deepfake": is_deepfake,
+        "deepfake_probability": deepfake_prob,
         "confidence": confidence,
-        "metadata": {
-            "deepfake_probability": deepfake_prob,
-            "is_deepfake": is_deepfake,
-            "model_scores": model_scores[:5],
-            "frame_inferences": [
-                {"frame": f.get("frame"), "score": f.get("score"), "label": f.get("label")}
-                for f in frame_inferences[:10]
-            ],
-            "audio_score": audio_score,
-            "indicators": indicators[:5],
-            "details": result.get("details", {}),
-        },
+        "vt_threat_score": vt_threat,
+        "is_suspicious_ioc": is_suspicious_ioc,
+        "sample_refs": sample_refs,
+        "degraded": degraded,
     }
-    evidence.append(evidence_item)
 
-    # 汇总 forensics_result
-    forensics_result = {
+    log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
+    llm_analysis = await forensics_interpret(raw_forensics, input_type, case_prompt, sample_refs)
+    log("finding", f"电子取证报告生成完成，工具结果 {len(settled_results)} 条")
+
+    forensics_score = confidence
+    result = {
         "is_deepfake": is_deepfake,
         "deepfake_probability": deepfake_prob,
         "confidence": confidence,
         "forensics_score": forensics_score,
-        "model_used": result.get("model", "unknown"),
-        "model_scores": model_scores[:5],
-        "frame_inferences_count": len(frame_inferences),
-        "audio_score": audio_score,
-        "indicators": indicators[:5],
-        "degraded": result.get("degraded", False) or degradation_status != "full",
-        "degradation_status": degradation_status,
+        "model_used": "reality_defender+virustotal+kimi-k2.6",
+        "model_scores": rd_results[:5],
+        "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_results),
+        "audio_score": next((item.get("audio_score") for item in rd_results if item.get("audio_score") is not None), None),
+        "indicators": indicators[:8],
+        "tool_results": settled_results,
+        "tool_summary": {
+            "total": len(settled_results),
+            "success": sum(1 for item in settled_results if item.get("status") == "success"),
+            "degraded": degraded_count,
+            "failed": failed_count,
+            "reused": sum(1 for item in settled_results if item.get("reused")),
+        },
+        "sample_refs": sample_refs,
+        "degraded": degraded,
+        "degradation_status": degradation_level,
         "llm_analysis": llm_analysis,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": _now(),
     }
 
-    # 置信度历史
-    confidence_history = list(state.get("confidence_history", []))
-    confidence_history.append({
-        "round": round_num,
-        "scores": {"forensics": forensics_score},
-    })
+    evidence_item: EvidenceItem = {
+        "type": "forensics",
+        "source": "forensics_agent",
+        "description": (
+            f"电子取证：伪造概率 {deepfake_prob:.1%}，VT 威胁评分 {vt_threat:.1%}，"
+            f"工具成功 {result['tool_summary']['success']}/{len(settled_results)}"
+        ),
+        "confidence": confidence,
+        "metadata": {
+            "is_deepfake": is_deepfake,
+            "is_suspicious_ioc": is_suspicious_ioc,
+            "tool_summary": result["tool_summary"],
+            "indicators": indicators[:8],
+        },
+    }
 
-    verdict_hint = "suspicious" if is_deepfake else "authentic"
-    log("conclusion", f"🔬 鉴证分析完成。评估: {verdict_hint}，置信度: {confidence:.1%}")
-    log("conclusion", "📋 鉴证报告已提交证据板，等待质询官交叉验证...")
+    confidence_history = list(state.get("confidence_history", []))
+    confidence_history.append({"round": round_num, "scores": {"forensics": forensics_score}})
 
     timeline_events.append({
         "round": round_num,
         "agent": "forensics",
         "event_type": "analysis_complete",
-        "summary": f"鉴证完成: {verdict_hint}, 置信度 {confidence:.1%}",
+        "summary": f"电子取证完成: 伪造概率 {deepfake_prob:.1%}, 置信度 {confidence:.1%}",
     })
+    log("conclusion", "电子取证报告已写入全局证据板，等待逻辑质询Agent审查")
 
     return {
-        "forensics_result": forensics_result,
-        "evidence_board": evidence,
+        "analysis_phase": "forensics",
+        "phase_rounds": phase_rounds,
+        "forensics_result": result,
+        "evidence_board": [evidence_item],
         "confidence_history": confidence_history,
         "logs": logs,
         "timeline_events": timeline_events,
-        "degradation_status": {"reality_defender": degradation_status} if input_type != "text" else {},
+        "degradation_status": {
+            "reality_defender": "degraded" if any(r.get("tool") == "reality_defender" and r.get("degraded") for r in settled_results) else "ok",
+            "virustotal": "degraded" if any(str(r.get("tool", "")).startswith("virustotal") and r.get("degraded") for r in settled_results) else "ok",
+        },
+        "tool_results": {"forensics": settled_results},
     }

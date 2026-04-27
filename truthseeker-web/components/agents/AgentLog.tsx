@@ -20,7 +20,7 @@ const AGENT_COLORS: Record<string, string> = {
 }
 
 const AGENT_LABELS: Record<string, string> = {
-    forensics: "视听鉴伪Agent",
+    forensics: "电子取证Agent",
     commander: "研判指挥Agent",
     osint: "情报溯源Agent",
     challenger: "逻辑质询Agent",

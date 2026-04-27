@@ -24,7 +24,7 @@ interface EvidenceTimelineProps {
 /* ------------------------------------------------------------------ */
 
 const AGENT_CONFIG: Record<string, { color: string; label: string; icon: string }> = {
-  forensics:  { color: "#6366F1", label: "鉴伪Agent",  icon: "🔍" },
+  forensics:  { color: "#6366F1", label: "取证Agent",  icon: "🔍" },
   osint:      { color: "#10B981", label: "溯源Agent",  icon: "🕵️" },
   challenger: { color: "#F59E0B", label: "质询Agent",  icon: "⚖️" },
   commander:  { color: "#06B6D4", label: "指挥Agent",  icon: "👑" },

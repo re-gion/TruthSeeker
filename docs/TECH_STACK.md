@@ -16,6 +16,7 @@
 | @supabase/supabase-js | ^2.98.0 | Supabase 客户端 |
 | @supabase/ssr | ^0.8.0 | SSR 认证辅助 |
 | lucide-react | ^0.576.0 | 图标库 |
+| @xyflow/react | 待安装 | 情报溯源图谱交互画布 |
 
 ### 前端脚本
 
@@ -62,15 +63,17 @@ SUPABASE_JWT_SECRET=NOT_SET
 
 REALITY_DEFENDER_API_KEY=
 VIRUSTOTAL_API_KEY=
+EXA_API_KEY=
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL=kimi-k2.6
 OPENAI_API_KEY=
 QWEN_API_KEY=
 
 APP_ENV=development
 FRONTEND_URL=http://localhost:3000
-MAX_ROUNDS=5
-CONVERGENCE_THRESHOLD=0.05
+MAX_ROUNDS=3
+CONVERGENCE_THRESHOLD=0.08
 ```
 
 兼容别名由 `app/config.py` 继续支持，主要包括：
@@ -84,5 +87,5 @@ CONVERGENCE_THRESHOLD=0.05
 
 ## 备注
 
-- 这个仓库当前不在本次范围内补齐业务功能或后端 API 逻辑。
+- 当前运行时是 Kimi 2.6 + 外部检测 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
 - 不要把真实密钥提交到仓库，只保留示例文件和本地 `.env` / `.env.local`。

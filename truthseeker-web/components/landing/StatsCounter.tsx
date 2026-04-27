@@ -4,7 +4,16 @@ import { motion } from "motion/react"
 import { useCountUp } from "@/hooks/useCountUp"
 import { useEffect, useRef, useState } from "react"
 
-function StatItem({ stat, index, isVisible }: { stat: any; index: number; isVisible: boolean }) {
+interface Stat {
+    value: number
+    label: string
+    duration: number
+    isFloat?: boolean
+    suffix?: string
+    prefix?: string
+}
+
+function StatItem({ stat, index, isVisible }: { stat: Stat; index: number; isVisible: boolean }) {
     const count = useCountUp(stat.value, stat.duration, isVisible)
 
     return (

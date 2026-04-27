@@ -11,9 +11,11 @@ import { PresenceAvatars } from "@/components/collaboration/PresenceAvatars"
 import { InviteButton } from "@/components/collaboration/InviteButton"
 import { ExpertPanel } from "@/components/collaboration/ExpertPanel"
 import { EvidenceTimeline } from "@/components/detect/EvidenceTimeline"
+import { ProvenanceGraphView } from "@/components/detect/ProvenanceGraphView"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
 import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReport, downloadPdfReport } from "@/lib/report"
+import type { ProvenanceGraph } from "@/lib/provenance-graph"
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
@@ -81,7 +83,7 @@ function DebateStats({ currentRound, maxRounds, weights }: { currentRound: numbe
                         className="h-full bg-[#6366F1]"
                         animate={{ width: `${(weights.forensics || 0) * 100}%` }}
                         transition={{ duration: 0.5 }}
-                        title="视听鉴伪Agent权重"
+                        title="电子取证Agent权重"
                     />
                     <motion.div
                         className="h-full bg-[#10B981]"
@@ -107,7 +109,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const role = (searchParams.get("role") || "host") as UserRole
     const inviteToken = searchParams.get("invite_token")
     const [showExpertPanel, setShowExpertPanel] = useState(false)
-    const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline">("3d")
+    const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline" | "graph">("3d")
     const [taskContext, setTaskContext] = useState<TaskContext>({
         inputType: "mixed",
         priorityFocus: searchParams.get("focus") || "balanced",
@@ -139,6 +141,11 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const osintSnapshot = osintResult ? extractAnalysisSnapshot(osintResult) : null
     const challengerSnapshot = challengerFeedback ? extractChallengerSnapshot(challengerFeedback) : null
     const verdictSnapshot = finalVerdict ? extractVerdictSnapshot(finalVerdict) : null
+    const provenanceGraph = (
+        finalVerdict?.provenance_graph && typeof finalVerdict.provenance_graph === "object"
+            ? finalVerdict.provenance_graph
+            : null
+    ) as ProvenanceGraph | null
     const timelineLogs = logs.map(log => ({
         round: log.round ?? currentRound,
         agent: log.agent,
@@ -286,6 +293,16 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             {viewMode === 'timeline' ? '返回 Agent 视图' : '时间轴视图'}
                         </button>
                         <button
+                            onClick={() => setViewMode(v => v === 'graph' ? '3d' : 'graph')}
+                            className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+                                viewMode === 'graph'
+                                    ? 'text-[#D4FF12] border border-[#D4FF12]/30 hover:bg-[#D4FF12]/10'
+                                    : 'text-white/50 border border-white/10 hover:bg-white/5'
+                            }`}
+                        >
+                            {viewMode === 'graph' ? '返回 Agent 视图' : '图谱视图'}
+                        </button>
+                        <button
                             onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}
                             className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
                                 viewMode === '2d'
@@ -395,7 +412,11 @@ export function DetectConsole({ taskId }: { taskId: string }) {
             )}
 
             {/* Content Area */}
-            {viewMode === "3d" ? (
+            {viewMode === "graph" ? (
+                <div className="flex-1 overflow-hidden">
+                    <ProvenanceGraphView graph={provenanceGraph} isComplete={isComplete} />
+                </div>
+            ) : viewMode === "3d" ? (
                 <div className="flex-1 w-full relative overflow-hidden">
                     <BentoScene
                         osintNode={
@@ -406,7 +427,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         }
                         forensicsNode={
                             <>
-                                <AgentCard name="视听鉴伪Agent" agentKey="forensics" icon={<Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined} description="Deepfake 模型检测 · 异常提取" />
+                                <AgentCard name="电子取证Agent" agentKey="forensics" icon={<Image src="/agent-icons/forensics.svg" alt="电子取证Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined} description="全模态取证 · 工具矩阵鉴伪" />
                                 <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" /></div>
                             </>
                         }
@@ -453,18 +474,18 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         </div>
                     </motion.div>
 
-                    {/* 右上：法医分析 */}
+                    {/* 右上：电子取证 */}
                     <motion.div
                         initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
                         className={`liquid-glass border border-white/10 shadow-lg rounded-2xl p-5 flex flex-col gap-4 min-h-[300px] transition-all duration-500 ${agentStatus("forensics", !!forensicsResult) === "analyzing" ? "agent-glow-indigo" : ""}`}
                     >
                         <AgentCard
-                            name="视听鉴伪Agent"
+                            name="电子取证Agent"
                             agentKey="forensics"
-                            icon={<Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={20} height={20} className="w-5 h-5" />}
+                            icon={<Image src="/agent-icons/forensics.svg" alt="电子取证Agent" width={20} height={20} className="w-5 h-5" />}
                             status={agentStatus("forensics", !!forensicsResult)}
                             confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined}
-                            description="Deepfake 模型检测 · 像素级异常提取"
+                            description="全模态取证 · RD/VT 工具矩阵"
                         />
                         <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
                             <AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" />

@@ -1,405 +1,309 @@
-"""OSINT Agent - 情报溯源Agent，负责 URL/域名/IP 情报分析 + LLM 推理"""
+"""OSINT Agent - 情报溯源图谱 Agent。"""
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Awaitable
+
 import httpx
-from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
-from app.agents.tools.fallback import fallback_osint_analysis, minimal_osint_result, shared_degradation
-from app.agents.tools.threat_intel import analyze_urls, check_domain_reputation, scan_file_hash, extract_media_metadata
-from app.agents.tools.llm_client import osint_interpret
-from app.agents.tools.text_detection import extract_urls_from_text, analyze_text
+
+from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
+from app.agents.tools.llm_client import build_sample_references, osint_interpret
+from app.agents.tools.osint_search import build_deidentified_queries, search_osint
+from app.agents.tools.provenance_graph import build_provenance_graph
+from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
+from app.agents.tools.threat_intel import analyze_urls
 
 TEXT_MAX_CHARS = 10000
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
+    files = state.get("evidence_files") or []
+    if files:
+        return [dict(item) for item in files if isinstance(item, dict)]
+
+    input_files = state.get("input_files") or {}
+    merged: list[dict[str, Any]] = []
+    for key in ("forensics", "osint"):
+        value = input_files.get(key)
+        if isinstance(value, list):
+            merged.extend(dict(item) for item in value if isinstance(item, dict))
+    return merged
+
+
+async def _read_text_sample(file_info: dict[str, Any]) -> str:
+    url = file_info.get("file_url") or file_info.get("storage_path")
+    if not isinstance(url, str) or not url or url.startswith("mock://"):
+        return ""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text[:TEXT_MAX_CHARS]
+
+
+async def _settle_tool(
+    *,
+    tool: str,
+    target: str,
+    coro: Awaitable[dict[str, Any]],
+    timeout: float,
+) -> dict[str, Any]:
+    started_at = _now()
+    try:
+        result = await asyncio.wait_for(coro, timeout=timeout)
+        result = result if isinstance(result, dict) else {"value": result}
+        status = str(result.get("status") or "success")
+        degraded = bool(result.get("degraded")) or status in {"degraded", "no_key"}
+        if status not in {"success", "degraded", "failed"}:
+            status = "degraded" if degraded else "success"
+        return {
+            "tool": tool,
+            "target": target,
+            "status": status,
+            "degraded": degraded or status == "failed",
+            "result": result,
+            "summary": _summarize_tool(tool, result),
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "tool": tool,
+            "target": target,
+            "status": "failed",
+            "degraded": True,
+            "error": "timeout",
+            "summary": f"{tool} 超时",
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+    except Exception as exc:
+        return {
+            "tool": tool,
+            "target": target,
+            "status": "failed",
+            "degraded": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "summary": f"{tool} 调用失败",
+            "started_at": started_at,
+            "completed_at": _now(),
+        }
+
+
+def _summarize_tool(tool: str, result: dict[str, Any]) -> str:
+    if tool == "exa_search":
+        return f"Exa status={result.get('status')}, results={len(result.get('results') or [])}"
+    if tool == "virustotal_osint_ioc":
+        vt = result.get("virustotal") or {}
+        return f"VT threat_score={result.get('threat_score', 0):.2f}, malicious={vt.get('malicious', 0)}"
+    if tool == "text_claim_extract":
+        return f"claims={len(result.get('key_claims') or [])}, ai_probability={result.get('ai_probability', 0):.2f}"
+    return "工具完成"
+
+
+def _model_claims_from_text(text_result: dict[str, Any] | None, threat_indicators: list[str]) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    if text_result:
+        for index, claim in enumerate(text_result.get("key_claims") or [], 1):
+            claims.append({
+                "id": f"text-claim-{index}",
+                "label": str(claim),
+                "confidence": text_result.get("confidence", 0.5),
+                "citation_ids": [],
+            })
+    for index, indicator in enumerate(threat_indicators[:4], 1):
+        claims.append({
+            "id": f"indicator-claim-{index}",
+            "label": str(indicator),
+            "confidence": 0.55,
+            "citation_ids": [],
+        })
+    return claims
+
+
 async def osint_node(state: TruthSeekerState) -> dict:
     """
-    情报溯源Agent：
-    1. 提取输入中的 URL/域名
-    2. 查询威胁情报（VirusTotal/mock）
-    3. 分析元数据（EXIF、Whois 等）
-    4. 输出结构化 OSINT 报告
+    情报溯源图谱 Agent：
+    1. 读取全局证据板、取证结果、用户样本和全局提示词；
+    2. 用脱敏线索调用 Exa 搜索，结合 VirusTotal 与文本声明抽取；
+    3. 生成可视化情报溯源图谱并提交给 Challenger 审查。
     """
     task_id = state["task_id"]
-    input_type = state.get("input_type", "video")
-    input_files = state.get("input_files", {})
+    input_type = state.get("input_type", "mixed")
     case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
+    phase_rounds = dict(state.get("phase_rounds") or {"forensics": 1, "osint": 1, "commander": 1})
 
     logs: list[AgentLog] = []
-    evidence: list[EvidenceItem] = []
 
-    def log(log_type: str, content: str) -> AgentLog:
-        entry: AgentLog = {
+    def log(log_type: str, content: str) -> None:
+        logs.append({
             "agent": "osint",
             "round": round_num,
             "type": log_type,
             "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        logs.append(entry)
-        return entry
+            "timestamp": _now(),
+        })
 
-    log("thinking", f"🕵️  情报溯源Agent 启动，任务 ID: {task_id}")
-    log("thinking", "🌐 正在扫描输入内容，提取可疑 URL 和域名特征...")
+    files = _all_evidence_files(state)
+    sample_refs = build_sample_references(files)
+    text_files = [item for item in files if item.get("modality") == "text"]
+    file_names = [str(item.get("name") or "") for item in files if item.get("name")]
+
+    log("thinking", f"情报溯源图谱Agent 启动，任务 ID: {task_id}")
+    log("thinking", f"读取全局证据板与电子取证结果，准备抽取实体、声明、引用和关系")
     if case_prompt:
-        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
+        log("thinking", f"全局检测目标: {case_prompt[:120]}")
 
-    osint_files = input_files.get("osint") or []
-    text_files = [item for item in osint_files if item.get("modality") == "text"]
-    media_files = [item for item in osint_files if item.get("modality") in ("video", "audio", "image")]
+    text_contents: list[str] = []
+    urls_to_check = extract_urls_from_text(case_prompt)
+    text_analysis_result: dict[str, Any] | None = None
+    tool_results: list[dict[str, Any]] = []
 
-    primary_osint = text_files[0] if text_files else (media_files[0] if media_files else None)
-    media_primary = media_files[0] if media_files else None
-    if primary_osint:
-        input_type = primary_osint.get("modality", input_type)
-
-    # 提取目标 URL。文本文件只进入 OSINT，在这里读取内容并抽取 URL/域名线索。
-    primary_url = (
-        (primary_osint.get("file_url") or primary_osint.get("storage_path"))
-        if primary_osint
-        else input_files.get("primary", input_files.get("url", ""))
-    )
-    urls_to_check = [] if text_files else [u for u in [primary_url] if u and not u.startswith("mock://")]
-    text_sources_analyzed = 0
-    text_analysis_result: dict | None = None  # 文本 AI 检测分析结果
-
-    if text_files:
-        text_urls: list[str] = []
-        collected_text_contents: list[str] = []
-        for text_file in text_files:
-            text_url = text_file.get("file_url") or text_file.get("storage_path")
-            text_content = ""
-            if text_url and not str(text_url).startswith("mock://"):
-                try:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        resp = await client.get(str(text_url), follow_redirects=True)
-                        resp.raise_for_status()
-                        text_content = resp.text[:TEXT_MAX_CHARS]
-                        text_sources_analyzed += 1
-                except Exception as exc:
-                    log("action", f"⚠️  文本检材读取失败: {text_file.get('name', 'unknown')} ({type(exc).__name__})")
-            if text_content:
-                extracted_urls = extract_urls_from_text(text_content)
-                if extracted_urls:
-                    text_urls.extend(extracted_urls)
-                collected_text_contents.append(text_content)
-
-        if text_urls:
-            urls_to_check = list(dict.fromkeys(text_urls))
-            log("finding", f"🔗 从文本检材中提取到 {len(urls_to_check)} 个 URL/域名线索")
-        else:
-            log("finding", "📋 文本检材中未发现 URL，OSINT 将结合元数据和案件提示词进行低风险溯源评估")
-
-        # 对收集到的文本内容调用 analyze_text 进行 AI 文本检测分析
-        if collected_text_contents:
-            combined_text = "\n\n".join(collected_text_contents)[:TEXT_MAX_CHARS]
-            log("action", "🧠 正在调用文本检测模块进行 AI 生成文本分析...")
-            try:
-                text_analysis_result = await analyze_text(combined_text)
-                ai_prob = text_analysis_result.get("ai_probability", 0.0)
-                anomalies = text_analysis_result.get("anomalies", [])
-                log("finding", f"📄 文本 AI 检测完成：AI 生成概率={ai_prob:.1%}，发现 {len(anomalies)} 条异常")
-                for anomaly in anomalies[:3]:
-                    log("finding", f"  → 文本异常: {anomaly}")
-            except Exception as exc:
-                log("action", f"⚠️  文本 AI 检测分析失败: {type(exc).__name__}: {exc}")
-
-    # 文本输入类型：从文本内容中提取 URL
-    if input_type == "text" and not urls_to_check and not text_files:
-        log("action", "📝 文本输入模式，尝试从文本中提取 URL 进行情报分析...")
-        text_content = ""
-        # 尝试获取文本内容
+    for item in text_files:
         try:
-            from app.utils.supabase_client import supabase as supabase_client
-            task_resp = await asyncio.to_thread(
-                lambda: supabase_client.table("tasks").select("description").eq("id", task_id).execute()
-            )
-            if task_resp.data:
-                text_content = task_resp.data[0].get("description", "")
-        except Exception:
-            pass
+            content = await _read_text_sample(item)
+            if content:
+                text_contents.append(content)
+                urls_to_check.extend(extract_urls_from_text(content))
+        except Exception as exc:
+            log("action", f"文本检材读取失败: {item.get('name', 'unknown')} ({type(exc).__name__})")
 
-        if text_content:
-            extracted_urls = extract_urls_from_text(text_content)
-            if extracted_urls:
-                urls_to_check = extracted_urls
-                log("finding", f"🔗 从文本中提取到 {len(extracted_urls)} 个 URL")
-            else:
-                log("finding", "📋 文本中未发现 URL，OSINT 情报贡献有限")
-
-            # 调用 analyze_text 进行 AI 文本检测分析
-            log("action", "🧠 正在调用文本检测模块进行 AI 生成文本分析...")
-            try:
-                text_analysis_result = await analyze_text(text_content)
-                ai_prob = text_analysis_result.get("ai_probability", 0.0)
-                anomalies = text_analysis_result.get("anomalies", [])
-                log("finding", f"📄 文本 AI 检测完成：AI 生成概率={ai_prob:.1%}，发现 {len(anomalies)} 条异常")
-                for anomaly in anomalies[:3]:
-                    log("finding", f"  → 文本异常: {anomaly}")
-            except Exception as exc:
-                log("action", f"⚠️  文本 AI 检测分析失败: {type(exc).__name__}: {exc}")
-
-    degradation_status = shared_degradation.get_degradation_level("virustotal")
-
-    threat_score = 0.0
-    threat_indicators = []
-    domain_info = {}
-    virustotal_result = None
-
-    if urls_to_check:
-        log("action", f"🔍 正在查询威胁情报数据库，目标: {urls_to_check[0][:60]}...")
-
-        try:
-            intel_result = await analyze_urls(urls_to_check)
-            # 检查返回的是否为 mock 降级数据
-            if intel_result.get("degraded"):
-                shared_degradation.report_failure("virustotal", Exception("VirusTotal API 未配置或调用失败，返回降级数据"))
-                log("action", "⚠️  VirusTotal API 不可用，OSINT 情报处于降级模式")
-            else:
-                shared_degradation.report_success("virustotal")
-                log("action", "✅ VirusTotal 情报查询成功")
-            degradation_status = shared_degradation.get_degradation_level("virustotal")
-        except Exception as e:
-            shared_degradation.report_failure("virustotal", e)
-            degradation_status = shared_degradation.get_degradation_level("virustotal")
-            log("action", f"❌ VirusTotal API 调用异常: {type(e).__name__}: {e}")
-            log("action", f"🔄 降级策略: degradation_level={degradation_status}")
-
-            if degradation_status == "degraded":
-                try:
-                    intel_result = await fallback_osint_analysis(urls_to_check[0], input_type)
-                    log("action", "📊 使用元数据启发式降级分析...")
-                except Exception:
-                    intel_result = minimal_osint_result(input_type)
-                    log("action", "⚠️  元数据降级分析也失败，使用最小降级结果")
-            else:
-                intel_result = minimal_osint_result(input_type)
-
-        threat_score = intel_result.get("threat_score", 0.0)
-        threat_indicators = intel_result.get("indicators", [])
-        domain_info = intel_result.get("domain_info", {})
-        virustotal_result = intel_result.get("virustotal", {})
-        is_degraded = intel_result.get("degraded", False)
-
-        if threat_score > 0.7:
-            log("finding", f"🚨 高威胁！VirusTotal 检测到恶意标记: {virustotal_result.get('malicious', 0) if virustotal_result else 0} 家")
-        elif threat_score > 0.4:
-            log("finding", f"⚠️  中等风险，部分安全厂商标记可疑: {threat_score:.1%}")
-        else:
-            log("finding", f"✅ URL 情报检查通过，威胁分数: {threat_score:.1%}")
-    elif media_primary or not text_files:
-        # 对媒体文件做元数据分析与文件哈希扫描
-        log("action", "📋 无外部 URL，转为分析媒体元数据与文件哈希威胁情报...")
-        await asyncio.sleep(0.4)
-
-        file_url = (
-            media_primary.get("file_url") or media_primary.get("storage_path")
-            if media_primary
-            else (primary_url or "mock://unknown")
+    if text_contents:
+        combined = "\n\n".join(text_contents)[:TEXT_MAX_CHARS]
+        text_tool = await _settle_tool(
+            tool="text_claim_extract",
+            target="uploaded_text",
+            coro=analyze_text(combined),
+            timeout=45.0,
         )
-        media_input_type = media_primary.get("modality", input_type) if media_primary else input_type
+        tool_results.append(text_tool)
+        text_analysis_result = text_tool.get("result") if isinstance(text_tool.get("result"), dict) else None
 
-        # 并发调用文件哈希扫描和元数据提取
-        vt_scan_task = asyncio.create_task(scan_file_hash(file_url))
-        metadata_task = asyncio.create_task(extract_media_metadata(file_url, media_input_type))
-
-        vt_scan_result, metadata_result = await asyncio.gather(
-            vt_scan_task, metadata_task, return_exceptions=True
+    urls_to_check = list(dict.fromkeys(urls_to_check))
+    vt_tasks = [
+        _settle_tool(
+            tool="virustotal_osint_ioc",
+            target=url,
+            coro=analyze_urls([url]),
+            timeout=45.0,
         )
+        for url in urls_to_check[:5]
+    ]
+    if vt_tasks:
+        log("action", f"正在查询 {len(vt_tasks)} 个 URL/域名 IOC 的 VirusTotal 情报")
+        tool_results.extend(await asyncio.gather(*vt_tasks))
 
-        # 处理异常结果
-        if isinstance(vt_scan_result, Exception):
-            shared_degradation.report_failure("virustotal", vt_scan_result)
-            log("warning", f"⚠️  文件哈希扫描失败: {vt_scan_result}")
-            vt_scan_result = {
-                "malicious": 0, "suspicious": 0, "total_scans": 0,
-                "threat_score": 0.0, "hash": "", "scan_available": False,
-            }
-        else:
-            # scan_file_hash 返回了结果，需要区分真实成功还是降级
-            vt_status = vt_scan_result.get("status", "")
-            if vt_status in ("ok", "not_found"):
-                shared_degradation.report_success("virustotal")
-            else:
-                shared_degradation.report_failure(
-                    "virustotal",
-                    Exception(f"VirusTotal 文件哈希扫描状态: {vt_status}"),
-                )
+    threat_indicators: list[str] = []
+    vt_threat_score = 0.0
+    virustotal_summaries: list[dict[str, Any]] = []
+    for item in tool_results:
+        result = item.get("result") or {}
+        if item.get("tool") == "virustotal_osint_ioc":
+            vt_threat_score = max(vt_threat_score, float(result.get("threat_score", 0.0) or 0.0))
+            threat_indicators.extend(str(v) for v in result.get("indicators") or [])
+            virustotal_summaries.append(result)
 
-        degradation_status = shared_degradation.get_degradation_level("virustotal")
-
-        if isinstance(metadata_result, Exception):
-            log("warning", f"⚠️  元数据提取失败: {metadata_result}")
-            metadata_result = {
-                "format": "unknown", "dimensions": None, "duration_seconds": None,
-                "has_exif": False, "exif_anomalies": [], "file_size_approx": 0,
-                "compression_artifacts": False, "manipulation_indicators": [],
-            }
-
-        # 构建 threat_indicators
-        threat_indicators = []
-
-        # 来自元数据分析的异常指标
-        exif_anomalies = metadata_result.get("exif_anomalies", [])
-        manipulation_indicators = metadata_result.get("manipulation_indicators", [])
-        threat_indicators.extend(exif_anomalies)
-        threat_indicators.extend(manipulation_indicators)
-
-        if metadata_result.get("compression_artifacts"):
-            threat_indicators.append("检测到高压缩率，可能经历多次编码")
-
-        # 来自 VirusTotal 的扫描结果
-        if vt_scan_result.get("scan_available"):
-            vt_malicious = vt_scan_result.get("malicious", 0)
-            vt_suspicious = vt_scan_result.get("suspicious", 0)
-            if vt_malicious > 0:
-                threat_indicators.append(f"VirusTotal: {vt_malicious} 家厂商标记为恶意")
-            if vt_suspicious > 0:
-                threat_indicators.append(f"VirusTotal: {vt_suspicious} 家厂商标记为可疑")
-            log("action", f"🔍 文件哈希 {vt_scan_result.get('hash', '')[:16]}... 在 VirusTotal 中已收录")
-        else:
-            if vt_scan_result.get("hash"):
-                log("action", f"🔍 文件哈希 {vt_scan_result.get('hash', '')[:16]}... 未在 VirusTotal 中找到记录")
-
-        # 计算 threat_score（综合元数据和 VT 结果）
-        vt_threat = vt_scan_result.get("threat_score", 0.0)
-        meta_factor = 0.0
-        if exif_anomalies:
-            meta_factor += 0.15 * len(exif_anomalies)
-        if manipulation_indicators:
-            meta_factor += 0.2 * len(manipulation_indicators)
-        if metadata_result.get("compression_artifacts"):
-            meta_factor += 0.1
-        if not metadata_result.get("has_exif") and metadata_result.get("format") in ("jpeg", "png"):
-            meta_factor += 0.1
-
-        threat_score = min(1.0, max(vt_threat, meta_factor * 0.5))
-        is_degraded = (
-            not vt_scan_result.get("scan_available", False)
-            and vt_scan_result.get("status") != "not_found"
-        )
-
-        # 构建 domain_info（来自元数据）
-        domain_info = {
-            "source": "media_metadata",
-            "file_hash": vt_scan_result.get("hash", ""),
-            "input_type": media_input_type,
-            "format": metadata_result.get("format", "unknown"),
-            "dimensions": metadata_result.get("dimensions"),
-            "has_exif": metadata_result.get("has_exif", False),
-        }
-
-        # 构建 virustotal_result
-        virustotal_result = vt_scan_result
-
-        # 日志输出
-        if threat_score > 0.4:
-            log("finding", f"⚠️  媒体分析发现异常，威胁评分: {threat_score:.1%}")
-        elif threat_score > 0.1:
-            log("finding", f"🔍 媒体分析发现轻微异常，威胁评分: {threat_score:.1%}")
-        else:
-            log("finding", f"✅ 媒体元数据检查通过，威胁评分: {threat_score:.1%}")
-    else:
-        log("action", "📋 文本检材未提取到外部 IOC，记录为低威胁情报项，等待质询与指挥综合判断")
-        threat_score = 0.05 if text_sources_analyzed else 0.1
-        threat_indicators = ["文本检材未提取到 URL/域名/IP 等外部 IOC"]
-        domain_info = {
-            "source": "text_file",
-            "text_sources_analyzed": text_sources_analyzed,
-            "input_type": "text",
-        }
-        virustotal_result = {"scan_available": False, "reason": "no_ioc_extracted"}
-        is_degraded = False
-
-    # 整合文本 AI 检测分析结果到威胁指标
     if text_analysis_result:
-        text_ai_prob = text_analysis_result.get("ai_probability", 0.0)
-        text_anomalies = text_analysis_result.get("anomalies", [])
-        if text_ai_prob > 0.6:
-            threat_indicators.append(f"文本 AI 检测：AI 生成概率高 ({text_ai_prob:.1%})")
-        elif text_ai_prob > 0.3:
-            threat_indicators.append(f"文本 AI 检测：存在 AI 痕迹 ({text_ai_prob:.1%})")
-        for anomaly in text_anomalies[:2]:
-            if anomaly not in threat_indicators:
-                threat_indicators.append(f"文本异常: {anomaly}")
-        # 提升威胁分数：AI 文本概率贡献
-        text_threat_factor = text_ai_prob * 0.3
-        threat_score = min(1.0, max(threat_score, text_threat_factor))
+        ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
+        if ai_prob > 0.6:
+            threat_indicators.append(f"文本 AI 生成概率高 ({ai_prob:.1%})")
+        threat_indicators.extend(str(v) for v in (text_analysis_result.get("anomalies") or [])[:3])
 
-    # 构建证据条目
-    evidence_desc = (
-        f"OSINT 情报分析[降级]：威胁评分 {threat_score:.1%}，"
-        f"发现 {len(threat_indicators)} 条情报线索（VT 情报不可用）"
-        if is_degraded else
-        f"OSINT 情报分析：威胁评分 {threat_score:.1%}，"
-        f"发现 {len(threat_indicators)} 条情报线索"
+    queries = build_deidentified_queries(
+        case_prompt=case_prompt,
+        threat_indicators=threat_indicators,
+        urls=urls_to_check,
+        file_names=file_names,
     )
-    evidence_confidence = 0.25 if is_degraded else (min(0.95, 0.6 + (1 - threat_score) * 0.35) if threat_score > 0 else 0.75)
-    evidence_item: EvidenceItem = {
-        "type": "osint",
-        "source": "osint_agent",
-        "description": evidence_desc,
-        "confidence": evidence_confidence,
-        "metadata": {
-            "threat_score": threat_score,
-            "threat_indicators": threat_indicators,
-            "domain_info": domain_info,
-            "virustotal": virustotal_result,
-            "urls_analyzed": len(urls_to_check),
-            "text_sources_analyzed": text_sources_analyzed,
-        },
-    }
-    evidence.append(evidence_item)
+    log("action", f"生成 {len(queries)} 条脱敏 OSINT 查询，调用 Exa 搜索")
+    exa_tool = await _settle_tool(
+        tool="exa_search",
+        target="; ".join(queries)[:180] or "no_query",
+        coro=search_osint(queries),
+        timeout=60.0,
+    )
+    tool_results.append(exa_tool)
+    search_results = (exa_tool.get("result") or {}).get("results") or []
 
-    for indicator in threat_indicators[:3]:
-        log("finding", f"  → {indicator}")
+    exa_signal = 0.12 if search_results else 0.0
+    threat_score = min(1.0, max(vt_threat_score, exa_signal))
+    if not threat_indicators and search_results:
+        threat_indicators.append("Exa 检索返回相关公开情报来源，需结合引用人工复核")
+    if not threat_indicators:
+        threat_indicators.append("未发现明确外部威胁或溯源线索")
 
-    # OSINT 置信度
-    if is_degraded:
-        osint_confidence = 0.25
-    else:
-        osint_confidence = 1 - threat_score if threat_score > 0 else 0.75
+    osint_confidence = 0.25 if exa_tool.get("status") == "failed" and not virustotal_summaries else min(0.92, 0.62 + len(search_results) * 0.04)
+    model_claims = _model_claims_from_text(text_analysis_result, threat_indicators)
 
-    # 汇总结果
-    osint_result = {
+    partial_result = {
         "threat_score": threat_score,
         "is_malicious": threat_score > 0.7,
         "is_suspicious": threat_score > 0.4,
         "confidence": osint_confidence,
         "threat_indicators": threat_indicators,
-        "domain_info": domain_info,
-        "virustotal_summary": virustotal_result,
-        "text_sources_analyzed": text_sources_analyzed,
+        "virustotal_summary": virustotal_summaries,
+        "search_results": search_results,
+        "search_queries": queries,
         "text_analysis": text_analysis_result,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "degraded": is_degraded,
+        "model_claims": model_claims,
+        "tool_results": tool_results,
+        "degraded": any(item.get("status") in {"degraded", "failed"} for item in tool_results),
+        "timestamp": _now(),
     }
 
-    risk_level = "高风险" if threat_score > 0.7 else "中等风险" if threat_score > 0.4 else "低风险"
+    log("action", "正在调用 Kimi 进行情报归纳与溯源图谱解释")
+    llm_analysis = await osint_interpret(partial_result, input_type, case_prompt, sample_refs)
+    partial_result["llm_analysis"] = llm_analysis
 
-    # LLM 深度解读情报结果
-    llm_analysis = ""
-    log("action", "🧠 正在调用大模型进行深度情报推理...")
-    try:
-        llm_analysis = await osint_interpret(osint_result, input_type, case_prompt)
-        if llm_analysis.startswith("[降级模式: LLM不可用]"):
-            log("action", "⚠️  LLM 情报推理不可用，使用降级模式")
-        else:
-            log("finding", f"🧠 LLM 情报分析完成，生成 {len(llm_analysis)} 字专业报告")
-    except Exception as e:
-        llm_analysis = f"[降级模式: LLM不可用] 情报推理异常: {e}"
-        log("action", f"⚠️  LLM 情报推理异常: {e}")
+    provenance_graph = build_provenance_graph(
+        task_id=task_id,
+        evidence_files=files,
+        forensics_result=state.get("forensics_result") or {},
+        osint_result=partial_result,
+        challenger_feedback=state.get("challenger_feedback") or {},
+    )
+    partial_result["provenance_graph"] = provenance_graph
 
-    # 将 LLM 分析添加到结果中
-    osint_result["llm_analysis"] = llm_analysis
+    evidence_item: EvidenceItem = {
+        "type": "osint",
+        "source": "osint_agent",
+        "description": (
+            f"情报溯源：威胁评分 {threat_score:.1%}，"
+            f"图谱节点 {len(provenance_graph['nodes'])} 个，引用 {len(provenance_graph['citations'])} 条"
+        ),
+        "confidence": osint_confidence,
+        "metadata": {
+            "threat_score": threat_score,
+            "graph_quality": provenance_graph.get("quality"),
+            "search_result_count": len(search_results),
+            "threat_indicators": threat_indicators[:8],
+        },
+    }
 
-    log("conclusion", f"🕵️  OSINT 分析完成。溯源评估: {risk_level}，置信度: {osint_confidence:.1%}")
-    log("conclusion", "📡 情报报告已提交证据板，等待质询官审核...")
+    log("finding", f"情报图谱生成完成：节点 {len(provenance_graph['nodes'])}，边 {len(provenance_graph['edges'])}")
+    log("conclusion", "情报溯源图谱已写入全局证据板，等待逻辑质询Agent审查")
 
     return {
-        "osint_result": osint_result,
-        "evidence_board": evidence,
-        "degradation_status": {"virustotal": degradation_status},
+        "analysis_phase": "osint",
+        "phase_rounds": phase_rounds,
+        "osint_result": partial_result,
+        "provenance_graph": provenance_graph,
+        "evidence_board": [evidence_item],
+        "degradation_status": {
+            "exa": exa_tool.get("status", "unknown"),
+            "virustotal": "degraded" if any(item.get("tool") == "virustotal_osint_ioc" and item.get("degraded") for item in tool_results) else "ok",
+        },
+        "tool_results": {"osint": tool_results},
         "logs": logs,
+        "timeline_events": [{
+            "round": round_num,
+            "agent": "osint",
+            "event_type": "provenance_graph",
+            "summary": f"图谱生成完成: {len(provenance_graph['nodes'])} 节点 / {len(provenance_graph['edges'])} 边",
+        }],
     }

@@ -1,6 +1,6 @@
 # TruthSeeker API
 
-TruthSeeker 的 FastAPI 后端，负责任务创建、文件上传、检测流、报告和专家会诊入口。
+TruthSeeker 的 FastAPI 后端，负责任务创建、文件上传、检测流、报告、情报溯源图谱和专家会诊入口。
 
 ## 技术栈
 
@@ -36,28 +36,32 @@ SUPABASE_ANON_KEY=
 SUPABASE_JWT_SECRET=NOT_SET
 REALITY_DEFENDER_API_KEY=
 VIRUSTOTAL_API_KEY=
+EXA_API_KEY=
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL=kimi-k2.6
 OPENAI_API_KEY=
 QWEN_API_KEY=
 FRONTEND_URL=http://localhost:3000
-MAX_ROUNDS=5
-CONVERGENCE_THRESHOLD=0.05
+MAX_ROUNDS=3
+CONVERGENCE_THRESHOLD=0.08
 ```
 
 说明：
 
 - `APP_ENV=production` 时必须配置真实 `SUPABASE_JWT_SECRET`，否则后端会拒绝启动；本地开发设为 `NOT_SET` 时认证中间件会跳过。
 - `Reality_Defender`、`Kimi_API_KEY`、`Virus_Total`、`Kimi_Base_URL` 仍保留为兼容旧环境名的别名。
+- 当前运行时默认以 Kimi 2.6 作为四 Agent 的多模态推理基座。Reality Defender、VirusTotal 和 Exa 作为专业工具接入，所有工具失败都必须结构化降级。
 
 ## 目录概览
 
 - `app/api/v1/` - HTTP 接口
-- `app/agents/` - LangGraph 智能体与节点
+- `app/agents/` - LangGraph 智能体、阶段路由、工具和图谱构建
 - `app/services/` - 报告和数据服务
 - `app/utils/` - Supabase 等基础工具
 
 ## 备注
 
-- 本次工程化范围只整理文档、脚本和仓库卫生，不调整业务逻辑。
+- 对外协议仍保留 `forensics/osint/challenger/commander`，其中 `forensics` 的用户可见语义已升级为电子取证 Agent。
+- 图谱复用 `osint_result.provenance_graph` 和 `final_verdict.provenance_graph`，不新增数据库表。
 - 真实密钥只放在本地 `.env`，不要提交到仓库。

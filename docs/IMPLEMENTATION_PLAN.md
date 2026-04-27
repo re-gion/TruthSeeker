@@ -2,9 +2,20 @@
 # TruthSeeker分阶段实施计划
 
 ## 文档版本信息
-- **版本**: v2.0 (已验证)
-- **最后更新**: 2026-03-01
-- **验证状态**: 已通过Exa MCP深度验证技术栈版本
+- **版本**: v2.1
+- **最后更新**: 2026-04-28
+- **验证状态**: 新后端重建计划已写入，具体测试结果以实现阶段回填为准
+
+## 2026-04-28 后端重建顺序
+
+1. 先同步产品、后端、前端、技术栈、白皮书和任务文档。
+2. 扩展 `TruthSeekerState`，引入 `analysis_phase`、`phase_rounds`、`phase_quality_history` 和 `provenance_graph`。
+3. 重写 LangGraph 路由为阶段式收敛：`forensics -> challenger -> osint -> challenger -> commander -> challenger -> END`。
+4. 将 Kimi 默认模型切换为 `kimi-k2.6`，补充多模态 signed URL 输入适配。
+5. 电子取证 Agent 采用工具 all-settled：Reality Defender、VirusTotal 必须全部返回结构化结果。
+6. OSINT Agent 接入 Exa API，只发送脱敏线索，并生成混合 provenance graph。
+7. 前端检测台新增图谱视图，读取 `final_verdict.provenance_graph`；当前内置 SVG 组件只作为数据链路临时验证，不视为 React Flow 的替代交付。最终仍需在本机 npm 网络恢复后安装 `@xyflow/react` 并切换为 React Flow。
+8. 最后运行后端和前端验证，回填测试结果与限制。
 
 ---
 
@@ -172,16 +183,16 @@ export function createClient() {
 
 ---
 
-### Week2: 双Agent核心流程
+### Week2: 阶段式四 Agent 核心流程
 
 #### Day8-10: LangGraph基础 ⭐【重要提示】
 
 - [ ] 安装LangGraph、LangChain依赖
 - [ ] 设计基础State结构（**必须使用TypedDict**）
-- [ ] 实现视听鉴伪Agent
-  - 视频抽帧逻辑
-  - 调用Deepfake检测API（ 请先利用Exa MCP搜索Deepfake检测API，如果有可用API请使用，后期我去申请API并配置，否则请模拟实现）
-  - 输出结构化证据
+- [ ] 实现电子取证Agent
+  - 接收视频、音频、图片和文本检材的全局样本引用
+  - 媒体检材调用 Reality Defender，文件哈希和文本 IOC 调用 VirusTotal，等待 all-settled
+  - 输出结构化工具矩阵与电子取证报告
 - [ ] 实现研判指挥Agent
   - 接收法医报告
   - 生成最终判定

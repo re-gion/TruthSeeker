@@ -222,12 +222,12 @@ export function HeroSection() {
                         className="absolute left-[0%] top-[7%] hidden md:flex items-start gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-64 min-h-[142px] pointer-events-auto hover:border-indigo-500/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-indigo-500/20 flex items-center justify-center self-start mt-0.5">
-                            <Image src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            <Image src="/agent-icons/forensics.svg" alt="电子取证Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0 flex-1">
-                            <div className="text-[11px] text-indigo-500 dark:text-indigo-300 font-mono font-bold tracking-[0.18em] uppercase">视听鉴伪</div>
-                            <div className="mt-1 text-sm font-semibold text-[#111827] dark:text-white">视听鉴伪Agent</div>
-                            <div className="mt-1.5 text-xs leading-5 opacity-80 text-black/75 dark:text-white/75">定位深伪痕迹，快速比对音视频与图像信号。</div>
+                            <div className="text-[11px] text-indigo-500 dark:text-indigo-300 font-mono font-bold tracking-[0.18em] uppercase">电子取证</div>
+                            <div className="mt-1 text-sm font-semibold text-[#111827] dark:text-white">电子取证Agent</div>
+                            <div className="mt-1.5 text-xs leading-5 opacity-80 text-black/75 dark:text-white/75">统一分析多模态检材，汇总 RD/VT 工具结果。</div>
                             <ForensicsChart />
                         </div>
                     </motion.div>

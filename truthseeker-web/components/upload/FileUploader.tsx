@@ -310,7 +310,7 @@ export function FileUploader() {
                         <div className="flex items-start justify-between gap-4 mb-5">
                             <div>
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">多媒体上传区</div>
-                                <div className="mt-1 text-sm text-black/50 dark:text-white/45 whitespace-nowrap">最多 5 个文件，视频、音频、图片文件会交给视听鉴伪Agent，文本文件会交给情报溯源Agent处理。</div>
+                                <div className="mt-1 text-sm text-black/50 dark:text-white/45 whitespace-nowrap">最多 5 个文件，全部检材会进入电子取证Agent，文本线索同时进入情报溯源Agent处理。</div>
                             </div>
                             <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">
                                 <div>MP4 / WebM / MP3 / WAV / JPG / PNG /</div>
@@ -381,7 +381,7 @@ export function FileUploader() {
                         <div className="flex items-center justify-between gap-4 mb-4">
                             <div>
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">检测提示词</div>
-                                <div className="mt-1 text-sm text-black/50 dark:text-white/45">会同步给视听鉴伪、情报溯源、逻辑质询和研判指挥Agent。</div>
+                                <div className="mt-1 text-sm text-black/50 dark:text-white/45">会同步给电子取证、情报溯源、逻辑质询和研判指挥Agent。</div>
                             </div>
                         </div>
                         <textarea

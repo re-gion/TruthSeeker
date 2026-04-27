@@ -2,7 +2,8 @@
 from datetime import datetime, timezone
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
-from app.agents.tools.llm_client import commander_ruling
+from app.agents.tools.llm_client import build_sample_references, commander_ruling
+from app.agents.tools.provenance_graph import build_provenance_graph
 
 
 async def commander_node(state: TruthSeekerState) -> dict:
@@ -21,6 +22,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
     evidence_board = state.get("evidence_board", [])
     expert_messages = state.get("expert_messages", [])
     case_prompt = state.get("case_prompt", "")
+    sample_refs = build_sample_references(state.get("evidence_files") or [])
+    phase_residual_risks = list(state.get("phase_residual_risks") or [])
 
     logs: list[AgentLog] = []
     timeline_events: list[dict] = []
@@ -36,7 +39,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         logs.append(entry)
         return entry
 
-    log("thinking", f"👑 研判指挥Agent 启动，开始综合裁决...")
+    log("thinking", f"👑 研判指挥Agent 启动，开始综合电子取证、情报图谱和质询过程...")
     log("thinking", f"📊 证据板共 {len(evidence_board)} 条，质询官报告 {challenger.get('issue_count', 0)} 个问题")
     if case_prompt:
         log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
@@ -98,7 +101,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     llm_ruling = ""
     log("action", "🧠 正在调用大模型生成最终裁决报告...")
     try:
-        llm_ruling = await commander_ruling(forensics, osint, challenger, agent_weights, case_prompt)
+        llm_ruling = await commander_ruling(forensics, osint, challenger, agent_weights, case_prompt, sample_refs)
         if llm_ruling.startswith("[LLM降级]"):
             log("action", "⚠️  LLM 裁决不可用，使用规则推断")
         else:
@@ -106,6 +109,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
     except Exception as e:
         llm_ruling = f"[LLM降级] 裁决推理异常: {e}"
         log("action", f"⚠️  LLM 裁决异常: {e}")
+
+    provenance_graph = osint.get("provenance_graph") or state.get("provenance_graph") or {}
 
     # 构建最终裁决
     final_verdict = {
@@ -133,6 +138,14 @@ async def commander_node(state: TruthSeekerState) -> dict:
             "consultation_required": challenger.get("consultation_required", False),
             "consultation_resumed": challenger.get("consultation_resumed", False),
         },
+        "provenance_graph": provenance_graph,
+        "provenance_summary": {
+            "node_count": len(provenance_graph.get("nodes") or []) if isinstance(provenance_graph, dict) else 0,
+            "edge_count": len(provenance_graph.get("edges") or []) if isinstance(provenance_graph, dict) else 0,
+            "citation_count": len(provenance_graph.get("citations") or []) if isinstance(provenance_graph, dict) else 0,
+            "quality": provenance_graph.get("quality") if isinstance(provenance_graph, dict) else {},
+        },
+        "residual_risks": phase_residual_risks + (challenger.get("residual_risks") or []),
         "case_prompt": case_prompt,
         "expert_message_count": len(expert_messages),
         "key_evidence": [
@@ -143,6 +156,22 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "llm_ruling": llm_ruling,
         "task_id": task_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    final_graph = build_provenance_graph(
+        task_id=task_id,
+        evidence_files=state.get("evidence_files") or [],
+        forensics_result=forensics,
+        osint_result=osint,
+        challenger_feedback=challenger,
+        final_verdict=final_verdict,
+    )
+    final_verdict["provenance_graph"] = final_graph
+    final_verdict["provenance_summary"] = {
+        "node_count": len(final_graph.get("nodes") or []),
+        "edge_count": len(final_graph.get("edges") or []),
+        "citation_count": len(final_graph.get("citations") or []),
+        "quality": final_graph.get("quality") or {},
     }
 
     log("conclusion", f"👑 最终裁决: 【{verdict_cn}】 综合置信度 {overall_confidence:.1%}")
@@ -158,6 +187,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
 
     return {
         "final_verdict": final_verdict,
+        "analysis_phase": "commander",
+        "provenance_graph": final_graph,
         "agent_weights": agent_weights,
         "previous_weights": state.get("agent_weights", {}),
         "evidence_board": [],

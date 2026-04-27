@@ -66,6 +66,12 @@ def build_resume_state_from_rows(
     challenges: list[Any] = []
     timeline_events: list[Any] = []
     round_number = 1
+    analysis_phase = "forensics"
+    phase_rounds = {"forensics": 1, "osint": 1, "commander": 1}
+    phase_quality_history: dict[str, Any] = {"forensics": [], "osint": [], "commander": []}
+    phase_residual_risks: list[Any] = []
+    provenance_graph: dict[str, Any] | None = None
+    tool_results: dict[str, Any] = {}
 
     for row in rows:
         round_number = max(round_number, int(row.get("round_number") or 1))
@@ -76,6 +82,28 @@ def build_resume_state_from_rows(
             osint_result = _as_record(snapshot.get("osint"))
         if snapshot.get("challenger"):
             challenger_feedback = _as_record(snapshot.get("challenger"))
+            phase_value = challenger_feedback.get("phase")
+            if isinstance(phase_value, str):
+                analysis_phase = phase_value
+            phase_round_value = challenger_feedback.get("phase_round")
+            if isinstance(phase_round_value, int) and analysis_phase in phase_rounds:
+                phase_rounds[analysis_phase] = max(phase_rounds[analysis_phase], phase_round_value)
+            residual = challenger_feedback.get("residual_risks")
+            if isinstance(residual, list):
+                phase_residual_risks.extend(residual)
+            quality = challenger_feedback.get("quality_score")
+            if isinstance(quality, (int, float)) and analysis_phase in phase_quality_history:
+                phase_quality_history[analysis_phase].append(float(quality))
+        if snapshot.get("final_verdict"):
+            final_snapshot = _as_record(snapshot.get("final_verdict"))
+            graph = _as_record(final_snapshot.get("provenance_graph"))
+            provenance_graph = graph or provenance_graph
+        if osint_result and osint_result.get("provenance_graph"):
+            provenance_graph = _as_record(osint_result.get("provenance_graph")) or provenance_graph
+        if forensics_result and forensics_result.get("tool_results"):
+            tool_results["forensics"] = forensics_result.get("tool_results")
+        if osint_result and osint_result.get("tool_results"):
+            tool_results["osint"] = osint_result.get("tool_results")
 
         board = _as_record(row.get("evidence_board"))
         evidence_board.extend(_as_list(board.get("evidence")))
@@ -91,12 +119,17 @@ def build_resume_state_from_rows(
         "case_prompt": case_prompt,
         "evidence_files": evidence_files,
         "current_round": round_number,
-        "max_rounds": min(max_rounds, 5),
-        "convergence_threshold": 0.05,
+        "max_rounds": min(max_rounds, 3),
+        "convergence_threshold": 0.08,
+        "analysis_phase": analysis_phase,
+        "phase_rounds": phase_rounds,
+        "phase_quality_history": phase_quality_history,
+        "phase_residual_risks": phase_residual_risks,
         "forensics_result": forensics_result,
         "osint_result": osint_result,
         "challenger_feedback": challenger_feedback,
         "final_verdict": None,
+        "provenance_graph": provenance_graph,
         "agent_weights": {},
         "previous_weights": {},
         "evidence_board": evidence_board,
@@ -106,6 +139,7 @@ def build_resume_state_from_rows(
         "is_converged": False,
         "termination_reason": None,
         "degradation_status": {},
+        "tool_results": tool_results,
         "expert_messages": expert_messages,
         "consultation_resume": {
             "action": "resume_from_persistence",
@@ -168,6 +202,10 @@ def build_analysis_state_row(
         "osint": updates.get("osint_result"),
         "challenger": updates.get("challenger_feedback"),
         "final_verdict": normalize_final_verdict(updates.get("final_verdict")) if updates.get("final_verdict") else None,
+        "analysis_phase": updates.get("analysis_phase"),
+        "phase_rounds": updates.get("phase_rounds"),
+        "phase_quality_history": updates.get("phase_quality_history"),
+        "provenance_graph": updates.get("provenance_graph"),
     }
     forensics_result = updates.get("forensics_result") or {}
     osint_result = updates.get("osint_result") or {}

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.agents.graph import compiled_graph
 from app.agents.state import TruthSeekerState
 from app.services.analysis_persistence import (
@@ -228,12 +229,17 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
         "case_prompt": case_prompt,
         "evidence_files": evidence_files,
         "current_round": 1,
-        "max_rounds": min(request.max_rounds, 5),
-        "convergence_threshold": 0.05,
+        "max_rounds": min(request.max_rounds, settings.MAX_ROUNDS),
+        "convergence_threshold": settings.CONVERGENCE_THRESHOLD,
+        "analysis_phase": "forensics",
+        "phase_rounds": {"forensics": 1, "osint": 1, "commander": 1},
+        "phase_quality_history": {"forensics": [], "osint": [], "commander": []},
+        "phase_residual_risks": [],
         "forensics_result": None,
         "osint_result": None,
         "challenger_feedback": None,
         "final_verdict": None,
+        "provenance_graph": None,
         "agent_weights": {},
         "previous_weights": {},
         "evidence_board": [],
@@ -243,6 +249,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
         "is_converged": False,
         "termination_reason": None,
         "degradation_status": {},
+        "tool_results": {},
         "expert_messages": [],
         "consultation_resume": None,
         "timeline_events": [],

@@ -1,13 +1,10 @@
-"""LangGraph State Machine Workflow - Layer 2: 四 Agent 完整辩论拓扑
+"""LangGraph State Machine Workflow - 阶段式四 Agent 拓扑。
 
 拓扑结构：
-START → Forensics ┐
-                  ├→ Challenger → 条件边
-START → OSINT ────┘       │
-        ↑                 │
-        └─────────────────┘ (打回重审，round+1)
-                           │
-                      Commander → END
+START → Forensics → Challenger → OSINT → Challenger → Commander → Challenger → END
+
+Challenger 可按当前 phase 打回同一阶段重跑；Commander 阶段只允许重写最终报告，
+不再重新打开取证或 OSINT 工具链。
 """
 from langgraph.graph import StateGraph, START, END
 
@@ -29,13 +26,7 @@ checkpointer = MemorySaver()
 
 def build_graph():
     """
-    构建 Layer 2 四 Agent 工作流拓扑：
-    
-    START → Forensics ┐
-                      ├→ Challenger →[条件边]
-    START → OSINT ────┘      │ proceed_to_commander
-              ↑              └──→ Commander → END
-              └── return_to_* (打回, round 递增)
+    构建阶段式四 Agent 工作流拓扑。
     """
     graph = StateGraph(TruthSeekerState)
 
@@ -45,17 +36,23 @@ def build_graph():
     graph.add_node("challenger", challenger_node)
     graph.add_node("commander", commander_node)
 
-    # ─── 定义并行流程 ───
-    # START 同时进入 Forensics 与 OSINT，二者完成后进入 Challenger。
+    # ─── 定义阶段流程 ───
     graph.add_edge(START, "forensics")
-    graph.add_edge(START, "osint")
-    graph.add_edge(["forensics", "osint"], "challenger")
+    graph.add_edge("forensics", "challenger")
+    graph.add_edge("osint", "challenger")
+    graph.add_edge("commander", "challenger")
 
-    # Challenger → 条件路由（返回节点名直接路由，支持 list 做 fan-out）
-    graph.add_conditional_edges("challenger", challenger_route)
-
-    # Commander → END
-    graph.add_edge("commander", END)
+    # Challenger → 条件路由。
+    graph.add_conditional_edges(
+        "challenger",
+        challenger_route,
+        {
+            "forensics": "forensics",
+            "osint": "osint",
+            "commander": "commander",
+            "end": END,
+        },
+    )
 
     return graph.compile(checkpointer=checkpointer)
 

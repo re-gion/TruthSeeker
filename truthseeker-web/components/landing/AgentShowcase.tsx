@@ -5,14 +5,14 @@ import { motion } from "motion/react"
 export function AgentShowcase() {
     const agents = [
         {
-            role: "视听鉴伪Agent",
+            role: "电子取证Agent",
             name: "Forensics Agent",
-            icon: <img src="/agent-icons/forensics.svg" alt="视听鉴伪Agent" className="w-8 h-8" />,
+            icon: <img src="/agent-icons/forensics.svg" alt="电子取证Agent" className="w-8 h-8" />,
             theme: "indigo",
             glowClass: "agent-glow-indigo",
             bgClass: "from-[#6366F1]/20 to-[#A855F7]/5",
             textClass: "text-[#6366F1] dark:text-[#818CF8]",
-            features: ["视频帧微表情分析", "音频频谱伪像检测", "图像篡改区域定位"],
+            features: ["全模态样本取证", "RD/VT 工具矩阵", "跨模态伪造研判"],
             delay: 0.1
         },
         {
@@ -82,7 +82,7 @@ export function AgentShowcase() {
                         transition={{ delay: 0.2 }}
                         className="text-muted-foreground text-lg max-w-2xl mx-auto leading-relaxed"
                     >
-                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家"疑案会诊"的群智决策。
+                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家“疑案会诊”的群智决策。
                     </motion.p>
                 </div>
 

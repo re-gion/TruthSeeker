@@ -372,21 +372,37 @@ class ConditionsTests(unittest.TestCase):
         }
         self.assertEqual(should_converge(state), "continue")
 
-    def test_challenger_route_to_commander(self):
-        state = {"challenger_feedback": {"requires_more_evidence": False}}
-        self.assertEqual(challenger_route(state), "commander")
+    def test_challenger_route_advances_from_forensics_to_osint(self):
+        state = {
+            "analysis_phase": "forensics",
+            "challenger_feedback": {"requires_more_evidence": False},
+        }
+        self.assertEqual(challenger_route(state), "osint")
 
-    def test_challenger_route_back_to_agents(self):
-        state = {"challenger_feedback": {"requires_more_evidence": True}}
-        self.assertEqual(challenger_route(state), ["forensics", "osint"])
+    def test_challenger_route_retries_current_phase(self):
+        state = {
+            "analysis_phase": "osint",
+            "challenger_feedback": {"requires_more_evidence": True},
+        }
+        self.assertEqual(challenger_route(state), "osint")
 
     def test_challenger_route_after_consultation_resume(self):
-        state = {"challenger_feedback": {"requires_more_evidence": True, "consultation_resumed": True}}
+        state = {
+            "analysis_phase": "forensics",
+            "challenger_feedback": {"requires_more_evidence": True, "consultation_resumed": True},
+        }
         self.assertEqual(challenger_route(state), "commander")
+
+    def test_challenger_route_ends_after_commander_review(self):
+        state = {
+            "analysis_phase": "commander",
+            "challenger_feedback": {"requires_more_evidence": False},
+        }
+        self.assertEqual(challenger_route(state), "end")
 
     def test_challenger_route_empty_feedback(self):
         state = {}
-        self.assertEqual(challenger_route(state), "commander")
+        self.assertEqual(challenger_route(state), "osint")
 
 
 class NormalizeVerdictTests(unittest.TestCase):
@@ -461,6 +477,8 @@ class BuildResumeStateTests(unittest.TestCase):
         self.assertEqual(state["current_round"], 1)
         self.assertIsNone(state["forensics_result"])
         self.assertIsNone(state["osint_result"])
+        self.assertEqual(state["analysis_phase"], "forensics")
+        self.assertEqual(state["phase_rounds"], {"forensics": 1, "osint": 1, "commander": 1})
 
 
 class DefaultMetadataResultTests(unittest.TestCase):

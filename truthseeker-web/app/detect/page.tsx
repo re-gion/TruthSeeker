@@ -43,7 +43,7 @@ export default async function Home() {
           />
         </p>
         <p className="text-black dark:text-white/80 opacity-90 text-sm md:text-base text-center max-w-2xl mb-12 leading-relaxed font-medium">
-          视听鉴伪 Agent × 情报溯源 Agent × 逻辑质询 Agent × 研判指挥 Agent —— 多智能体 LangGraph 架构下四阶闭环，实时对抗分析，精准发现真相
+          电子取证 Agent × 情报溯源 Agent × 逻辑质询 Agent × 研判指挥 Agent —— 多智能体 LangGraph 架构下四阶闭环，实时对抗分析，精准发现真相
         </p>
 
         {/* Uploader */}

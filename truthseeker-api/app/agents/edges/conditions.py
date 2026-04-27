@@ -1,5 +1,12 @@
-"""条件边逻辑 - 收敛判断与路由"""
+"""条件边逻辑 - 收敛判断与阶段路由"""
 from app.agents.state import TruthSeekerState
+
+PHASE_SEQUENCE = {
+    "forensics": "osint",
+    "osint": "commander",
+    "commander": "end",
+    "complete": "end",
+}
 
 
 # NOTE: should_converge 当前未被 challenger_route 或 graph 使用（收敛逻辑由 commander 节点内联处理）。
@@ -12,8 +19,8 @@ def should_converge(state: TruthSeekerState) -> str:
     返回值用于 LangGraph conditional edge routing
     """
     current_round = state.get("current_round", 1)
-    max_rounds = state.get("max_rounds", 5)
-    convergence_threshold = state.get("convergence_threshold", 0.05)
+    max_rounds = state.get("max_rounds", 3)
+    convergence_threshold = state.get("convergence_threshold", 0.08)
     confidence_history = state.get("confidence_history", [])
     current_weights = state.get("agent_weights", {})
     previous_weights = state.get("previous_weights", {})
@@ -52,19 +59,21 @@ def should_converge(state: TruthSeekerState) -> str:
     return "continue"
 
 
-def challenger_route(state: TruthSeekerState) -> str | list[str]:
+def challenger_route(state: TruthSeekerState) -> str:
     """
-    质询官路由：决定质询后下一步走向
-    - "commander": 提交最终裁决
-    - ["forensics", "osint"]: 打回两个 Agent 重审（返回两个以满足 fan-in 边）
+    质询官路由：按当前阶段决定下一步。
+
+    外部协议 key 仍是 forensics/osint/challenger/commander，但拓扑已从旧并行
+    变为阶段式：forensics → challenger → osint → challenger → commander → challenger → end。
     """
     feedback = state.get("challenger_feedback") or {}
+    phase = state.get("analysis_phase") or "forensics"
 
-    if not feedback.get("requires_more_evidence", False):
-        return "commander"
-
-    # 会诊恢复后直接进 Commander，避免 fan-in 死锁
+    # 会诊恢复后直接进 Commander，避免旧 checkpoint 恢复时反复打开工具链。
     if feedback.get("consultation_resumed"):
         return "commander"
 
-    return ["forensics", "osint"]
+    if feedback.get("requires_more_evidence", False):
+        return phase if phase in PHASE_SEQUENCE and phase != "complete" else "forensics"
+
+    return PHASE_SEQUENCE.get(phase, "osint")

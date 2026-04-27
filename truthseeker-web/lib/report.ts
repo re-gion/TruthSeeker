@@ -147,7 +147,7 @@ export function generateMarkdownReport(data: ReportData): string {
     }
 
     // ── 各 Agent 分析结果 ──
-    md += `---\n\n## 🔬 视听鉴伪Agent (Forensics Agent)\n\n`
+    md += `---\n\n## 🔬 电子取证Agent (Forensics Agent)\n\n`
     if (data.forensicsResult) {
         const forensics = extractAnalysisSnapshot(data.forensicsResult)
         md += `- **置信度**: ${(forensics.confidence * 100).toFixed(1)}%\n`
@@ -189,7 +189,7 @@ export function generateMarkdownReport(data: ReportData): string {
         md += `| Agent | 权重 |\n|---|---|\n`
         Object.entries(data.agentWeights).forEach(([key, val]) => {
             const label: Record<string, string> = {
-                forensics: "视听鉴伪Agent", osint: "情报溯源Agent", challenger: "逻辑质询Agent"
+                forensics: "电子取证Agent", osint: "情报溯源Agent", challenger: "逻辑质询Agent"
             }
             md += `| ${label[key] || key} | ${(val * 100).toFixed(1)}% |\n`
         })
@@ -200,7 +200,7 @@ export function generateMarkdownReport(data: ReportData): string {
     md += `---\n\n## 📜 完整检测日志\n\n`
     if (data.logs.length > 0) {
         const agentLabel: Record<string, string> = {
-            forensics: "🔬 法医", osint: "🕵️ 情报", challenger: "⚖️ 质询", commander: "🏛️ 指挥"
+            forensics: "🔬 取证", osint: "🕵️ 情报", challenger: "⚖️ 质询", commander: "🏛️ 指挥"
         }
         data.logs.forEach((log) => {
             const label = agentLabel[log.agent] || log.agent

@@ -1,43 +1,51 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-04-21
+> 更新时间：2026-04-28
 
-## 1. 目录结构
+## 1. 当前运行时边界
+
+TruthSeeker 当前运行时是 **FedPaRS-compatible 多智能体研判架构**：
+
+- Kimi 2.6 作为四个 Agent 共享的原生多模态推理基座。
+- Reality Defender、VirusTotal、Exa 等外部工具提供专业取证、威胁情报和联网搜索能力。
+- LangGraph 负责阶段式 Agent 编排和收敛路由。
+- Supabase 保存任务、分析快照、日志、报告、会诊和审计记录。
+
+白皮书中的 FedPaRS 是研究底座与可替换检测器方向。除非仓库中出现真实 FedPaRS 训练/推理服务代码，否则文档不得声称当前运行时已经完成 FedPaRS 模型训练或直接推理。
+
+## 2. 目录结构
 
 ```text
 truthseeker-api/
 ├── app/
-│   ├── main.py
 │   ├── config.py
 │   ├── api/v1/
-│   │   ├── upload.py          # 文件上传到 Supabase Storage
-│   │   ├── tasks.py           # 任务创建、查询
-│   │   ├── detect.py          # SSE 检测流、暂停/恢复
-│   │   ├── consultation.py    # 会诊邀请、消息、历史
-│   │   ├── report.py          # Markdown/PDF 下载
-│   │   ├── share.py           # 报告分享
+│   │   ├── upload.py
+│   │   ├── tasks.py
+│   │   ├── detect.py
+│   │   ├── consultation.py
+│   │   ├── report.py
+│   │   ├── share.py
 │   │   └── dashboard.py
 │   ├── agents/
-│   │   ├── graph.py           # LangGraph 拓扑与内存 checkpointer
-│   │   ├── state.py           # TruthSeekerState
+│   │   ├── graph.py
+│   │   ├── state.py
+│   │   ├── edges/conditions.py
 │   │   ├── nodes/
-│   │   │   ├── forensics.py   # 视听鉴伪 Agent
-│   │   │   ├── osint.py       # 情报溯源 Agent
-│   │   │   ├── challenger.py  # 逻辑质询 Agent
-│   │   │   └── commander.py   # 研判指挥 Agent
+│   │   │   ├── forensics.py   # 电子取证 Agent，对外仍使用 forensics key
+│   │   │   ├── osint.py       # 情报溯源与图谱 Agent
+│   │   │   ├── challenger.py
+│   │   │   └── commander.py
 │   │   └── tools/
 │   │       ├── deepfake_api.py
 │   │       ├── threat_intel.py
 │   │       ├── text_detection.py
+│   │       ├── osint_search.py
+│   │       ├── provenance_graph.py
 │   │       └── llm_client.py
-│   ├── middleware/
-│   │   ├── auth.py
-│   │   ├── exception_handler.py
-│   │   └── rate_limit.py
 │   ├── services/
-│   │   ├── auth_config.py
 │   │   ├── evidence_files.py
-│   │   ├── text_validation.py   # 文本上传校验（扩展名白名单、控制字符比例检测、多编码尝试、二进制伪装检测）
+│   │   ├── text_validation.py
 │   │   ├── analysis_persistence.py
 │   │   ├── report_integrity.py
 │   │   ├── audit_log.py
@@ -47,155 +55,102 @@ truthseeker-api/
 └── tests/
 ```
 
-## 2. 当前运行时边界
+## 3. 核心状态
 
-白皮书中的底层训练底座表述是目标架构：基于 FedPaRS 联邦学习训练底座产出检测 API，供上层 Agent 调用。
+`TruthSeekerState` 必须继续使用 `TypedDict`，不能改成 Pydantic 模型。新增字段遵循兼容原则：旧字段仍保留，新流程只扩展内部状态。
 
-当前代码运行时尚不包含联邦学习训练代码，实际执行路径是：
+重要字段：
 
-- Reality Defender 等外部检测 API
-- VirusTotal / 元数据 / 文本 URL 提取等情报能力
-- Kimi/Moonshot LLM 推理
-- LangGraph 多智能体编排
+- `analysis_phase`: `forensics | osint | commander | complete`
+- `phase_rounds`: 每个阶段当前轮次，默认每阶段从 1 开始。
+- `phase_quality_history`: 每阶段质量评分历史，用于 0.08 阈值收敛。
+- `tool_results`: 电子取证和 OSINT 工具 all-settled 结果。
+- `provenance_graph`: 阶段图谱或最终审定图谱。
 
-因此，代码层面只需要保证“调用现成检测 API + 多智能体研判闭环”可靠；FedPaRS 训练底座后续替换底层 API 来源即可。
+兼容字段：
 
-## 3. 核心数据契约
-
-### UploadedEvidenceFile
-
-```typescript
-interface UploadedEvidenceFile {
-  id: string
-  name: string
-  mime_type: string
-  size_bytes: number
-  modality: "video" | "audio" | "image" | "text"
-  storage_path: string
-  file_url?: string
-}
-```
-
-规则：
-
-- 一次最多 5 个文件。
-- 单文件最大 500MB。
-- `file_url` 可选，检测启动时后端可根据 `storage_path` 重新生成最新 signed URL。
-- 文本框内容不是待检测文本，保存为 `case_prompt`。
-
-### POST /api/v1/tasks
-
-请求重点字段：
-
-- `description`: 保存 `case_prompt`
-- `metadata.files`: 保存标准化文件清单
-- `storage_paths.files`: 保存 storage path 和模态
-- `priority_focus`: `visual | audio | text | balanced`
-
-后端行为：
-
-- 校验至少存在 1 个文件。
-- 根据文件模态推导 `input_type`，混合模态为 `mixed`。
-- 忽略客户端传入的 `user_id`，只使用 JWT 中的 `request.state.user_id`。
-- 写入 `audit_logs.action = task_create`。
-
-### POST /api/v1/detect/stream
-
-支持字段：
-
-```json
-{
-  "task_id": "uuid",
-  "resume": false,
-  "case_prompt": "可选覆盖",
-  "files": [],
-  "input_type": "video|audio|image|text|mixed"
-}
-```
-
-正常启动时，后端优先从任务记录读取文件清单；如果文件缺少 `file_url`，根据 `storage_path` 生成 24 小时 signed URL。
-
-恢复研判时，前端使用同一 `task_id` 并传 `resume=true`，后端优先用 LangGraph `Command(resume=...)` 和同一 `thread_id` 恢复。若内存 checkpoint 因进程重启丢失，后端会基于 `analysis_states` 的最近 Agent 快照和 `consultation_messages` 重建 Commander 可裁决状态。
+- `forensics_result`
+- `osint_result`
+- `challenger_feedback`
+- `final_verdict`
+- `evidence_board`
+- `logs`
+- `timeline_events`
 
 ## 4. LangGraph 拓扑
 
 ```mermaid
 flowchart TD
   START --> F["forensics"]
-  START --> O["osint"]
   F --> C["challenger"]
+  C -->|forensics retry| F
+  C -->|forensics accepted| O["osint"]
   O --> C
-  C -->|proceed_to_commander| M["commander"]
-  C -->|return_to_forensics| F
-  C -->|return_to_osint| O
-  M --> END
+  C -->|osint retry| O
+  C -->|osint accepted| M["commander"]
+  M --> C
+  C -->|commander retry| M
+  C -->|complete| END
 ```
 
-说明：
+`challenger_route()` 是唯一的条件路由入口：
 
-- `forensics` 只处理视频、音频、图片。
-- `osint` 处理文本文件，并可结合媒体文件做哈希、元数据和威胁情报检查。
-- `challenger` 发现高冲突时通过 LangGraph interrupt 暂停。
-- `commander` 基于证据板、质询记录、专家意见和全局提示词生成最终裁决。
+- `analysis_phase=forensics` 且需要补证：返回 `forensics`
+- `analysis_phase=forensics` 且通过：返回 `osint`
+- `analysis_phase=osint` 且需要补证：返回 `osint`
+- `analysis_phase=osint` 且通过：返回 `commander`
+- `analysis_phase=commander` 且需要修订：返回 `commander`
+- `analysis_phase=commander` 且通过：返回 `end`
 
-## 5. 数据库迁移
+## 5. 工具与 LLM
 
-已有核心迁移：
+Kimi 2.6：
 
-- `20260415_baseline_schema_rls.sql`
-- `20260416_full_fix.sql`
-- `20260420_consultation_messages.sql`
-- `20260420_report_hash_audit_logs.sql`
+- 默认 `KIMI_MODEL=kimi-k2.6`。
+- 多模态输入通过短期 signed URL 引用传递。
+- 日志、报告和持久化不保存 signed URL 明文。
 
-关键表：
+Reality Defender：
 
-- `tasks`
-- `analysis_states`
-- `agent_logs`
-- `reports`
-- `consultation_invites`
-- `consultation_messages`
-- `audit_logs`
+- 电子取证阶段处理所有媒体文件。
+- 返回成功、降级或失败结构。
 
-`reports.report_hash` 为 SHA-256 稳定哈希，用于报告防篡改展示。
+VirusTotal：
 
-`20260415_baseline_schema_rls.sql` 包含从零建库所需的核心表、索引和 RLS policy。后续增量迁移继续保持幂等，评审或新环境可按文件名顺序执行。
+- 电子取证阶段扫描所有文件哈希和文本 IOC。
+- OSINT 阶段可对 Exa 搜索产生的新 IOC 追加查询。
 
-`audit_logs` 记录关键闭环动作：
+Exa：
 
-- upload
-- task_create
-- detect_start
-- detect_failed
-- detect_completed
-- report_generated
-- report_downloaded
-- share_created
-- share_viewed
-- consultation_message
-- consultation_resume
+- 只在后端运行时调用 Exa API。
+- 只发送脱敏搜索线索。
+- 无 key、超时或网络失败时返回结构化降级结果。
 
-## 6. 权限边界
+## 6. 持久化与报告
 
-受保护接口：
+不新增数据库表。图谱复用 JSONB：
 
-- 上传
-- 创建任务
-- 启动检测
-- 报告下载
-- 创建分享
-- 主持人创建邀请与恢复研判
+- `analysis_states.result_snapshot.osint.provenance_graph`
+- `reports.verdict_payload.provenance_graph`
+- `tasks.result.provenance_graph`
 
-公开但受令牌校验的接口：
+`analysis_states.result_snapshot` 继续保存 `forensics/osint/challenger/final_verdict`，避免前端历史回放、会诊恢复和报告生成失效。
 
-- 分享页 `GET /api/v1/share/{token}`
-- 专家邀请校验 `GET /api/v1/consultation/invite/{token}`
-- 会诊消息读取 `GET /api/v1/consultation/{task_id}/messages?invite_token=...`
-- 专家提交意见 `POST /api/v1/consultation/{task_id}/inject`，必须提供有效邀请令牌
+`reports.verdict` 仍只允许：
 
-`APP_ENV=production` 时必须配置真实 `SUPABASE_JWT_SECRET`，否则后端拒绝启动。本地开发可使用 `NOT_SET` 关闭认证中间件，但不能按生产安全口径部署。
+- `authentic`
+- `suspicious`
+- `forged`
+- `inconclusive`
 
-## 7. 暂不实现
+## 7. 前端兼容
 
-- pgvector / 向量库：本次不实现，后续用于相似案例检索和威胁特征召回。
-- 案例库真实加载：当前保留演示能力，等检测闭环稳定后再接真实案例。
+后端仍发送旧 SSE 事件。检测台可新增图谱视图，但不得要求后端新增必须消费的新事件。最终图谱从 `final_verdict.provenance_graph` 读取。
+
+## 8. 测试要求
+
+- 状态路由和收敛逻辑必须有纯函数测试。
+- 工具 all-settled 结果必须有单元测试。
+- 图谱 schema 必须有单元测试。
+- SSE 和持久化必须验证旧 key 兼容。
+- 外部 API 测试必须 mock，不能依赖真实网络或真实密钥。

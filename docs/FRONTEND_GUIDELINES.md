@@ -87,7 +87,7 @@ const LiquidGlassCard = ({ children }) => (
 │ [媒体预览] │ [法医分析流] │
 │3D悬浮展示 │实时数据瀑布 │
 ├──────────────────┼──────────────────────┤
-│ [溯源关系图] │ [质询官日志] │
+│ [溯源图谱] │ [质询官日志] │
 │网络拓扑可视化 │辩论时间轴 │
 └─────────────────────────────────────────┘
 ```
@@ -194,7 +194,7 @@ import { motion } from "framer-motion" //已废弃！
 ```tsx
 // Agent卡片
 <AgentCard
- name="视听鉴伪Agent"
+ name="电子取证Agent"
  icon={<Microscope />}
  status="analyzing" // idle | analyzing | complete | error
  confidence={0.85}
@@ -288,8 +288,8 @@ const easings = {
 ### Agent专属动效
 | Agent |活跃状态效果 |
 |-------|-------------|
-|视听鉴伪Agent |紫色扫描线从上到下扫过面板 |
-|情报溯源Agent |绿色数据包沿连接线流动 |
+|电子取证Agent |紫色扫描线从上到下扫过面板 |
+|情报溯源Agent |绿色数据包沿连接线流动，最终图谱视图显示节点和边 |
 |逻辑质询Agent |黄色闪电图标闪烁 |
 |研判指挥Agent |蓝色光环向外扩散 |
 

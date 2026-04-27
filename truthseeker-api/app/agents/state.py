@@ -37,8 +37,12 @@ class TruthSeekerState(TypedDict):
 
     # 辩论状态
     current_round: int
-    max_rounds: int             # 默认5
-    convergence_threshold: float  # 默认0.05
+    max_rounds: int             # 默认3
+    convergence_threshold: float  # 默认0.08
+    analysis_phase: str         # 'forensics' | 'osint' | 'commander' | 'complete'
+    phase_rounds: Annotated[dict, merge_dicts]  # {"forensics": 1, "osint": 1, "commander": 1}
+    phase_quality_history: Annotated[dict, merge_dicts]  # {"forensics": [0.72, ...], ...}
+    phase_residual_risks: Annotated[list[dict], add]
 
     # 各 Agent 评估结果
     forensics_result: Optional[dict]
@@ -47,6 +51,7 @@ class TruthSeekerState(TypedDict):
 
     # 最终结果
     final_verdict: Optional[dict]
+    provenance_graph: Optional[dict]
 
     # Agent 权重
     agent_weights: dict
@@ -72,6 +77,7 @@ class TruthSeekerState(TypedDict):
 
     # 降级状态追踪
     degradation_status: Annotated[dict, merge_dicts]    # {"reality_defender": "ok"|"degraded"|"failed", ...}
+    tool_results: Annotated[dict, merge_dicts]          # {"forensics": [...], "osint": [...]}
 
     # 专家会诊消息
     expert_messages: list[dict]  # [{role, content, timestamp}, ...]

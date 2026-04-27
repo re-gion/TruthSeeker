@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_BASE_URL", "Kimi_Base_URL"),
     )
     KIMI_MODEL: str = Field(
-        default="kimi-k2.5",
+        default="kimi-k2.6",
         validation_alias=AliasChoices("KIMI_MODEL", "Kimi_Model"),
     )
     KIMI_FALLBACK_MODEL: str = Field(
@@ -39,12 +39,17 @@ class Settings(BaseSettings):
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
+    EXA_API_KEY: str = Field(default="", validation_alias=AliasChoices("EXA_API_KEY", "Exa_API_KEY"))
+    EXA_BASE_URL: str = Field(
+        default="https://api.exa.ai",
+        validation_alias=AliasChoices("EXA_BASE_URL", "Exa_Base_URL"),
+    )
 
     # App
     APP_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
-    MAX_ROUNDS: int = 5
-    CONVERGENCE_THRESHOLD: float = 0.05
+    MAX_ROUNDS: int = 3
+    CONVERGENCE_THRESHOLD: float = 0.08
 
 
 settings = Settings()
