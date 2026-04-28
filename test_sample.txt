@@ -1,0 +1,1 @@
+这是一段测试文本，用于验证 TruthSeeker 检测流程。内容包含一些可疑链接：http://example.com/malicious 和可疑声明。

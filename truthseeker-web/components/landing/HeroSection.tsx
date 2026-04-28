@@ -327,7 +327,7 @@ export function HeroSection() {
                             />
                         </h2>
                         <p className="mt-8 text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed font-light">
-                            一个具备专家团队思维的智能研判中枢：利用 FedPaRS 架构保障隐私，通过 LangGraph 编排实现视听、情报、质询、研判四阶闭环分析。
+                            一个具备专家团队思维的智能研判中枢：兼容 FedPaRS 运行时架构保障隐私扩展性，通过 LangGraph 编排实现视听、情报、质询、研判四阶闭环分析。
                         </p>
                     </motion.div>
 

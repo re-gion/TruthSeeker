@@ -90,7 +90,7 @@ export interface ReactFlowEdgeLike {
   style?: Record<string, string | number>
 }
 
-const NODE_COLORS: Record<string, { border: string; bg: string; color: string }> = {
+export const NODE_COLORS: Record<string, { border: string; bg: string; color: string }> = {
   artifact: { border: "#6366F1", bg: "rgba(99,102,241,0.16)", color: "#E0E7FF" },
   source: { border: "#10B981", bg: "rgba(16,185,129,0.14)", color: "#D1FAE5" },
   evidence: { border: "#06B6D4", bg: "rgba(6,182,212,0.14)", color: "#CFFAFE" },
@@ -142,6 +142,7 @@ export function toReactFlowGraph(graph: ProvenanceGraph | null | undefined) {
         const color = NODE_COLORS[node.type] ?? NODE_COLORS.entity
         mappedNodes.push({
           id: node.id,
+          type: "provenance",
           position: {
             x: layer * 240,
             y: index * 120 + (layer % 2) * 52,

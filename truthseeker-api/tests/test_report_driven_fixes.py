@@ -14,11 +14,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_sync_coroutine(coro):
+    import asyncio
     try:
-        coro.send(None)
-    except StopIteration as stop:
-        return stop.value
-    raise RuntimeError("coroutine unexpectedly awaited")
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        # Already inside an event loop: use nest_asyncio-compatible approach
+        # by stepping the coroutine manually if possible
+        try:
+            coro.send(None)
+        except StopIteration as stop:
+            return stop.value
+        raise RuntimeError("coroutine unexpectedly awaited")
+    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 def import_with_asyncio_fallback(module_name: str):

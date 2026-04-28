@@ -93,10 +93,10 @@ export function FederatedLearning() {
                         </div>
                         <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">
                             FedPaRS <br />
-                            <span className="text-muted-foreground">鲁棒联邦学习底座</span>
+                            <span className="text-muted-foreground">兼容运行时架构</span>
                         </h2>
                         <p className="text-muted-foreground text-lg leading-relaxed mb-12">
-                            保障数据隐私与模型安全，实验表明在 40% 的检测节点被恶意篡改或发起拜占庭攻击的情况下，依然能聚合出高精度的鉴伪模型。
+                            运行时架构预留联邦学习接口，支持未来接入 FedPaRS 鲁棒聚合模块，在拜占庭攻击场景下提升模型可信度。
                         </p>
 
                         <div className="space-y-6">

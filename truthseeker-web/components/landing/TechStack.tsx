@@ -14,7 +14,7 @@ export function TechStack() {
         },
         {
             name: "数据与安全",
-            tools: ["Supabase SSR", "PostgreSQL RLS", "pgvector", "FedPaRS Federated"]
+            tools: ["Supabase SSR", "PostgreSQL RLS", "pgvector", "FedPaRS Compatible"]
         },
         {
             name: "Agent与检测工具",

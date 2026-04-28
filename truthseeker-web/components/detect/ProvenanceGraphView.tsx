@@ -1,7 +1,17 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { FileSearch, Filter, Network, ShieldCheck } from "lucide-react"
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Handle,
+  Position,
+  type NodeProps,
+  type Edge as RFEdge,
+  type Node as RFNode,
+} from "@xyflow/react"
 
 import {
   filterProvenanceGraph,
@@ -111,15 +121,36 @@ function NodeDetails({ node }: { node: ProvenanceNode | null }) {
   )
 }
 
+function ProvenanceNodeComponent({ data, selected }: NodeProps) {
+  return (
+    <div className={`text-left transition-transform hover:scale-[1.02] ${selected ? "ring-2 ring-[#D4FF12]/70" : ""}`}>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0.5, width: 6, height: 6 }} />
+      <div className="flex items-start justify-between gap-2">
+        <span className="line-clamp-2 font-medium">{String(data.label)}</span>
+        <span className="shrink-0 rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-white/55">
+          {String(data.nodeType)}
+        </span>
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[10px] text-white/45">
+        <span>{(((data.confidence as number) ?? 0) * 100).toFixed(0)}%</span>
+        {Boolean(data.modelInferred) && <span className="text-[#F59E0B]">model_inferred</span>}
+      </div>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0.5, width: 6, height: 6 }} />
+    </div>
+  )
+}
+
+const nodeTypes = { provenance: ProvenanceNodeComponent }
+
 export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewProps) {
   const filters = useMemo(() => getGraphFilters(graph), [graph])
-  const [nodeTypes, setNodeTypes] = useState<Set<string>>(new Set())
-  const [edgeTypes, setEdgeTypes] = useState<Set<string>>(new Set())
+  const [nodeTypesFilter, setNodeTypesFilter] = useState<Set<string>>(new Set())
+  const [edgeTypesFilter, setEdgeTypesFilter] = useState<Set<string>>(new Set())
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
   const filteredGraph = useMemo(
-    () => filterProvenanceGraph(graph, nodeTypes, edgeTypes),
-    [edgeTypes, graph, nodeTypes],
+    () => filterProvenanceGraph(graph, nodeTypesFilter, edgeTypesFilter),
+    [edgeTypesFilter, graph, nodeTypesFilter],
   )
   const mapped = useMemo(() => toReactFlowGraph(filteredGraph), [filteredGraph])
   const nodeLookup = useMemo(
@@ -127,9 +158,7 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
     [filteredGraph.nodes],
   )
   const selectedNode = selectedNodeId ? nodeLookup.get(selectedNodeId) ?? null : null
-  const mappedLookup = useMemo(() => new Map(mapped.nodes.map((node) => [node.id, node])), [mapped.nodes])
-  const canvasWidth = Math.max(760, ...mapped.nodes.map((node) => node.position.x + 240))
-  const canvasHeight = Math.max(520, ...mapped.nodes.map((node) => node.position.y + 120))
+
   const citations = Array.isArray(filteredGraph.citations) ? filteredGraph.citations : []
   const quality = filteredGraph.quality || {}
 
@@ -139,6 +168,10 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
     else next.add(value)
     setter(next)
   }
+
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: RFNode) => {
+    setSelectedNodeId(node.id)
+  }, [])
 
   if (!isComplete) {
     return (
@@ -162,7 +195,7 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
 
   return (
     <div className="grid h-full min-h-[620px] grid-cols-[minmax(0,1fr)_320px] gap-4 p-4">
-      <div className="min-w-0 rounded-xl border border-white/10 bg-black/35">
+      <div className="min-w-0 rounded-xl border border-white/10 bg-black/35 flex flex-col">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Network className="h-4 w-4 text-[#D4FF12]" />
@@ -179,8 +212,8 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
             <FilterButton
               key={type}
               label={type}
-              active={nodeTypes.size === 0 || nodeTypes.has(type)}
-              onClick={() => toggle(setNodeTypes, nodeTypes, type)}
+              active={nodeTypesFilter.size === 0 || nodeTypesFilter.has(type)}
+              onClick={() => toggle(setNodeTypesFilter, nodeTypesFilter, type)}
             />
           ))}
         </div>
@@ -189,68 +222,27 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
             <FilterButton
               key={type}
               label={type}
-              active={edgeTypes.size === 0 || edgeTypes.has(type)}
-              onClick={() => toggle(setEdgeTypes, edgeTypes, type)}
+              active={edgeTypesFilter.size === 0 || edgeTypesFilter.has(type)}
+              onClick={() => toggle(setEdgeTypesFilter, edgeTypesFilter, type)}
             />
           ))}
         </div>
 
-        <div className="h-[calc(100%-122px)] overflow-auto">
-          <div className="relative" style={{ width: canvasWidth, height: canvasHeight }}>
-            <svg className="absolute inset-0 h-full w-full" width={canvasWidth} height={canvasHeight}>
-              {mapped.edges.map((edge) => {
-                const source = mappedLookup.get(edge.source)
-                const target = mappedLookup.get(edge.target)
-                if (!source || !target) return null
-                const x1 = source.position.x + 184
-                const y1 = source.position.y + 42
-                const x2 = target.position.x + 8
-                const y2 = target.position.y + 42
-                const midX = (x1 + x2) / 2
-                return (
-                  <g key={edge.id}>
-                    <path
-                      d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
-                      fill="none"
-                      stroke={edge.data.modelInferred ? "#F59E0B" : "#64748B"}
-                      strokeDasharray={edge.data.modelInferred ? "6 4" : undefined}
-                      strokeWidth={1.4}
-                    />
-                    <text x={midX} y={(y1 + y2) / 2 - 6} fill="#94A3B8" fontSize="10" textAnchor="middle">
-                      {edge.label}
-                    </text>
-                  </g>
-                )
-              })}
-            </svg>
-
-            {mapped.nodes.map((node) => (
-              <button
-                key={node.id}
-                type="button"
-                onClick={() => setSelectedNodeId(node.id)}
-                className={`absolute text-left shadow-lg transition-transform hover:scale-[1.02] ${
-                  selectedNodeId === node.id ? "ring-2 ring-[#D4FF12]/70" : ""
-                }`}
-                style={{
-                  ...node.style,
-                  left: node.position.x,
-                  top: node.position.y,
-                }}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="line-clamp-2 font-medium">{node.data.label}</span>
-                  <span className="shrink-0 rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-white/55">
-                    {node.data.nodeType}
-                  </span>
-                </div>
-                <div className="mt-2 flex items-center justify-between text-[10px] text-white/45">
-                  <span>{((node.data.confidence ?? 0) * 100).toFixed(0)}%</span>
-                  {node.data.modelInferred && <span className="text-[#F59E0B]">model_inferred</span>}
-                </div>
-              </button>
-            ))}
-          </div>
+        <div className="flex-1 min-h-0">
+          <ReactFlow
+            nodes={mapped.nodes as RFNode[]}
+            edges={mapped.edges as RFEdge[]}
+            nodeTypes={nodeTypes}
+            onNodeClick={onNodeClick}
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            minZoom={0.2}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#334155" gap={20} size={1} />
+            <Controls className="!bg-black/50 !border-white/10 !text-white/70" />
+          </ReactFlow>
         </div>
       </div>
 
