@@ -48,11 +48,6 @@ const promptTemplates = [
         summary: "冒充身份/诱导转账",
         prompt: "请判断该内容是否可能用于诈骗或身份冒充场景。重点检查是否存在伪造领导、亲友、客服、金融机构或官方媒体口吻，以及诱导转账、索要验证码、制造紧迫感、承诺收益等风险信号。请输出可疑话术、证据片段和用户防护建议。",
     },
-    {
-        label: "司法报告",
-        summary: "证据链/结论/建议",
-        prompt: "请按专家报告格式分析该材料，输出：一、检测结论；二、关键证据；三、各 Agent 可能关注的疑点；四、证据链完整性与不足；五、是否建议人工复核；六、面向司法、平台治理或企业安全场景的处置建议。请避免只给笼统结论。",
-    },
 ]
 const aspectOptions = ["多模态取证优先", "跨模态一致性", "传播链溯源", "高风险案件"]
 
@@ -390,13 +385,13 @@ export function FileUploader() {
                             placeholder="例如：请重点判断该视频是否存在换脸、合成语音与传播链异常，并输出关键证据与处置建议。"
                             className="min-h-[180px] w-full resize-none rounded-[1.25rem] border border-black/8 bg-white/60 px-5 py-4 text-base leading-7 text-[#1F1F23] placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#6366F1]/25 focus:border-[#6366F1]/30 transition-all dark:border-white/10 dark:bg-black/20 dark:text-white dark:placeholder:text-white/25 dark:focus:ring-[#6366F1]/40 dark:focus:border-[#6366F1]/40"
                         />
-                        <div className="mt-5 flex gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+                        <div className="mt-5 flex flex-wrap justify-center gap-2">
                             {promptTemplates.map((template, index) => (
                                 <button
                                     key={template.label}
                                     type="button"
                                     onClick={() => applyTemplate(index)}
-                                    className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] leading-none transition-colors ${templateIndex === index
+                                    className={`shrink-0 rounded-full border px-2.5 py-1 text-xs leading-none transition-colors ${templateIndex === index
                                         ? "border-[#6366F1]/30 bg-[#6366F1]/12 text-[#4F46E5] dark:border-[#6366F1]/35 dark:bg-[#6366F1]/18 dark:text-[#C7C9FF]"
                                         : "border-black/8 bg-black/[0.04] text-black/55 hover:bg-black/[0.07] hover:text-black dark:border-white/10 dark:bg-white/5 dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white"
                                         }`}

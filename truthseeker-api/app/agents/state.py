@@ -37,7 +37,7 @@ class TruthSeekerState(TypedDict):
 
     # 辩论状态
     current_round: int
-    max_rounds: int             # 默认3
+    max_rounds: int             # 默认5
     convergence_threshold: float  # 默认0.08
     analysis_phase: str         # 'forensics' | 'osint' | 'commander' | 'complete'
     phase_rounds: Annotated[dict, merge_dicts]  # {"forensics": 1, "osint": 1, "commander": 1}

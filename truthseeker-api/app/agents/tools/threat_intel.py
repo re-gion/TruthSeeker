@@ -4,6 +4,7 @@ import hashlib
 import logging
 from typing import Optional
 
+from app.agents.tools.fallback import shared_degradation
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,11 @@ async def analyze_urls(urls: list[str]) -> dict:
         return await _virustotal_scan(urls[0], vt_api_key)
     else:
         logger.warning("VirusTotal API key not configured, using mock analysis for URL: %s", urls[0])
-        return await _mock_url_analysis(urls[0])
+        return await _mock_url_analysis(
+            urls[0],
+            fallback_reason="no_key",
+            api_key_configured=False,
+        )
 
 
 async def _virustotal_scan(url: str, api_key: str) -> dict:
@@ -40,14 +45,22 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
             )
             if resp.status_code not in (200, 201):
                 logger.warning("VirusTotal URL scan submit returned HTTP %s for %s", resp.status_code, url)
-                return await _mock_url_analysis(url)
+                return await _mock_url_analysis(
+                    url,
+                    fallback_reason=f"submit_http_{resp.status_code}",
+                    api_key_configured=True,
+                )
 
             scan_data = resp.json()
             analysis_id = scan_data.get("data", {}).get("id", "")
 
             if not analysis_id:
                 logger.warning("VirusTotal URL scan response missing analysis_id for %s", url)
-                return await _mock_url_analysis(url)
+                return await _mock_url_analysis(
+                    url,
+                    fallback_reason="missing_analysis_id",
+                    api_key_configured=True,
+                )
 
             # 获取分析结果
             await asyncio.sleep(2)
@@ -57,7 +70,11 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
             )
             if result_resp.status_code != 200:
                 logger.warning("VirusTotal URL scan result returned HTTP %s for analysis_id=%s", result_resp.status_code, analysis_id)
-                return await _mock_url_analysis(url)
+                return await _mock_url_analysis(
+                    url,
+                    fallback_reason=f"result_http_{result_resp.status_code}",
+                    api_key_configured=True,
+                )
 
             result = result_resp.json()
             stats = result.get("data", {}).get("attributes", {}).get("stats", {})
@@ -73,6 +90,7 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
             if suspicious > 0:
                 indicators.append(f"VirusTotal: {suspicious} 家安全厂商标记为可疑")
 
+            shared_degradation.report_success("virustotal")
             return {
                 "threat_score": threat_score,
                 "indicators": indicators,
@@ -82,14 +100,28 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
                     "suspicious": suspicious,
                     "total_engines": total,
                     "stats": stats,
+                    "status": "ok",
+                    "scan_available": True,
                 },
+                "status": "ok",
+                "degraded": False,
             }
     except Exception as e:
         logger.warning("VirusTotal URL scan degraded: %s", e)
-        return await _mock_url_analysis(url)
+        shared_degradation.report_failure("virustotal", e)
+        return await _mock_url_analysis(
+            url,
+            fallback_reason="network_error",
+            api_key_configured=True,
+        )
 
 
-async def _mock_url_analysis(url: str) -> dict:
+async def _mock_url_analysis(
+    url: str,
+    *,
+    fallback_reason: str = "mock_mode",
+    api_key_configured: bool = False,
+) -> dict:
     """基于 URL 特征的模拟威胁分析"""
     await asyncio.sleep(0.3)
 
@@ -126,11 +158,18 @@ async def _mock_url_analysis(url: str) -> dict:
         indicators = ["模拟数据，无实际威胁"]
 
     # 保留本地启发式分析结果，但明确区分 VT 数据不可用
+    if fallback_reason == "no_key":
+        note = "模拟数据（未配置 VirusTotal API Key）"
+    else:
+        note = f"VirusTotal API 未取得真实结果（原因：{fallback_reason}）"
+
     indicators_with_note = indicators + ["VirusTotal 未实际调用 — 结果不可用"]
 
     return {
         "threat_score": min(1.0, threat_score),
         "indicators": indicators_with_note,
+        "fallback_reason": fallback_reason,
+        "api_key_configured": api_key_configured,
         "domain_info": {
             "url": url,
             "analysis_method": "mock_heuristic",
@@ -139,9 +178,12 @@ async def _mock_url_analysis(url: str) -> dict:
             "malicious": 0,
             "suspicious": 0,
             "total_engines": 0,
-            "note": "模拟数据（未配置 VirusTotal API Key）",
+            "note": note,
             "scan_available": False,
+            "status": fallback_reason,
+            "reason": fallback_reason,
         },
+        "status": "no_key" if fallback_reason == "no_key" else "degraded",
         "degraded": True,
     }
 
@@ -151,7 +193,11 @@ async def check_domain_reputation(domain: str) -> dict:
     vt_key = settings.VIRUSTOTAL_API_KEY
     if not vt_key:
         logger.warning("VirusTotal API key not configured, using mock analysis for domain: %s", domain)
-        result = await _mock_url_analysis(f"https://{domain}")
+        result = await _mock_url_analysis(
+            f"https://{domain}",
+            fallback_reason="no_key",
+            api_key_configured=False,
+        )
         return {
             "domain": domain,
             "reputation": int((1.0 - result["threat_score"]) * 100),
@@ -171,7 +217,11 @@ async def check_domain_reputation(domain: str) -> dict:
             )
             if resp.status_code != 200:
                 logger.warning("VirusTotal domain reputation returned HTTP %s for %s", resp.status_code, domain)
-                result = await _mock_url_analysis(f"https://{domain}")
+                result = await _mock_url_analysis(
+                    f"https://{domain}",
+                    fallback_reason=f"domain_http_{resp.status_code}",
+                    api_key_configured=True,
+                )
                 return {
                     "domain": domain,
                     "reputation": int((1.0 - result["threat_score"]) * 100),
@@ -208,7 +258,11 @@ async def check_domain_reputation(domain: str) -> dict:
             }
     except Exception as e:
         logger.warning("VirusTotal domain reputation degraded for %s: %s", domain, e)
-        result = await _mock_url_analysis(f"https://{domain}")
+        result = await _mock_url_analysis(
+            f"https://{domain}",
+            fallback_reason="domain_network_error",
+            api_key_configured=True,
+        )
         return {
             "domain": domain,
             "reputation": int((1.0 - result["threat_score"]) * 100),
@@ -254,6 +308,7 @@ async def scan_file_hash(file_url: str) -> dict:
 
     # 查询 VirusTotal
     if not vt_key:
+        logger.warning("VirusTotal API key not configured, skipping file hash scan for %s", hash_str)
         return {**result, "status": "no_key"}
 
     try:
@@ -276,6 +331,7 @@ async def scan_file_hash(file_url: str) -> dict:
             suspicious = last_analysis.get("suspicious", 0)
             total = sum(last_analysis.values()) or 1
 
+            shared_degradation.report_success("virustotal")
             return {
                 "malicious": malicious,
                 "suspicious": suspicious,
@@ -287,6 +343,7 @@ async def scan_file_hash(file_url: str) -> dict:
             }
     except Exception as exc:
         logger.warning("VirusTotal file hash query failed for hash=%s: %s", result.get("hash", ""), exc)
+        shared_degradation.report_failure("virustotal", exc)
         return {**result, "status": "error"}
 
 

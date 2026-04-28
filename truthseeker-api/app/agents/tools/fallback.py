@@ -2,8 +2,6 @@
 
 import logging
 
-from app.agents.tools.threat_intel import extract_media_metadata
-
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +88,8 @@ async def fallback_metadata_analysis(file_url: str, file_type: str) -> dict:
     Uses extract_media_metadata from threat_intel to check for anomalies.
     Confidence capped at 0.5.
     """
+    from app.agents.tools.threat_intel import extract_media_metadata
+
     try:
         metadata = await extract_media_metadata(file_url, file_type)
     except Exception as exc:
@@ -150,6 +150,8 @@ async def fallback_osint_analysis(file_url: str, file_type: str) -> dict:
 
     Confidence capped at 0.4.
     """
+    from app.agents.tools.threat_intel import extract_media_metadata
+
     try:
         metadata = await extract_media_metadata(file_url, file_type)
     except Exception as exc:

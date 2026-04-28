@@ -290,3 +290,8 @@ def _validate_invite_token(task_id: str, invite_token: Optional[str]) -> None:
         supabase.table("consultation_invites").update({"status": "used"}).eq("id", invite["id"]).execute()
     except Exception as exc:
         logger.error("Failed to mark invite as used: %s", exc)
+        record_audit_event(
+            action="consultation.invite_mark_used_failed",
+            task_id=invite.get("task_id"),
+            metadata={"invite_id": invite.get("id"), "error": f"{type(exc).__name__}: {exc}"},
+        )

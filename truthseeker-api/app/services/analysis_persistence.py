@@ -119,7 +119,7 @@ def build_resume_state_from_rows(
         "case_prompt": case_prompt,
         "evidence_files": evidence_files,
         "current_round": round_number,
-        "max_rounds": min(max_rounds, 3),
+        "max_rounds": min(max_rounds, 5),
         "convergence_threshold": 0.08,
         "analysis_phase": analysis_phase,
         "phase_rounds": phase_rounds,
@@ -261,7 +261,8 @@ class AnalysisPersistenceService:
             payload["priority_focus"] = priority_focus
         if metadata is not None:
             payload["metadata"] = metadata
-        self._safe_update("tasks", payload, task_id)
+        if not self._safe_update("tasks", payload, task_id):
+            raise RuntimeError(f"Failed to mark task {task_id} as started")
 
     def mark_task_waiting_consultation(
         self,
@@ -280,7 +281,8 @@ class AnalysisPersistenceService:
                 "consultation_reason": reason,
             },
         }
-        self._safe_update("tasks", payload, task_id)
+        if not self._safe_update("tasks", payload, task_id):
+            raise RuntimeError(f"Failed to mark task {task_id} as waiting_consultation")
 
     def mark_task_failed(self, task_id: str, *, error_summary: str) -> None:
         now = utc_now_iso()
@@ -294,7 +296,8 @@ class AnalysisPersistenceService:
             "completed_at": now,
             "updated_at": now,
         }
-        self._safe_update("tasks", payload, task_id)
+        if not self._safe_update("tasks", payload, task_id):
+            raise RuntimeError(f"Failed to mark task {task_id} as failed")
 
     def persist_update(self, task_id: str, node_name: str, updates: dict[str, Any]) -> None:
         log_rows = build_agent_log_rows(task_id, node_name, updates)
@@ -332,7 +335,8 @@ class AnalysisPersistenceService:
             "completed_at": now,
             "updated_at": now,
         }
-        self._safe_update("tasks", payload, task_id)
+        if not self._safe_update("tasks", payload, task_id):
+            raise RuntimeError(f"Failed to mark task {task_id} as completed")
 
     def _fetch_report(self, task_id: str) -> dict[str, Any] | None:
         try:
@@ -343,32 +347,42 @@ class AnalysisPersistenceService:
             logger.warning("Failed to fetch report for %s: %s", task_id, exc)
         return None
 
-    def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> None:
+    def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> bool:
         try:
             self.client.table(table_name).insert(payload).execute()
+            return True
         except Exception as exc:
             logger.error("Failed to insert into %s: %s (payload keys: %s)", table_name, exc, list(payload.keys()))
+            return False
 
-    def _safe_insert_many(self, table_name: str, payload: list[dict[str, Any]]) -> None:
+    def _safe_insert_many(self, table_name: str, payload: list[dict[str, Any]]) -> bool:
         try:
             self.client.table(table_name).insert(payload).execute()
+            return True
         except Exception as exc:
             logger.error("Failed to insert %d rows into %s: %s", len(payload), table_name, exc)
+            return False
 
-    def _safe_update(self, table_name: str, payload: dict[str, Any], task_id: str) -> None:
+    def _safe_update(self, table_name: str, payload: dict[str, Any], task_id: str) -> bool:
         try:
             self.client.table(table_name).update(payload).eq("id", task_id).execute()
+            return True
         except Exception as exc:
             logger.error("Failed to update %s for task %s: %s (payload keys: %s)", table_name, task_id, exc, list(payload.keys()))
+            return False
 
-    def _safe_update_by_id(self, table_name: str, payload: dict[str, Any], row_id: str) -> None:
+    def _safe_update_by_id(self, table_name: str, payload: dict[str, Any], row_id: str) -> bool:
         try:
             self.client.table(table_name).update(payload).eq("id", row_id).execute()
+            return True
         except Exception as exc:
             logger.error("Failed to update %s row %s: %s (payload keys: %s)", table_name, row_id, exc, list(payload.keys()))
+            return False
 
-    def _safe_upsert(self, table_name: str, payload: dict[str, Any], *, on_conflict: str) -> None:
+    def _safe_upsert(self, table_name: str, payload: dict[str, Any], *, on_conflict: str) -> bool:
         try:
             self.client.table(table_name).upsert(payload, on_conflict=on_conflict).execute()
+            return True
         except Exception as exc:
             logger.error("Failed to upsert into %s (on_conflict=%s): %s", table_name, on_conflict, exc)
+            return False

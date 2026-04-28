@@ -28,7 +28,7 @@ export function DebateSystem() {
 
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
                 <div className="mb-20">
-                    <div className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-white drop-shadow-[0_0_18px_rgba(255,255,255,0.18)]">
+                    <div className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-foreground">
                         核心创新点三
                     </div>
                     <h2 className="text-center text-3xl md:text-5xl font-bold tracking-tight">
@@ -39,7 +39,7 @@ export function DebateSystem() {
                     </p>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] gap-8 items-stretch">
+                <div className="grid grid-cols-1 lg:grid-cols-[23fr_17fr] gap-8 items-stretch">
                     <div className="rounded-3xl border border-slate-200/80 bg-white/92 backdrop-blur-xl shadow-[0_24px_70px_rgba(15,23,42,0.10)] overflow-hidden min-h-[520px] flex flex-col dark:border-white/10 dark:bg-white/5 dark:shadow-2xl">
                         <div className="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/90 dark:border-white/10 dark:bg-white/5">
                             <div>
@@ -55,7 +55,7 @@ export function DebateSystem() {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-[0.9fr_1.1fr] gap-0 flex-1">
+                        <div className="grid grid-cols-1 md:grid-cols-[9fr_11fr] gap-0 flex-1">
                             <div className="border-b md:border-b-0 md:border-r border-slate-200/80 p-6 bg-slate-100/90 dark:border-white/10 dark:bg-black/20">
                                 <div className="flex items-center justify-between mb-5">
                                     <div className="text-sm font-semibold text-slate-900 dark:text-white">共享证据板</div>

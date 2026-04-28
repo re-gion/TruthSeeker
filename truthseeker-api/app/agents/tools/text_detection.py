@@ -217,6 +217,62 @@ def analyze_text_structure(text: str) -> dict:
     }
 
 
+def analyze_social_engineering_risk(text: str, urls: list[str]) -> dict:
+    """本地识别政务/身份复核类社工诱导风险。"""
+    normalized = text or ""
+    lower_urls = [u.lower() for u in urls]
+    indicators: list[str] = []
+    score = 0.0
+
+    def add(condition: bool, weight: float, label: str) -> None:
+        nonlocal score
+        if condition:
+            score += weight
+            indicators.append(label)
+
+    add(
+        any(term in normalized for term in ["医保", "社保", "电子市民卡", "政务", "市民服务", "公共服务"]),
+        0.14,
+        "冒用政务或公共服务场景",
+    )
+    add(
+        any(term in normalized for term in ["身份", "证件号", "手机号", "姓名", "人脸核验", "复核"]),
+        0.18,
+        "要求核验身份或敏感个人信息",
+    )
+    add(
+        any(term in normalized for term in ["截止", "逾期", "受限", "规定时间", "不要拖", "最后一天"]),
+        0.14,
+        "设置截止时间或功能受限压力",
+    )
+    add(
+        any(term in normalized for term in ["二维码", "扫码", "入口", "链接", "页面"]),
+        0.14,
+        "引导扫码或跳转外部入口",
+    )
+    add(
+        any(term in normalized for term in ["转发", "社区群", "家里老人", "帮他们"]),
+        0.08,
+        "通过熟人转发或弱势群体场景扩大传播",
+    )
+    add(
+        any(url.endswith(".test") or ".test/" in url for url in lower_urls),
+        0.22,
+        "使用 .test 保留测试域名，正规线上服务不应使用",
+    )
+    add(
+        bool(urls) and not any(".gov.cn" in url or ".gov." in url for url in lower_urls),
+        0.12,
+        "政务主题文本未提供可信政府域名",
+    )
+
+    score = max(0.0, min(0.95, score))
+    return {
+        "score": round(score, 4),
+        "indicators": list(dict.fromkeys(indicators)),
+    }
+
+
 # ---------------------------------------------------------------------------
 # 4. Main entry point
 # ---------------------------------------------------------------------------
@@ -269,10 +325,14 @@ async def analyze_text(text_content: str) -> dict:
 
     # 提取 URL
     extracted_urls = extract_urls_from_text(text_content)
+    social_engineering = analyze_social_engineering_risk(text_content, extracted_urls)
 
     # 合并结果
     ai_probability = llm_result.get("ai_probability", 0.5)
-    manipulation_score = llm_result.get("manipulation_score", 0.0)
+    manipulation_score = max(
+        float(llm_result.get("manipulation_score", 0.0) or 0.0),
+        float(social_engineering.get("score", 0.0) or 0.0),
+    )
     key_claims = llm_result.get("key_claims", [])
     llm_anomalies = llm_result.get("anomalies", [])
     structural_anomalies = structural_result.get("anomalies", [])
@@ -296,13 +356,18 @@ async def analyze_text(text_content: str) -> dict:
         confidence *= 0.6
 
     # 合并异常列表
-    all_anomalies = list(dict.fromkeys(llm_anomalies + structural_anomalies))
+    all_anomalies = list(dict.fromkeys(
+        llm_anomalies
+        + structural_anomalies
+        + list(social_engineering.get("indicators") or [])
+    ))
 
     return {
         "is_ai_generated": is_ai_generated,
         "ai_probability": ai_probability,
         "manipulation_score": manipulation_score,
         "structural_analysis": structural_result,
+        "social_engineering": social_engineering,
         "key_claims": key_claims,
         "anomalies": all_anomalies,
         "extracted_urls": extracted_urls,

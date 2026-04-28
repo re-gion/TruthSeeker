@@ -72,6 +72,8 @@ async def create_task(req: CreateTaskRequest, request: Request):
 
     input_type = derive_input_type(evidence_files)
     case_prompt = req.description or req.metadata.get("case_prompt") or ""
+    if len(case_prompt) > 2000:
+        raise HTTPException(status_code=400, detail="全局检测提示词长度不能超过 2000 字符")
     metadata = {
         **req.metadata,
         "case_prompt": case_prompt,

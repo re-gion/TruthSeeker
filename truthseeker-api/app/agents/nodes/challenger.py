@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.state import AgentLog, TruthSeekerState
+from app.agents.edges.conditions import evaluate_phase_convergence
 from app.agents.tools.llm_client import build_sample_references, challenger_cross_validate
 from app.services.audit_log import record_audit_event
 from app.utils.supabase_client import supabase
@@ -223,12 +224,21 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
     quality_score = _score_issues(issues_found, base=base_quality)
+    satisfaction = quality_score
     previous_scores = list(quality_history.get(phase) or [])
     delta = _phase_delta(previous_scores, quality_score)
     quality_history[phase] = previous_scores + [quality_score]
 
-    maxed = phase_round >= max_rounds
-    requires_more_evidence = bool(high) and not maxed
+    convergence = evaluate_phase_convergence(
+        quality_delta=delta,
+        satisfaction=satisfaction,
+        round_count=phase_round,
+        max_rounds=max_rounds,
+        threshold=threshold,
+    )
+    maxed = bool(convergence.get("force_max_rounds"))
+    phase_stable = bool(convergence.get("is_stable"))
+    requires_more_evidence = bool(high) and not maxed and not phase_stable
     residual_risks: list[dict[str, Any]] = []
     if bool(high) and maxed:
         residual_risks = [
@@ -241,8 +251,8 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             for issue in high
         ]
 
-    if delta is not None and delta < threshold and not high:
-        log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，阶段收敛")
+    if phase_stable and not high:
+        log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，满意度 {satisfaction:.1%}，阶段收敛")
     elif requires_more_evidence:
         log("challenge", f"发现 {len(high)} 个高严重度问题，打回 {phase} 阶段重审")
     elif high and maxed:
@@ -313,8 +323,11 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "high_severity_count": len(high),
         "medium_severity_count": len(medium),
         "quality_score": quality_score,
+        "satisfaction": satisfaction,
         "quality_delta": delta,
         "convergence_threshold": threshold,
+        "convergence_stable": phase_stable,
+        "convergence_reason": convergence.get("reason"),
         "maxed_rounds": maxed,
         "residual_risks": residual_risks,
         "llm_cross_validation": llm_cross_validation,
@@ -348,6 +361,19 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "challenger_feedback": feedback,
         "challenges": challenges,
         "logs": logs,
+        "timeline_events": [{
+            "round": round_num,
+            "agent": "challenger",
+            "event_type": "phase_review",
+            "phase": phase,
+            "phase_round": phase_round,
+            "quality_score": quality_score,
+            "satisfaction": satisfaction,
+            "quality_delta": delta,
+            "requires_more_evidence": requires_more_evidence,
+            "maxed_rounds": maxed,
+            "summary": f"Challenger 质询 {phase}: 第 {phase_round} 轮，质量 {quality_score:.1%}",
+        }],
         "expert_messages": expert_messages,
         "current_round": round_num + (1 if requires_more_evidence else 0),
     }

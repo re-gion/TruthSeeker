@@ -6,15 +6,18 @@ On failure, gracefully degrades to a rule-based fallback string.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 
+import httpx
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from app.config import settings
+from app.services.audit_log import record_audit_event
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,42 @@ def _sample_references_text(sample_refs: list[dict] | None) -> str:
     return json.dumps(safe_refs, ensure_ascii=False, indent=2)
 
 
+_MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+async def _fetch_image_base64(url: str) -> str | None:
+    """Download image from URL and return a base64 data URI.
+
+    Returns None on failure or if image exceeds size limit.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, follow_redirects=True)
+            resp.raise_for_status()
+            data = resp.content
+            if len(data) > _MAX_INLINE_IMAGE_BYTES:
+                logger.warning(
+                    "图片大小 %.2f MB 超过 %d MB 上限，跳过 base64 内联",
+                    len(data) / 1024 / 1024,
+                    _MAX_INLINE_IMAGE_BYTES // 1024 // 1024,
+                )
+                return None
+            content_type = resp.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                ext = url.split("?")[0].split(".")[-1].lower()
+                content_type = {
+                    "png": "image/png",
+                    "gif": "image/gif",
+                    "webp": "image/webp",
+                    "bmp": "image/bmp",
+                }.get(ext, "image/jpeg")
+            b64 = base64.b64encode(data).decode("utf-8")
+            return f"data:{content_type};base64,{b64}"
+    except Exception as exc:
+        logger.warning("下载图片转 base64 失败 (%s): %s", type(exc).__name__, exc)
+        return None
+
+
 def _build_multimodal_parts(text: str, sample_refs: list[dict] | None) -> list[dict]:
     """Create OpenAI-compatible content parts with signed URL references when possible."""
     parts: list[dict] = [{"type": "text", "text": text}]
@@ -128,6 +167,11 @@ async def _invoke_llm(
         return await fallback_chain.ainvoke(variables)
     except Exception as exc:
         logger.exception("Fallback 模型 %s 也调用失败: %s", settings.KIMI_FALLBACK_MODEL, exc)
+        record_audit_event(
+            action="llm.degraded",
+            agent="llm_client",
+            metadata={"error": f"{type(exc).__name__}: {exc}", "fallback_model": settings.KIMI_FALLBACK_MODEL},
+        )
         return f"[降级模式: LLM不可用] {fallback_text}"
 
 
@@ -138,11 +182,23 @@ async def _invoke_multimodal_llm(
     fallback_text: str,
 ) -> str:
     """Invoke Kimi with multimodal content parts, then degrade to text-only prompt."""
+    # 将图片引用转为 base64 data URI，避免模型无法访问 signed URL
+    resolved_refs: list[dict] | None = None
+    if sample_refs:
+        resolved_refs = []
+        for ref in sample_refs:
+            ref_copy = dict(ref)
+            if ref_copy.get("modality") == "image" and ref_copy.get("signed_url"):
+                b64_url = await _fetch_image_base64(ref_copy["signed_url"])
+                if b64_url:
+                    ref_copy["signed_url"] = b64_url
+            resolved_refs.append(ref_copy)
+
     llm = get_llm()
     try:
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=_build_multimodal_parts(human_text, sample_refs)),
+            HumanMessage(content=_build_multimodal_parts(human_text, resolved_refs)),
         ]
         response = await llm.ainvoke(messages)
         content = getattr(response, "content", "")
@@ -167,6 +223,11 @@ async def _invoke_multimodal_llm(
             return json.dumps(content, ensure_ascii=False)
     except Exception as exc:
         logger.exception("Fallback 模型 %s 也调用失败: %s", settings.KIMI_FALLBACK_MODEL, exc)
+        record_audit_event(
+            action="llm.degraded",
+            agent="llm_client",
+            metadata={"error": f"{type(exc).__name__}: {exc}", "fallback_model": settings.KIMI_FALLBACK_MODEL, "multimodal": True},
+        )
     return f"[降级模式: LLM不可用] {fallback_text}"
 
 
@@ -187,6 +248,8 @@ async def forensics_interpret(
             "撰写结构清晰、术语准确的中文电子取证报告。"
             "报告应包含：1) 检材概况；2) 工具矩阵与等待结果；3) 跨模态取证鉴伪结论；"
             "4) 关键证据、限制和后续复核建议。"
+            "如果工具结果标记 degraded、analysis_available=false 或 method=local_fallback_no_external_verdict，"
+            "只能写成外部工具未取得真实结论，不得把降级占位字段解释为真实检测通过、面部自然或无伪影。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
     )
@@ -227,6 +290,8 @@ async def osint_interpret(
             "并说明情报溯源图谱的关键节点、关系和引用覆盖情况。"
             "报告应包含：1) 威胁等级判定；2) 关键指标与异常信号分析；"
             "3) 来源可信度评估；4) 关联风险、溯源线索和图谱质量限制。"
+            "如果 VirusTotal 或 Exa 标记 degraded，只能说明外部情报不可用或需复核，"
+            "不得把未实际调用的结果写成安全厂商未检出。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
     )

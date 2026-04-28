@@ -9,6 +9,45 @@ PHASE_SEQUENCE = {
 }
 
 
+def evaluate_phase_convergence(
+    *,
+    quality_delta: float | None,
+    satisfaction: float,
+    round_count: int,
+    max_rounds: int,
+    threshold: float,
+) -> dict:
+    """Evaluate the Challenger phase-stability gate.
+
+    Stable reasoning requires all three user-visible gates:
+    Δ(t) < threshold, satisfaction > 0.8, and round_count >= 2.
+    round_count >= max_rounds is a hard guard to stop repeated retries.
+    """
+    if round_count >= max_rounds:
+        return {
+            "is_stable": False,
+            "force_max_rounds": True,
+            "reason": f"达到最大质询轮次 {max_rounds}，强制结束本阶段",
+        }
+
+    stable_delta = quality_delta is not None and quality_delta < threshold
+    enough_rounds = round_count >= 2
+    high_satisfaction = satisfaction > 0.8
+    is_stable = bool(stable_delta and high_satisfaction and enough_rounds)
+    return {
+        "is_stable": is_stable,
+        "force_max_rounds": False,
+        "stable_delta": stable_delta,
+        "high_satisfaction": high_satisfaction,
+        "enough_rounds": enough_rounds,
+        "reason": (
+            "满足 Δ(t)、满意度和最小轮次要求，推理趋于稳定"
+            if is_stable
+            else "未同时满足稳定收敛条件"
+        ),
+    }
+
+
 # NOTE: should_converge 当前未被 challenger_route 或 graph 使用（收敛逻辑由 commander 节点内联处理）。
 # 保留此函数供未来 graph 重构时启用。
 def should_converge(state: TruthSeekerState) -> str:

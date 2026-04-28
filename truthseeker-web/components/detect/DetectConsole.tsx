@@ -236,18 +236,18 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         <div className="min-h-screen relative flex flex-col bg-black overflow-hidden">
             <div className="absolute inset-0 pointer-events-none z-0">
                 <StarBackground
-                    mouseInteraction={true}
-                    mouseRepulsion={viewMode === "2d"}
-                    density={1.5}
-                    glowIntensity={0.2}
+                    mouseInteraction={false}
+                    mouseRepulsion={false}
+                    density={0.5}
+                    glowIntensity={0.3}
                     saturation={0}
-                    hueShift={120}
-                    twinkleIntensity={0}
-                    rotationSpeed={0}
-                    repulsionStrength={0}
+                    hueShift={140}
+                    twinkleIntensity={0.3}
+                    rotationSpeed={0.05}
+                    repulsionStrength={2}
                     autoCenterRepulsion={0}
-                    starSpeed={0.5}
-                    speed={0.5}
+                    starSpeed={0.3}
+                    speed={0.7}
                 />
             </div>
             

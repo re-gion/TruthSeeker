@@ -18,7 +18,7 @@ export function TechStack() {
         },
         {
             name: "Agent与检测工具",
-            tools: ["Kimi-K2.5", "Qwen3-VL", "Reality Defender", "VirusTotal", "Multi-Agent Debate"]
+            tools: ["Kimi-K2.6", "Qwen3-VL", "Reality Defender", "VirusTotal", "Multi-Agent Debate"]
         }
     ]
 

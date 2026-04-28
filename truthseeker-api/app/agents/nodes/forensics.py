@@ -13,13 +13,14 @@ from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.llm_client import build_sample_references, forensics_interpret
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
+from app.config import settings
 from app.services.audit_log import record_audit_event
 
 logger = logging.getLogger(__name__)
 
 MEDIA_MODALITIES = {"video", "audio", "image"}
 TEXT_MAX_CHARS = 10000
-TOOL_TIMEOUT_SECONDS = 210.0
+TOOL_TIMEOUT_SECONDS = settings.FORENSICS_TOOL_TIMEOUT_SECONDS
 
 
 def _now() -> str:
@@ -103,6 +104,9 @@ async def _settle_tool(
 
 def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
     if tool == "reality_defender":
+        if result.get("degraded") or not result.get("analysis_available", True):
+            reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
+            return f"Reality Defender 未取得真实检测结论，降级原因={reason}"
         return (
             f"deepfake_probability={result.get('deepfake_probability', 0):.2f}, "
             f"confidence={result.get('confidence', 0):.2f}"
@@ -261,19 +265,27 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         for item in settled_results
         if item.get("tool") == "reality_defender"
     ]
+    rd_success_results = [
+        item
+        for item in rd_results
+        if not item.get("degraded") and item.get("analysis_available", True)
+    ]
     vt_results = [
         item.get("result") or {}
         for item in settled_results
         if str(item.get("tool", "")).startswith("virustotal")
     ]
-    deepfake_prob = max([float(item.get("deepfake_probability", 0.0) or 0.0) for item in rd_results] or [0.0])
-    rd_conf = max([float(item.get("confidence", 0.0) or 0.0) for item in rd_results] or [0.5])
+    deepfake_prob = max([float(item.get("deepfake_probability", 0.0) or 0.0) for item in rd_success_results] or [0.0])
+    rd_conf = max([float(item.get("confidence", 0.0) or 0.0) for item in rd_success_results] or [0.2])
     vt_threat = max([float(item.get("threat_score", 0.0) or 0.0) for item in vt_results] or [0.0])
     vt_malicious = sum(int(item.get("malicious", 0) or 0) for item in vt_results)
 
     is_deepfake = deepfake_prob > 0.5
     is_suspicious_ioc = vt_threat > 0.4 or vt_malicious > 0
-    confidence = max(0.2, min(0.95, max(rd_conf, 0.55 + vt_threat * 0.25)))
+    if rd_success_results:
+        confidence = max(0.2, min(0.95, max(rd_conf, 0.55 + vt_threat * 0.25)))
+    else:
+        confidence = max(0.2, min(0.55, max(rd_conf, 0.35 + vt_threat * 0.30)))
     degraded = any(item.get("status") in {"degraded", "failed"} for item in settled_results)
     failed_count = sum(1 for item in settled_results if item.get("status") == "failed")
     degraded_count = sum(1 for item in settled_results if item.get("status") == "degraded")
@@ -315,9 +327,10 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "confidence": confidence,
         "forensics_score": forensics_score,
         "model_used": "reality_defender+virustotal+kimi-k2.6",
-        "model_scores": rd_results[:5],
-        "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_results),
-        "audio_score": next((item.get("audio_score") for item in rd_results if item.get("audio_score") is not None), None),
+        "model_scores": rd_success_results[:5],
+        "degraded_model_scores": [item for item in rd_results if item.get("degraded")][:5],
+        "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_success_results),
+        "audio_score": next((item.get("audio_score") for item in rd_success_results if item.get("audio_score") is not None), None),
         "indicators": indicators[:8],
         "tool_results": settled_results,
         "tool_summary": {

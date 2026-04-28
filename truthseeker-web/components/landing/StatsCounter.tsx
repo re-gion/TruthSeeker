@@ -69,7 +69,7 @@ export function StatsCounter() {
     ]
 
     return (
-        <section ref={sectionRef} className="relative py-24 overflow-hidden">
+        <section ref={sectionRef} className="relative py-12 overflow-hidden">
             {/* Container */}
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-12 md:gap-8">

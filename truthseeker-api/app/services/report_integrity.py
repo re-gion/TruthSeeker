@@ -28,6 +28,8 @@ HASH_FIELDS = (
     "key_evidence",
     "recommendations",
     "verdict_payload",
+    "generated_at",
+    "share_token",
 )
 
 

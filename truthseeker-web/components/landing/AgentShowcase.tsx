@@ -55,22 +55,17 @@ export function AgentShowcase() {
             <div className="container mx-auto px-6 max-w-7xl relative z-10">
 
                 {/* Section Header */}
-                <div className="text-center mb-16 md:mb-24">
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        viewport={{ once: true }}
-                        className="inline-block px-5 py-2 rounded-full bg-[#2a2a2e] text-white/80 text-xs font-mono tracking-wider mb-6 border border-[#3a3a3e]"
-                    >
-                        核心架构
-                    </motion.div>
+                <div className="mb-16 md:mb-24">
+                    <div className="mb-6 text-3xl sm:text-4xl md:text-6xl font-black tracking-[0.12em] text-foreground">
+                        核心创新点一
+                    </div>
 
                     <motion.h2
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.1 }}
-                        className="text-3xl md:text-5xl font-bold tracking-tight mb-6"
+                        className="text-center text-3xl md:text-5xl font-bold tracking-tight mb-6"
                     >
                         多智能体 <span className="gradient-text">交叉验证机制</span>
                     </motion.h2>
@@ -80,9 +75,9 @@ export function AgentShowcase() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: 0.2 }}
-                        className="text-muted-foreground text-lg max-w-2xl mx-auto leading-relaxed"
+                        className="text-center text-muted-foreground text-lg max-w-6xl mx-auto leading-relaxed whitespace-nowrap"
                     >
-                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家“疑案会诊”的群智决策。
+                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家"疑案会诊"的群智决策。
                     </motion.p>
                 </div>
 

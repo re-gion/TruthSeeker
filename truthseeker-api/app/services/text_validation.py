@@ -1,12 +1,13 @@
 """Text evidence validation helpers."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 TEXT_ALLOWED_EXTENSIONS = frozenset({".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".log"})
 TEXT_SAMPLE_BYTES = 64 * 1024
-TEXT_MAX_CONTROL_RATIO = 0.02
+TEXT_MAX_CONTROL_RATIO = float(os.environ.get("TEXT_MAX_CONTROL_RATIO", "0.02"))
 TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030")
 
 

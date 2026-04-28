@@ -120,6 +120,11 @@ def _ensure_signed_urls(files: list[UploadedEvidenceFile]) -> list[UploadedEvide
                     normalized["file_url"] = file_url
             except Exception as exc:
                 logger.warning("Failed to sign storage path %s: %s", storage_path, exc)
+                record_audit_event(
+                    action="signed_url.failed",
+                    task_id="",
+                    metadata={"storage_path": storage_path, "error": f"{type(exc).__name__}: {exc}"},
+                )
         signed_files.append(normalized)  # type: ignore[arg-type]
     return signed_files
 
@@ -475,6 +480,15 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     "task_id": task_id,
                     "message": "检测流程未生成最终裁决",
                 }))
+        except asyncio.CancelledError:
+            logger.info("SSE stream cancelled for task %s (client disconnected)", task_id)
+            record_audit_event(
+                action="detect_cancelled",
+                task_id=task_id,
+                user_id=user_id,
+                metadata={"reason": "client_disconnect"},
+            )
+            raise
         except Exception as exc:
             logger.error("SSE stream error for task %s: %s", task_id, exc)
             if await recover_resume_from_persistence(exc):

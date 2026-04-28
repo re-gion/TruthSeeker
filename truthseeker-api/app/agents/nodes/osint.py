@@ -62,6 +62,8 @@ async def _settle_tool(
         result = result if isinstance(result, dict) else {"value": result}
         status = str(result.get("status") or "success")
         degraded = bool(result.get("degraded")) or status in {"degraded", "no_key"}
+        if degraded and status == "success":
+            status = "degraded"
         if status not in {"success", "degraded", "failed"}:
             status = "degraded" if degraded else "success"
         return {
@@ -224,6 +226,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
         ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
         if ai_prob > 0.6:
             threat_indicators.append(f"文本 AI 生成概率高 ({ai_prob:.1%})")
+        social = text_analysis_result.get("social_engineering") or {}
+        social_score = float(social.get("score", 0.0) or 0.0)
+        if social_score >= 0.45:
+            threat_indicators.append(f"文本社工诱导风险高 ({social_score:.1%})")
+        threat_indicators.extend(str(v) for v in (social.get("indicators") or [])[:5])
         threat_indicators.extend(str(v) for v in (text_analysis_result.get("anomalies") or [])[:3])
 
     queries = build_deidentified_queries(
@@ -243,7 +250,16 @@ async def osint_node(state: TruthSeekerState) -> dict:
     search_results = (exa_tool.get("result") or {}).get("results") or []
 
     exa_signal = 0.12 if search_results else 0.0
-    threat_score = min(1.0, max(vt_threat_score, exa_signal))
+    text_social_score = 0.0
+    text_manipulation_score = 0.0
+    text_ai_score = 0.0
+    if text_analysis_result:
+        text_social_score = float((text_analysis_result.get("social_engineering") or {}).get("score", 0.0) or 0.0)
+        text_manipulation_score = float(text_analysis_result.get("manipulation_score", 0.0) or 0.0)
+        ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
+        text_ai_score = 0.55 if ai_prob >= 0.75 and urls_to_check else 0.0
+    text_risk_score = max(text_social_score, text_manipulation_score, text_ai_score)
+    threat_score = min(1.0, max(vt_threat_score, exa_signal, text_risk_score))
     if not threat_indicators and search_results:
         threat_indicators.append("Exa 检索返回相关公开情报来源，需结合引用人工复核")
     if not threat_indicators:
@@ -265,7 +281,9 @@ async def osint_node(state: TruthSeekerState) -> dict:
 
     partial_result = {
         "threat_score": threat_score,
-        "is_malicious": threat_score > 0.7,
+        "social_engineering_score": text_social_score,
+        "text_risk_score": text_risk_score,
+        "is_malicious": threat_score > 0.75,
         "is_suspicious": threat_score > 0.4,
         "confidence": osint_confidence,
         "threat_indicators": threat_indicators,
@@ -275,6 +293,12 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "text_analysis": text_analysis_result,
         "model_claims": model_claims,
         "tool_results": tool_results,
+        "tool_summary": {
+            "total": len(tool_results),
+            "success": sum(1 for item in tool_results if item.get("status") == "success"),
+            "degraded": sum(1 for item in tool_results if item.get("status") == "degraded"),
+            "failed": sum(1 for item in tool_results if item.get("status") == "failed"),
+        },
         "degraded": degraded,
         "timestamp": _now(),
     }

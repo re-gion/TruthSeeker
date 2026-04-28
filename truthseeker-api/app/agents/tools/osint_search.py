@@ -13,6 +13,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 EXA_TIMEOUT_SECONDS = 20.0
+MAX_RESULT_SUMMARY_CHARS = 280
+INTERNAL_DIAGNOSTIC_PATTERNS = (
+    "VirusTotal 未实际调用",
+    "未配置 VirusTotal",
+    "结果不可用",
+    "工具失败",
+    "降级",
+    "degraded",
+    "mock",
+)
 
 
 def _now() -> str:
@@ -28,6 +38,25 @@ def _redact_query(text: str, *, max_length: int = 240) -> str:
     return cleaned[:max_length]
 
 
+def _is_internal_diagnostic(text: str) -> bool:
+    return any(pattern.lower() in (text or "").lower() for pattern in INTERNAL_DIAGNOSTIC_PATTERNS)
+
+
+def _is_generic_case_prompt(text: str) -> bool:
+    generic_markers = ("请以", "数字取证专家", "判断该图片和文本", "AI 伪造", "局部篡改")
+    return sum(1 for marker in generic_markers if marker in (text or "")) >= 2
+
+
+def _shorten_summary(text: str, *, max_length: int = MAX_RESULT_SUMMARY_CHARS) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    noisy_markers = ["登录", "注册", "首页", "导航", "探索发现", "用户中心"]
+    if sum(1 for marker in noisy_markers if marker in cleaned[:240]) >= 3:
+        cleaned = cleaned[:max_length]
+    if len(cleaned) <= max_length:
+        return cleaned
+    return cleaned[: max_length - 1].rstrip() + "…"
+
+
 def build_deidentified_queries(
     *,
     case_prompt: str,
@@ -37,19 +66,19 @@ def build_deidentified_queries(
 ) -> list[str]:
     """Build compact, de-identified search queries for public OSINT."""
     candidates: list[str] = []
-    if case_prompt:
-        candidates.append(case_prompt)
-    for indicator in threat_indicators or []:
-        if isinstance(indicator, str):
-            candidates.append(indicator)
     for url in urls or []:
         host = re.sub(r"^https?://", "", str(url)).split("/")[0]
         if host:
-            candidates.append(f"{host} security report")
+            candidates.append(f"{host} reputation phishing fraud")
+    for indicator in threat_indicators or []:
+        if isinstance(indicator, str) and not _is_internal_diagnostic(indicator):
+            candidates.append(indicator)
     for name in file_names or []:
         stem = re.sub(r"\.[A-Za-z0-9]{1,8}$", "", str(name))
         if stem:
             candidates.append(f"{stem} deepfake provenance")
+    if case_prompt and not _is_generic_case_prompt(case_prompt) and not _is_internal_diagnostic(case_prompt):
+        candidates.append(case_prompt)
 
     queries: list[str] = []
     seen: set[str] = set()
@@ -105,7 +134,7 @@ async def search_osint(queries: list[str], *, num_results: int = 5) -> dict[str,
                     json={
                         "query": query,
                         "numResults": num_results,
-                        "contents": {"text": {"maxCharacters": 800}},
+                        "contents": {"text": {"maxCharacters": MAX_RESULT_SUMMARY_CHARS}},
                     },
                 )
                 resp.raise_for_status()
@@ -114,7 +143,7 @@ async def search_osint(queries: list[str], *, num_results: int = 5) -> dict[str,
                     results.append({
                         "title": item.get("title") or item.get("url") or "Exa result",
                         "url": item.get("url"),
-                        "summary": item.get("text") or item.get("summary") or "",
+                        "summary": _shorten_summary(item.get("summary") or item.get("text") or ""),
                         "score": item.get("score"),
                         "published_date": item.get("publishedDate") or item.get("published_date"),
                         "retrieved_at": _now(),

@@ -16,12 +16,15 @@ class _MissingSupabaseClient:
 
 
 def get_supabase() -> Client | _MissingSupabaseClient:
-    """Initialize and return a Supabase client"""
+    """Initialize and return a Supabase client with connection pooling."""
     if create_client is None:
         return _MissingSupabaseClient()
     if not settings.SUPABASE_URL or not (settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY):
         return _MissingSupabaseClient()
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY)
+    return create_client(
+        settings.SUPABASE_URL,
+        settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY,
+    )
 
 # Singleton instance
 supabase = get_supabase()

@@ -15,6 +15,10 @@ from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
 
+MAX_REPORT_FIELD_CHARS = 1200
+MAX_SEARCH_SUMMARY_CHARS = 280
+SKIP_REPORT_KEYS = {"signed_url", "raw_response"}
+
 
 # ---------------------------------------------------------------------------
 # 数据获取
@@ -128,18 +132,42 @@ async def generate_markdown_report(task_id: str) -> str:
     forensics = _extract_agent_result(analysis_states, "forensics")
     osint = _extract_agent_result(analysis_states, "osint")
     degraded_items: list[str] = []
+    tool_failures: list[str] = []
+
+    def _collect_tool_failures(agent_result: dict | None) -> None:
+        if not agent_result:
+            return
+        tool_results = agent_result.get("tool_results") or agent_result.get("tool_matrix") or []
+        for item in tool_results:
+            if not isinstance(item, dict):
+                continue
+            status = item.get("status")
+            if status in ("degraded", "failed"):
+                tool_name = item.get("tool", "unknown")
+                target = item.get("target", "")
+                error = item.get("error", "")
+                summary = item.get("summary", "")
+                detail = f"{tool_name} ({target})"
+                if error:
+                    detail += f" — 错误: {error}"
+                elif summary:
+                    detail += f" — {summary}"
+                tool_failures.append(detail)
+
     if forensics and forensics.get("degraded"):
         tool_summary = forensics.get("tool_summary") or {}
         degraded_items.append(
             f"Forensics 取证降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
             f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
         )
+        _collect_tool_failures(forensics)
     if osint and osint.get("degraded"):
         tool_summary = osint.get("tool_summary") or {}
         degraded_items.append(
             f"OSINT 情报降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
             f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
         )
+        _collect_tool_failures(osint)
     if result:
         forensics_degraded = (result.get("forensics_summary") or {}).get("degraded")
         osint_degraded = (result.get("osint_summary") or {}).get("degraded")
@@ -152,6 +180,13 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
         for item in degraded_items:
             lines.append(f"- {item}")
+        if tool_failures:
+            lines.append("")
+            lines.append("**具体工具失败详情**:")
+            for detail in tool_failures[:10]:
+                lines.append(f"  - {detail}")
+            if len(tool_failures) > 10:
+                lines.append(f"  - ... 及其他 {len(tool_failures) - 10} 个工具失败")
         lines.append("")
         lines.append("> **注意**: 降级模式下部分结果基于启发式模拟或本地推理，可靠性低于完整外部检测。"
                     "建议在网络恢复或服务正常后重新检测。")
@@ -180,20 +215,24 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
 
     # ---- 证据时间线 ----
-    if agent_logs:
-        lines.append("## 六、证据时间线（按轮次）")
+    timeline_sections = _build_challenger_timeline_sections(analysis_states, agent_logs)
+    if timeline_sections or agent_logs:
+        lines.append("## 六、证据时间线（按质询阶段）")
         lines.append("")
-        grouped = _group_logs_by_round(agent_logs)
-        for round_num, logs in grouped.items():
-            lines.append(f"### 第 {round_num} 轮")
-            lines.append("")
-            for log in logs:
-                agent = log.get("agent", log.get("agent_name", "unknown"))
-                log_type = log.get("type", log.get("log_type", "info"))
-                content = log.get("content", "")
-                ts = _fmt_time(log.get("timestamp", log.get("created_at")))
-                lines.append(f"- **[{ts}] {agent}** ({log_type}): {content}")
-            lines.append("")
+        if timeline_sections:
+            lines.extend(timeline_sections)
+        else:
+            grouped = _group_logs_by_round(agent_logs)
+            for round_num, logs in grouped.items():
+                lines.append(f"### 全局流程记录 {round_num}")
+                lines.append("")
+                for log in logs:
+                    agent = log.get("agent", log.get("agent_name", "unknown"))
+                    log_type = log.get("type", log.get("log_type", "info"))
+                    content = _truncate_text(str(log.get("content", "")), 360)
+                    ts = _fmt_time(log.get("timestamp", log.get("created_at")))
+                    lines.append(f"- **[{ts}] {agent}** ({log_type}): {content}")
+                lines.append("")
 
     # ---- 建议 ----
     lines.append("## 七、建议与说明")
@@ -303,24 +342,180 @@ def _maybe_fmt_time(value) -> str:
     return value
 
 
+def _truncate_text(value: str, limit: int = MAX_REPORT_FIELD_CHARS) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _render_tool_results(items: list, indent: int = 0) -> str:
+    prefix = "  " * indent
+    lines: list[str] = []
+    for item in items[:12]:
+        if not isinstance(item, dict):
+            lines.append(f"{prefix}- {_truncate_text(str(item), 240)}")
+            continue
+        tool = item.get("tool", "unknown")
+        target = item.get("target", "")
+        status = item.get("status", "unknown")
+        degraded = item.get("degraded", False)
+        summary = item.get("summary") or item.get("error") or ""
+        line = f"{prefix}- {tool} [{status}]"
+        if degraded:
+            line += "（降级）"
+        if target:
+            line += f" — {target}"
+        if summary:
+            line += f": {_truncate_text(str(summary), 260)}"
+        lines.append(line)
+    if len(items) > 12:
+        lines.append(f"{prefix}- ... 及其他 {len(items) - 12} 条工具记录")
+    return "\n".join(lines)
+
+
+def _render_search_results(items: list, indent: int = 0) -> str:
+    prefix = "  " * indent
+    lines: list[str] = []
+    for item in items[:5]:
+        if not isinstance(item, dict):
+            continue
+        title = _truncate_text(str(item.get("title") or item.get("url") or "搜索结果"), 120)
+        url = item.get("url")
+        query = item.get("query")
+        summary = _truncate_text(str(item.get("summary") or ""), MAX_SEARCH_SUMMARY_CHARS)
+        lines.append(f"{prefix}- **{title}**")
+        if url:
+            lines.append(f"{prefix}  - URL: {url}")
+        if query:
+            lines.append(f"{prefix}  - 查询: {_truncate_text(str(query), 160)}")
+        if summary:
+            lines.append(f"{prefix}  - 摘要: {summary}")
+    if len(items) > 5:
+        lines.append(f"{prefix}- ... 及其他 {len(items) - 5} 条搜索结果")
+    return "\n".join(lines)
+
+
+def _render_provenance_graph_summary(graph: dict, indent: int = 0) -> str:
+    prefix = "  " * indent
+    nodes = graph.get("nodes") or []
+    edges = graph.get("edges") or []
+    citations = graph.get("citations") or []
+    quality = graph.get("quality") or {}
+    lines = [
+        f"{prefix}- 节点数: {len(nodes)}",
+        f"{prefix}- 边数: {len(edges)}",
+        f"{prefix}- 引用数: {len(citations)}",
+    ]
+    if quality:
+        lines.append(
+            f"{prefix}- 图谱质量: completeness={quality.get('completeness', 'N/A')}, "
+            f"citation_coverage={quality.get('citation_coverage', 'N/A')}, "
+            f"model_inferred_ratio={quality.get('model_inferred_ratio', 'N/A')}"
+        )
+    return "\n".join(lines)
+
+
 def _dict_to_markdown(data: dict, indent: int = 0) -> str:
     """将字典递归转为 Markdown 列表，自动把 ISO 时间戳转为北京时间"""
     lines = []
     prefix = "  " * indent
     for key, value in data.items():
+        if key in SKIP_REPORT_KEYS:
+            continue
+        if key == "tool_results" and isinstance(value, list):
+            lines.append(f"{prefix}- **{key}**:")
+            lines.append(_render_tool_results(value, indent + 1))
+            continue
+        if key == "search_results" and isinstance(value, list):
+            lines.append(f"{prefix}- **{key}**:")
+            lines.append(_render_search_results(value, indent + 1))
+            continue
+        if key == "provenance_graph" and isinstance(value, dict):
+            lines.append(f"{prefix}- **{key}**:")
+            lines.append(_render_provenance_graph_summary(value, indent + 1))
+            continue
         if isinstance(value, dict):
             lines.append(f"{prefix}- **{key}**:")
             lines.append(_dict_to_markdown(value, indent + 1))
         elif isinstance(value, list):
             lines.append(f"{prefix}- **{key}**:")
-            for item in value:
+            for item in value[:12]:
                 if isinstance(item, dict):
                     lines.append(_dict_to_markdown(item, indent + 1))
                 else:
-                    lines.append(f"{prefix}  - {_maybe_fmt_time(item)}")
+                    lines.append(f"{prefix}  - {_truncate_text(_maybe_fmt_time(item), 360)}")
+            if len(value) > 12:
+                lines.append(f"{prefix}  - ... 及其他 {len(value) - 12} 项")
         else:
-            lines.append(f"{prefix}- **{key}**: {_maybe_fmt_time(value)}")
+            rendered = _maybe_fmt_time(value)
+            if isinstance(rendered, str):
+                rendered = _truncate_text(rendered)
+            lines.append(f"{prefix}- **{key}**: {rendered}")
     return "\n".join(lines)
+
+
+def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list) -> list[str]:
+    """Build timeline grouped by Challenger's phase-specific review rounds."""
+    phase_names = {
+        "forensics": "Forensics",
+        "osint": "OSINT",
+        "commander": "Commander",
+    }
+    sections: list[str] = []
+    seen: set[tuple[str, int, str]] = set()
+    for state in analysis_states:
+        snapshot = state.get("result_snapshot") or {}
+        feedback = snapshot.get("challenger")
+        if not isinstance(feedback, dict):
+            continue
+        phase = str(feedback.get("phase") or "unknown")
+        phase_round = int(feedback.get("phase_round") or state.get("round_number") or 1)
+        timestamp = _fmt_time(feedback.get("timestamp") or state.get("created_at"))
+        key = (phase, phase_round, timestamp)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = phase_names.get(phase, phase)
+        sections.append(f"### Challenger ↔ {label} 第 {phase_round} 轮")
+        sections.append("")
+        sections.append(f"- 时间: {timestamp}")
+        sections.append(f"- 质询对象: {label}")
+        sections.append(f"- 满意度/质量分: {_fmt_confidence(feedback.get('satisfaction', feedback.get('quality_score', 'N/A')))}")
+        if feedback.get("quality_delta") is not None:
+            sections.append(f"- 置信度变化 Δ(t): {float(feedback.get('quality_delta')):.3f}")
+        sections.append(f"- 问题数: {feedback.get('issue_count', 0)}（高严重度 {feedback.get('high_severity_count', 0)}）")
+        reason = feedback.get("convergence_reason") or (
+            "需要补充证据" if feedback.get("requires_more_evidence") else "进入下一阶段"
+        )
+        sections.append(f"- 质询结论: {reason}")
+        issues = feedback.get("issues_found") or []
+        for issue in issues[:3]:
+            if isinstance(issue, dict):
+                sections.append(
+                    f"  - {issue.get('severity', 'unknown')}: "
+                    f"{_truncate_text(str(issue.get('description') or issue.get('type') or ''), 220)}"
+                )
+        sections.append("")
+
+    if sections:
+        return sections
+
+    # Backward-compatible fallback for old rows that only have agent_logs.
+    for log in agent_logs:
+        content = str(log.get("content", ""))
+        match = re.search(r"phase=(\w+), phase_round=(\d+)", content)
+        if not match:
+            continue
+        phase, phase_round = match.group(1), int(match.group(2))
+        label = phase_names.get(phase, phase)
+        sections.append(f"### Challenger ↔ {label} 第 {phase_round} 轮")
+        sections.append("")
+        sections.append(f"- 时间: {_fmt_time(log.get('timestamp', log.get('created_at')))}")
+        sections.append(f"- 质询对象: {label}")
+        sections.append(f"- 质询结论: {_truncate_text(content, 260)}")
+        sections.append("")
+    return sections
 
 
 def _group_logs_by_round(logs: list) -> dict:

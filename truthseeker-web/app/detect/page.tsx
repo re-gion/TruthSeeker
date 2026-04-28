@@ -1,6 +1,5 @@
 import { FileUploader } from "@/components/upload/FileUploader"
 import Header from "@/components/layout/Header"
-import { HomeClientWidgets } from "./HomeClientWidgets"
 import { LandingFooter } from "@/components/landing/LandingFooter"
 import { FeaturePills } from "@/components/detect/FeaturePills"
 import ShinyText from "@/components/ui/ShinyText"
@@ -54,9 +53,6 @@ export default async function Home() {
 
         {/* Feature pills */}
         <FeaturePills />
-
-        {/* Live Demo Features wrapped in Client Component */}
-        <HomeClientWidgets />
       </div>
 
       {/* Footer */}

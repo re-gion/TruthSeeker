@@ -81,8 +81,10 @@ class AuthMiddleware:
                     algorithms=["ES256"],
                     audience="authenticated",
                 )
-            except jwt.InvalidTokenError:
+            except jwt.InvalidSignatureError:
                 pass
+            except jwt.InvalidTokenError:
+                raise
 
         return jwt.decode(
             token,

@@ -692,7 +692,7 @@ function ExternalInsightCard({ module, index }: { module: ExternalInsightModule;
       transition={{ duration: 0.45, delay: index * 0.08 }}
       className="rounded-[28px] border border-white/8 bg-white/4 p-6 backdrop-blur-xl"
     >
-      <div className="grid gap-6 xl:grid-cols-[0.38fr_0.62fr] xl:items-center">
+      <div className="grid gap-6 xl:grid-cols-[38fr_62fr] xl:items-center">
         <div className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-2">
@@ -826,23 +826,22 @@ export function DashboardClient({ viewModel }: DashboardClientProps) {
           transition={{ duration: 0.5 }}
           className="overflow-hidden rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(18,22,38,0.95),rgba(10,12,22,0.82))] px-6 py-8 backdrop-blur-xl md:px-8"
         >
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-[#D4FF3C]/25 bg-[#D4FF3C]/10 px-4 py-1.5 text-xs tracking-[0.18em] text-[#D4FF3C] uppercase">
-                  TruthSeeker Data Screen
-                </span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs tracking-[0.18em] text-white/58 uppercase">
-                  外部权威 + 内部汇总
-                </span>
-              </div>
-              <h1 className="max-w-4xl text-4xl font-semibold tracking-tight text-white md:text-6xl">
-                深度伪造风险与系统能力数据大屏
-              </h1>
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full border border-[#D4FF3C]/25 bg-[#D4FF3C]/10 px-4 py-1.5 text-xs tracking-[0.18em] text-[#D4FF3C] uppercase">
+                TruthSeeker Data Screen
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs tracking-[0.18em] text-white/58 uppercase">
+                外部权威 + 内部汇总
+              </span>
             </div>
 
-            <div className="space-y-3 lg:text-right">
-              <div className="flex flex-wrap gap-2 lg:justify-end">
+            <h1 className="whitespace-nowrap text-3xl font-semibold tracking-tight text-white md:text-[2.75rem]">
+              深度伪造风险与系统能力数据大屏
+            </h1>
+
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-wrap gap-2">
                 {["权威公开来源", "真实业务聚合", "ECharts 多图种"].map((tag) => (
                   <span
                     key={tag}

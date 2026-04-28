@@ -14,6 +14,7 @@ from typing import Optional
 
 import httpx
 
+from app.agents.tools.fallback import shared_degradation
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def _get_api_key() -> str:
 
 async def _download_file(file_url: str) -> tuple[bytes, str]:
     """从 Supabase 签名 URL 下载文件，返回 (字节数据, 文件名)"""
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS) as client:
         resp = await client.get(file_url, follow_redirects=True)
         resp.raise_for_status()
 
@@ -128,22 +129,25 @@ async def _upload_to_presigned(
     client: httpx.AsyncClient, signed_url: str, file_data: bytes
 ) -> None:
     """步骤2: 上传文件到预签名 URL"""
-    resp = await client.put(signed_url, content=file_data, timeout=60.0)
+    resp = await client.put(
+        signed_url,
+        content=file_data,
+        timeout=settings.REALITY_DEFENDER_UPLOAD_TIMEOUT_SECONDS,
+    )
     resp.raise_for_status()
 
 
 async def _poll_result(
-    client: httpx.AsyncClient, api_key: str, request_id: str, max_attempts: int = 15
+    client: httpx.AsyncClient, api_key: str, request_id: str, max_attempts: int | None = None
 ) -> dict:
     """步骤3: 轮询检测结果
 
-    指数退避: 3s → 5s → 8s → 13s → 21s → ...
-    总最大等待约 5 分钟
+    使用固定间隔，默认总轮询预算小于 Forensics 外层工具超时。
     """
-    delays = [3, 5, 8, 13, 21, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]
+    max_attempts = max_attempts or settings.REALITY_DEFENDER_POLL_MAX_ATTEMPTS
+    delay = settings.REALITY_DEFENDER_POLL_DELAY_SECONDS
 
     for attempt in range(max_attempts):
-        delay = delays[attempt] if attempt < len(delays) else 30
         await asyncio.sleep(delay)
 
         resp = await client.get(
@@ -275,6 +279,11 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
     """
     api_key = _get_api_key()
     if not api_key:
+        logger.warning(
+            "[Reality Defender] API key not configured, using mock analysis for %s (%s)",
+            file_url,
+            media_type,
+        )
         return await mock_deepfake_analysis(
             file_url,
             media_type,
@@ -283,7 +292,7 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
         )
 
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_CLIENT_TIMEOUT_SECONDS) as client:
             # 步骤1: 下载源文件
             file_data, filename = await _download_file(file_url)
 
@@ -317,10 +326,12 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
             rd_result = await _poll_result(client, api_key, request_id)
 
             # 解析结果
+            shared_degradation.report_success("reality_defender")
             return _parse_rd_result(rd_result)
 
     except httpx.HTTPStatusError as e:
         logger.warning("[Reality Defender] HTTP Error %d: %s", e.response.status_code, e.response.text[:200])
+        shared_degradation.report_failure("reality_defender", e)
         return await mock_deepfake_analysis(
             file_url,
             media_type,
@@ -329,6 +340,7 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
         )
     except httpx.TimeoutException as e:
         logger.warning("[Reality Defender] 超时: %s", e)
+        shared_degradation.report_failure("reality_defender", e)
         return await mock_deepfake_analysis(
             file_url,
             media_type,
@@ -337,6 +349,7 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
         )
     except Exception as e:
         logger.error("[Reality Defender] 错误: %s: %s", type(e).__name__, e)
+        shared_degradation.report_failure("reality_defender", e)
         return await mock_deepfake_analysis(
             file_url,
             media_type,
@@ -352,41 +365,45 @@ async def mock_deepfake_analysis(
     fallback_reason: str = "mock_mode",
     api_key_configured: bool = False,
 ) -> dict:
-    """模拟 Deepfake 检测结果（降级/测试用）"""
+    """保守降级结果。
+
+    外部 Reality Defender 不可用时，不输出“面部自然/帧间正常”等真实检测结论。
+    这些字段只能说明没有拿到外部模型结论，不能反向证明图片或视频真实。
+    """
     await asyncio.sleep(0.1)
 
     seed = f"{media_type}:{file_url}"
-    deepfake_prob = _stable_float(f"{seed}:probability", minimum=0.1, maximum=0.95)
-    is_deepfake = deepfake_prob > 0.5
-
-    indicators = []
-    if is_deepfake:
-        candidates = [
-            "面部边缘融合不自然，检测到 GAN 伪影",
-            "眨眼频率异常（0.3 次/秒，正常为 0.4-0.5 次/秒）",
-            "音画嘴唇同步偏差 > 80ms",
-            "频谱分析显示声纹克隆特征",
-            "帧间时序一致性低于阈值（0.62）",
-        ]
-        indicators = _stable_sample(candidates, seed, _stable_int(f"{seed}:indicator-count", 2, 4))
-    else:
-        indicators = ["帧间一致性正常", "面部特征自然", "无 GAN 伪影检测"]
+    fallback_prob = _stable_float(f"{seed}:fallback-probability", minimum=0.45, maximum=0.55)
+    media_label = {
+        "image": "图像",
+        "video": "视频",
+        "audio": "音频",
+        "text": "文本",
+    }.get(media_type, "媒体")
+    indicators = [
+        f"Reality Defender 未返回真实{media_label}检测结论",
+        f"降级原因: {fallback_reason}",
+        "当前结果仅用于流程占位，不能据此判定检材真实或无伪造痕迹",
+    ]
 
     return {
-        "is_deepfake": is_deepfake,
-        "confidence": deepfake_prob if is_deepfake else (1.0 - deepfake_prob),
-        "deepfake_probability": deepfake_prob,
-        "model": "mock_analyzer_v1",
+        "is_deepfake": False,
+        "confidence": 0.2,
+        "deepfake_probability": fallback_prob,
+        "model": "reality_defender_unavailable",
         "degraded": True,
+        "analysis_available": False,
+        "method": "local_fallback_no_external_verdict",
         "models": [],
         "frame_inferences": [],
         "audio_score": None,
         "details": {
             "indicators": indicators,
-            "frames_analyzed": _stable_int(f"{seed}:frames", 30, 120) if media_type == "video" else 1,
-            "anomaly_score": deepfake_prob,
+            "frames_analyzed": 0,
+            "anomaly_score": None,
             "fallback_reason": fallback_reason,
             "api_key_configured": api_key_configured,
+            "external_verdict_available": False,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

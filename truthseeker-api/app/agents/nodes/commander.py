@@ -52,6 +52,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     forensics_deepfake_prob = forensics.get("deepfake_probability", 0.5)
     forensics_is_deepfake = forensics.get("is_deepfake", False)
     osint_threat = osint.get("threat_score", 0.0)
+    osint_risk = max(osint_threat, osint.get("text_risk_score", 0.0), osint.get("social_engineering_score", 0.0))
     osint_conf = osint.get("confidence", 0.75)
     quality_score = challenger.get("quality_score", 0.8)
 
@@ -69,8 +70,9 @@ async def commander_node(state: TruthSeekerState) -> dict:
     # 综合评分
     deepfake_score = (
         forensics_deepfake_prob * forensics_weight
-        + osint_threat * osint_weight
+        + osint_risk * osint_weight
     )
+    overall_risk_score = max(deepfake_score, osint_risk)
 
     # 质询官调节：质量问题降低置信度
     confidence_adjustment = quality_score
@@ -80,13 +82,20 @@ async def commander_node(state: TruthSeekerState) -> dict:
     )
 
     log("action", f"⚖️  权重配置: 法医={forensics_weight:.0%} | OSINT={osint_weight:.0%} | 质询={challenger_weight:.0%}")
-    log("action", f"📈 伪造评分: {deepfake_score:.1%} | 综合置信度: {overall_confidence:.1%} | 证据质量: {quality_score:.1%}")
+    log("action", f"📈 伪造评分: {deepfake_score:.1%} | 综合风险: {overall_risk_score:.1%} | 综合置信度: {overall_confidence:.1%} | 证据质量: {quality_score:.1%}")
 
     # 判决逻辑
-    if deepfake_score > 0.65 and overall_confidence > 0.6:
+    if (deepfake_score > 0.65 and overall_confidence > 0.6) or (
+        osint_risk > 0.75 and osint_conf > 0.5 and quality_score > 0.45
+    ):
         verdict = "forged"
         verdict_cn = "伪造"
-    elif deepfake_score > 0.4 or (forensics_is_deepfake and overall_confidence > 0.5):
+    elif (
+        deepfake_score > 0.4
+        or osint_risk > 0.4
+        or osint.get("is_suspicious", False)
+        or (forensics_is_deepfake and overall_confidence > 0.5)
+    ):
         verdict = "suspicious"
         verdict_cn = "可疑"
     elif overall_confidence > 0.5:
@@ -119,6 +128,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "verdict_cn": verdict_cn,
         "confidence": overall_confidence,
         "deepfake_score": deepfake_score,
+        "risk_score": overall_risk_score,
         "quality_score": quality_score,
         "agent_weights": agent_weights,
         "forensics_summary": {
@@ -129,6 +139,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
         },
         "osint_summary": {
             "threat_score": osint_threat,
+            "risk_score": osint_risk,
+            "social_engineering_score": osint.get("social_engineering_score", 0.0),
             "confidence": osint_conf,
             "is_malicious": osint.get("is_malicious", False),
             "is_suspicious": osint.get("is_suspicious", False),
