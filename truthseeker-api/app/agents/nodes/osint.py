@@ -193,7 +193,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             tool="text_claim_extract",
             target="uploaded_text",
             coro=analyze_text(combined),
-            timeout=45.0,
+            timeout=120.0,
         )
         tool_results.append(text_tool)
         text_analysis_result = text_tool.get("result") if isinstance(text_tool.get("result"), dict) else None

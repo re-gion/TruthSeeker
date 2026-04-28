@@ -291,11 +291,27 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     degraded_count = sum(1 for item in settled_results if item.get("status") == "degraded")
     degradation_level = "failed" if failed_count else "degraded" if degraded_count else "ok"
     if degraded:
+        degradation_details = [
+            {
+                "tool": item.get("tool", "unknown"),
+                "target": str(item.get("target", ""))[:80],
+                "status": item.get("status", "unknown"),
+                "error": str(item.get("error", ""))[:120] if item.get("error") else None,
+                "summary": str(item.get("summary", ""))[:120],
+            }
+            for item in settled_results
+            if item.get("status") in {"degraded", "failed"}
+        ]
         record_audit_event(
             action="forensics.degraded",
             task_id=task_id,
             agent="forensics",
-            metadata={"failed": failed_count, "degraded": degraded_count, "total": len(settled_results)},
+            metadata={
+                "failed": failed_count,
+                "degraded": degraded_count,
+                "total": len(settled_results),
+                "details": degradation_details,
+            },
         )
 
     indicators: list[str] = []

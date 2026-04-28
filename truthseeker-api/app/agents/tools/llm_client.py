@@ -39,6 +39,8 @@ def get_llm(model_name: str | None = None) -> ChatOpenAI:
             api_key=settings.KIMI_API_KEY,
             temperature=temperature,
             max_tokens=2048,
+            request_timeout=120.0,
+            max_retries=1,
         )
     return _llm_cache[name]
 

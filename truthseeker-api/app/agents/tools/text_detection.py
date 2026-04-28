@@ -61,6 +61,7 @@ async def analyze_text_llm(text_content: str) -> dict:
         "key_claims": [],
         "anomalies": ["LLM 分析未能执行，已降级为默认结果"],
         "writing_style_analysis": "无法完成写作风格分析",
+        "degraded": True,
     }
 
     try:
@@ -309,6 +310,7 @@ async def analyze_text(text_content: str) -> dict:
             "key_claims": [],
             "anomalies": [f"LLM 分析异常: {llm_result}"],
             "writing_style_analysis": "分析失败",
+            "degraded": True,
         }
 
     if isinstance(structural_result, Exception):
@@ -372,5 +374,6 @@ async def analyze_text(text_content: str) -> dict:
         "anomalies": all_anomalies,
         "extracted_urls": extracted_urls,
         "confidence": round(confidence, 4),
+        "degraded": bool(llm_result.get("degraded")),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
