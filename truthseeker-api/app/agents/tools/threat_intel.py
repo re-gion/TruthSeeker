@@ -1,9 +1,12 @@
 """威胁情报工具 - 支持 VirusTotal API 和 Mock 模拟"""
 import asyncio
 import hashlib
+import logging
 from typing import Optional
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 async def analyze_urls(urls: list[str]) -> dict:
@@ -19,6 +22,7 @@ async def analyze_urls(urls: list[str]) -> dict:
     if vt_api_key and vt_api_key != "your-key-here":
         return await _virustotal_scan(urls[0], vt_api_key)
     else:
+        logger.warning("VirusTotal API key not configured, using mock analysis for URL: %s", urls[0])
         return await _mock_url_analysis(urls[0])
 
 
@@ -35,12 +39,14 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
                 data={"url": url},
             )
             if resp.status_code not in (200, 201):
+                logger.warning("VirusTotal URL scan submit returned HTTP %s for %s", resp.status_code, url)
                 return await _mock_url_analysis(url)
 
             scan_data = resp.json()
             analysis_id = scan_data.get("data", {}).get("id", "")
 
             if not analysis_id:
+                logger.warning("VirusTotal URL scan response missing analysis_id for %s", url)
                 return await _mock_url_analysis(url)
 
             # 获取分析结果
@@ -50,6 +56,7 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
                 headers=headers,
             )
             if result_resp.status_code != 200:
+                logger.warning("VirusTotal URL scan result returned HTTP %s for analysis_id=%s", result_resp.status_code, analysis_id)
                 return await _mock_url_analysis(url)
 
             result = result_resp.json()
@@ -78,6 +85,7 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
                 },
             }
     except Exception as e:
+        logger.warning("VirusTotal URL scan degraded: %s", e)
         return await _mock_url_analysis(url)
 
 
@@ -142,6 +150,7 @@ async def check_domain_reputation(domain: str) -> dict:
     """查询域名信誉（VirusTotal API）"""
     vt_key = settings.VIRUSTOTAL_API_KEY
     if not vt_key:
+        logger.warning("VirusTotal API key not configured, using mock analysis for domain: %s", domain)
         result = await _mock_url_analysis(f"https://{domain}")
         return {
             "domain": domain,
@@ -161,6 +170,7 @@ async def check_domain_reputation(domain: str) -> dict:
                 headers={"x-apikey": vt_key},
             )
             if resp.status_code != 200:
+                logger.warning("VirusTotal domain reputation returned HTTP %s for %s", resp.status_code, domain)
                 result = await _mock_url_analysis(f"https://{domain}")
                 return {
                     "domain": domain,
@@ -196,7 +206,8 @@ async def check_domain_reputation(domain: str) -> dict:
                 "last_seen": str(data.get("last_modification_date", "")),
                 "is_suspicious": is_suspicious,
             }
-    except Exception:
+    except Exception as e:
+        logger.warning("VirusTotal domain reputation degraded for %s: %s", domain, e)
         result = await _mock_url_analysis(f"https://{domain}")
         return {
             "domain": domain,
@@ -235,7 +246,8 @@ async def scan_file_hash(file_url: str) -> dict:
 
             file_bytes = resp.content
             hash_str = hashlib.sha256(file_bytes).hexdigest()
-    except Exception:
+    except Exception as exc:
+        logger.warning("VirusTotal file hash download failed for %s: %s", file_url, exc)
         return default_result
 
     result = {**default_result, "hash": hash_str}
@@ -255,6 +267,7 @@ async def scan_file_hash(file_url: str) -> dict:
                 return {**result, "status": "not_found"}
 
             if resp.status_code != 200:
+                logger.warning("VirusTotal file hash query returned HTTP %s for hash=%s", resp.status_code, result.get("hash", ""))
                 return {**result, "status": "error"}
 
             data = resp.json().get("data", {}).get("attributes", {})
@@ -272,7 +285,8 @@ async def scan_file_hash(file_url: str) -> dict:
                 "scan_available": True,
                 "status": "ok",
             }
-    except Exception:
+    except Exception as exc:
+        logger.warning("VirusTotal file hash query failed for hash=%s: %s", result.get("hash", ""), exc)
         return {**result, "status": "error"}
 
 
@@ -290,9 +304,11 @@ async def extract_media_metadata(file_url: str, file_type: str) -> dict:
                 follow_redirects=True,
             )
             if resp.status_code not in (200, 206):
+                logger.warning("Media metadata download returned HTTP %s for %s", resp.status_code, file_url)
                 return _default_metadata_result()
             raw = resp.content
-    except Exception:
+    except Exception as exc:
+        logger.warning("Media metadata download failed for %s: %s", file_url, exc)
         return _default_metadata_result()
 
     file_size_approx = len(raw)

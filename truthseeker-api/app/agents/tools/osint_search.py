@@ -1,6 +1,7 @@
 """Exa OSINT search adapter with structured degradation."""
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 EXA_TIMEOUT_SECONDS = 20.0
 
@@ -65,6 +68,7 @@ async def search_osint(queries: list[str], *, num_results: int = 5) -> dict[str,
     """Search Exa API and return a normalized, non-throwing result."""
     queries = [q for q in queries if isinstance(q, str) and q.strip()]
     if not queries:
+        logger.warning("Exa search degraded: no searchable queries after de-identification")
         return {
             "status": "degraded",
             "provider": "exa",
@@ -76,6 +80,7 @@ async def search_osint(queries: list[str], *, num_results: int = 5) -> dict[str,
 
     api_key = settings.EXA_API_KEY
     if not api_key:
+        logger.warning("Exa search degraded: missing API key")
         return {
             "status": "degraded",
             "provider": "exa",
@@ -116,6 +121,7 @@ async def search_osint(queries: list[str], *, num_results: int = 5) -> dict[str,
                         "query": query,
                     })
             except Exception as exc:
+                logger.warning("Exa search degraded for query '%s': %s", query, exc)
                 errors.append(f"{type(exc).__name__}: {exc}")
 
     status = "success" if results else "failed" if errors else "degraded"

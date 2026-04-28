@@ -124,8 +124,40 @@ async def generate_markdown_report(task_id: str) -> str:
                     lines.append(f"  - {ev}")
         lines.append("")
 
-    # ---- Forensics 分析 ----
+    # ---- 降级状态汇总 ----
     forensics = _extract_agent_result(analysis_states, "forensics")
+    osint = _extract_agent_result(analysis_states, "osint")
+    degraded_items: list[str] = []
+    if forensics and forensics.get("degraded"):
+        tool_summary = forensics.get("tool_summary") or {}
+        degraded_items.append(
+            f"Forensics 取证降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
+            f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
+        )
+    if osint and osint.get("degraded"):
+        tool_summary = osint.get("tool_summary") or {}
+        degraded_items.append(
+            f"OSINT 情报降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
+            f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
+        )
+    if result:
+        forensics_degraded = (result.get("forensics_summary") or {}).get("degraded")
+        osint_degraded = (result.get("osint_summary") or {}).get("degraded")
+        if forensics_degraded and not forensics:
+            degraded_items.append("Forensics 取证降级（详情见分析状态）")
+        if osint_degraded and not osint:
+            degraded_items.append("OSINT 情报降级（详情见分析状态）")
+    if degraded_items:
+        lines.append("## ⚠️ 降级状态汇总")
+        lines.append("")
+        for item in degraded_items:
+            lines.append(f"- {item}")
+        lines.append("")
+        lines.append("> **注意**: 降级模式下部分结果基于启发式模拟或本地推理，可靠性低于完整外部检测。"
+                    "建议在网络恢复或服务正常后重新检测。")
+        lines.append("")
+
+    # ---- Forensics 分析 ----
     if forensics:
         lines.append("## 三、Forensics 取证分析")
         lines.append("")
@@ -133,7 +165,6 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
 
     # ---- OSINT 情报 ----
-    osint = _extract_agent_result(analysis_states, "osint")
     if osint:
         lines.append("## 四、OSINT 开源情报")
         lines.append("")

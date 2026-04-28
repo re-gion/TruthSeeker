@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.llm_client import build_sample_references, commander_ruling
 from app.agents.tools.provenance_graph import build_provenance_graph
+from app.services.audit_log import record_audit_event
 
 
 async def commander_node(state: TruthSeekerState) -> dict:
@@ -131,6 +132,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
             "confidence": osint_conf,
             "is_malicious": osint.get("is_malicious", False),
             "is_suspicious": osint.get("is_suspicious", False),
+            "degraded": osint.get("degraded", False),
         },
         "challenger_summary": {
             "issue_count": challenger.get("issue_count", 0),
@@ -175,6 +177,18 @@ async def commander_node(state: TruthSeekerState) -> dict:
     }
 
     log("conclusion", f"👑 最终裁决: 【{verdict_cn}】 综合置信度 {overall_confidence:.1%}")
+    record_audit_event(
+        action="commander.verdict",
+        task_id=task_id,
+        agent="commander",
+        metadata={
+            "verdict": verdict,
+            "confidence": overall_confidence,
+            "deepfake_score": deepfake_score,
+            "forensics_degraded": forensics.get("degraded", False),
+            "osint_degraded": osint.get("degraded", False),
+        },
+    )
     log("conclusion", f"📋 裁决报告已存档，任务 {task_id} 分析完成")
 
     # 时间轴关键事件
@@ -224,5 +238,7 @@ def _generate_recommendations(
 
     if forensics.get("degraded"):
         recs.append("⚠️ 法医分析处于降级模式，结果可靠性降低，建议重新检测")
+    if osint.get("degraded"):
+        recs.append("⚠️ 情报溯源处于降级模式，外部威胁情报未完整获取，建议网络恢复后复检")
 
     return recs

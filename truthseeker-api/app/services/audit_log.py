@@ -38,6 +38,7 @@ def build_audit_log_row(
     task_id: str | None = None,
     user_id: str | None = None,
     actor_role: str = "user",
+    agent: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -45,6 +46,7 @@ def build_audit_log_row(
         "task_id": task_id,
         "user_id": user_id,
         "actor_role": actor_role,
+        "agent": agent,
         "metadata": _redact(metadata or {}),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -56,6 +58,7 @@ def record_audit_event(
     task_id: str | None = None,
     user_id: str | None = None,
     actor_role: str = "user",
+    agent: str | None = None,
     metadata: dict[str, Any] | None = None,
     client=None,
 ) -> None:
@@ -64,6 +67,7 @@ def record_audit_event(
         task_id=task_id,
         user_id=user_id,
         actor_role=actor_role,
+        agent=agent,
         metadata=metadata,
     )
     try:
@@ -73,5 +77,9 @@ def record_audit_event(
 
             active_client = supabase
         active_client.table("audit_logs").insert(row).execute()
+        # 格式化终端输出，提升可读性
+        agent_tag = f"[{agent.upper()}]" if agent else ""
+        meta_short = " ".join(f"{k}={v}" for k, v in (metadata or {}).items() if k not in REDACT_KEYS)
+        logger.info("[AUDIT]%s %s | task=%s | %s", agent_tag, action, task_id, meta_short)
     except Exception as exc:
         logger.warning("Failed to record audit event %s for task %s: %s", action, task_id, exc)

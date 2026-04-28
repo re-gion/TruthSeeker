@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable
 
@@ -13,6 +14,9 @@ from app.agents.tools.osint_search import build_deidentified_queries, search_osi
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
 from app.agents.tools.threat_intel import analyze_urls
+from app.services.audit_log import record_audit_event
+
+logger = logging.getLogger(__name__)
 
 TEXT_MAX_CHARS = 10000
 
@@ -71,6 +75,7 @@ async def _settle_tool(
             "completed_at": _now(),
         }
     except asyncio.TimeoutError:
+        logger.warning("Tool timeout: %s target=%s after %.0fs", tool, target, timeout)
         return {
             "tool": tool,
             "target": target,
@@ -82,6 +87,7 @@ async def _settle_tool(
             "completed_at": _now(),
         }
     except Exception as exc:
+        logger.warning("Tool failed: %s target=%s error=%s", tool, target, exc)
         return {
             "tool": tool,
             "target": target,
@@ -158,6 +164,12 @@ async def osint_node(state: TruthSeekerState) -> dict:
     log("thinking", f"读取全局证据板与电子取证结果，准备抽取实体、声明、引用和关系")
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
+    record_audit_event(
+        action="osint.start",
+        task_id=task_id,
+        agent="osint",
+        metadata={"round": round_num, "file_count": len(files)},
+    )
 
     text_contents: list[str] = []
     urls_to_check = extract_urls_from_text(case_prompt)
@@ -237,6 +249,17 @@ async def osint_node(state: TruthSeekerState) -> dict:
     if not threat_indicators:
         threat_indicators.append("未发现明确外部威胁或溯源线索")
 
+    degraded = any(item.get("status") in {"degraded", "failed"} for item in tool_results)
+    if degraded:
+        failed_count = sum(1 for item in tool_results if item.get("status") == "failed")
+        degraded_count = sum(1 for item in tool_results if item.get("status") == "degraded")
+        record_audit_event(
+            action="osint.degraded",
+            task_id=task_id,
+            agent="osint",
+            metadata={"failed": failed_count, "degraded": degraded_count, "total": len(tool_results)},
+        )
+
     osint_confidence = 0.25 if exa_tool.get("status") == "failed" and not virustotal_summaries else min(0.92, 0.62 + len(search_results) * 0.04)
     model_claims = _model_claims_from_text(text_analysis_result, threat_indicators)
 
@@ -252,7 +275,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "text_analysis": text_analysis_result,
         "model_claims": model_claims,
         "tool_results": tool_results,
-        "degraded": any(item.get("status") in {"degraded", "failed"} for item in tool_results),
+        "degraded": degraded,
         "timestamp": _now(),
     }
 
@@ -286,6 +309,17 @@ async def osint_node(state: TruthSeekerState) -> dict:
     }
 
     log("finding", f"情报图谱生成完成：节点 {len(provenance_graph['nodes'])}，边 {len(provenance_graph['edges'])}")
+    record_audit_event(
+        action="osint.complete",
+        task_id=task_id,
+        agent="osint",
+        metadata={
+            "threat_score": threat_score,
+            "degraded": degraded,
+            "search_results": len(search_results),
+            "graph_nodes": len(provenance_graph["nodes"]),
+        },
+    )
     log("conclusion", "情报溯源图谱已写入全局证据板，等待逻辑质询Agent审查")
 
     return {

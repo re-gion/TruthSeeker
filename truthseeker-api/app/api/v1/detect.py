@@ -443,6 +443,16 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
 
                     persistence.persist_update(task_id, node_name, updates)
                     await queue.put(_sse({"type": "node_complete", "node": node_name}))
+                    record_audit_event(
+                        action=f"node_complete.{node_name}",
+                        task_id=task_id,
+                        user_id=user_id,
+                        agent=node_name,
+                        metadata={
+                            "round": updates.get("current_round"),
+                            "has_final_verdict": bool(updates.get("final_verdict")),
+                        },
+                    )
 
             if final_verdict_data:
                 persistence.mark_task_completed(task_id, final_verdict_data)

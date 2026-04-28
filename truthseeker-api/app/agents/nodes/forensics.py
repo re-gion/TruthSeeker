@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable
@@ -12,6 +13,9 @@ from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.llm_client import build_sample_references, forensics_interpret
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
+from app.services.audit_log import record_audit_event
+
+logger = logging.getLogger(__name__)
 
 MEDIA_MODALITIES = {"video", "audio", "image"}
 TEXT_MAX_CHARS = 10000
@@ -72,6 +76,7 @@ async def _settle_tool(
             "completed_at": _now(),
         }
     except asyncio.TimeoutError:
+        logger.warning("Tool timeout: %s target=%s after %.0fs", tool, target, timeout)
         return {
             "tool": tool,
             "target": target,
@@ -83,6 +88,7 @@ async def _settle_tool(
             "completed_at": _now(),
         }
     except Exception as exc:
+        logger.warning("Tool failed: %s target=%s error=%s", tool, target, exc)
         return {
             "tool": tool,
             "target": target,
@@ -177,6 +183,12 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     log("thinking", f"接收到 {len(files)} 个检材，媒体 {len(media_files)} 个，文本 {len(text_files)} 个")
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
+    record_audit_event(
+        action="forensics.start",
+        task_id=task_id,
+        agent="forensics",
+        metadata={"round": round_num, "file_count": len(files), "media_count": len(media_files)},
+    )
 
     previous_successes = _previous_successes(state)
     settled_results: list[dict[str, Any]] = []
@@ -266,6 +278,13 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     failed_count = sum(1 for item in settled_results if item.get("status") == "failed")
     degraded_count = sum(1 for item in settled_results if item.get("status") == "degraded")
     degradation_level = "failed" if failed_count else "degraded" if degraded_count else "ok"
+    if degraded:
+        record_audit_event(
+            action="forensics.degraded",
+            task_id=task_id,
+            agent="forensics",
+            metadata={"failed": failed_count, "degraded": degraded_count, "total": len(settled_results)},
+        )
 
     indicators: list[str] = []
     for item in settled_results:
@@ -340,6 +359,17 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "event_type": "analysis_complete",
         "summary": f"电子取证完成: 伪造概率 {deepfake_prob:.1%}, 置信度 {confidence:.1%}",
     })
+    record_audit_event(
+        action="forensics.complete",
+        task_id=task_id,
+        agent="forensics",
+        metadata={
+            "deepfake_probability": deepfake_prob,
+            "degraded": degraded,
+            "tool_success": result["tool_summary"]["success"],
+            "tool_total": len(settled_results),
+        },
+    )
     log("conclusion", "电子取证报告已写入全局证据板，等待逻辑质询Agent审查")
 
     return {

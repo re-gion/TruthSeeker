@@ -5,18 +5,6 @@
  * 用于 Phase 3.1.3 - 报告与导出
  */
 
-interface ReportData {
-    taskId: string
-    inputType: string
-    logs: Array<{ agent: string; content: string; timestamp?: string; type?: string; round?: number }>
-    forensicsResult?: Record<string, unknown> | null
-    osintResult?: Record<string, unknown> | null
-    challengerFeedback?: Record<string, unknown> | null
-    finalVerdict?: Record<string, unknown> | null
-    agentWeights?: Record<string, number>
-    currentRound?: number
-}
-
 type UnknownRecord = Record<string, unknown>
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -108,111 +96,6 @@ export function extractChallengerSnapshot(value: unknown) {
         requiresMoreEvidence: readBoolean(record, ["requires_more_evidence", "needs_more_evidence"], false),
         challenges: normalizeTextList(readValue(record, ["challenges", "issues_found", "issues", "findings"])),
     }
-}
-
-function formatSectionItemList(items: string[]) {
-    return items.map((item, index) => `${index + 1}. ${item}`).join("\n")
-}
-
-export function generateMarkdownReport(data: ReportData): string {
-    const now = new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
-    const verdictEmoji: Record<string, string> = {
-        forged: "🚨 伪造",
-        suspicious: "⚠️ 可疑",
-        authentic: "✅ 真实",
-        inconclusive: "❓ 无法判定",
-    }
-
-    let md = `# TruthSeeker 深度伪造鉴定报告\n\n`
-    md += `> 生成时间: ${now}  \n`
-    md += `> 任务 ID: \`${data.taskId}\`  \n`
-    md += `> 检测类型: ${data.inputType}  \n`
-    md += `> 辩论轮数: ${data.currentRound || 0}\n\n`
-
-    // ── 最终裁决 ──
-    md += `---\n\n## 📋 最终裁决\n\n`
-    if (data.finalVerdict) {
-        const verdict = extractVerdictSnapshot(data.finalVerdict)
-        const emoji = verdictEmoji[verdict.verdict] || "❓"
-        md += `**结论**: ${emoji}  \n`
-        md += `**判定标签**: ${verdict.verdictLabel || "-"}  \n`
-        md += `**综合置信度**: ${(verdict.confidence * 100).toFixed(1)}%  \n\n`
-        if (verdict.evidence.length > 0) {
-            md += `### 关键证据\n\n`
-            md += `${formatSectionItemList(verdict.evidence)}\n`
-            md += `\n`
-        }
-    } else {
-        md += `_检测尚未完成，无最终裁决。_\n\n`
-    }
-
-    // ── 各 Agent 分析结果 ──
-    md += `---\n\n## 🔬 电子取证Agent (Forensics Agent)\n\n`
-    if (data.forensicsResult) {
-        const forensics = extractAnalysisSnapshot(data.forensicsResult)
-        md += `- **置信度**: ${(forensics.confidence * 100).toFixed(1)}%\n`
-        md += `- **判定**: ${forensics.verdict || "-"}\n`
-        if (forensics.analysisSummary) md += `- **摘要**: ${forensics.analysisSummary}\n`
-        md += `\n`
-    } else {
-        md += `_暂无结果_\n\n`
-    }
-
-    md += `## 🕵️ 情报溯源Agent (OSINT Agent)\n\n`
-    if (data.osintResult) {
-        const osint = extractAnalysisSnapshot(data.osintResult)
-        md += `- **置信度**: ${(osint.confidence * 100).toFixed(1)}%\n`
-        md += `- **判定**: ${osint.verdict || "-"}\n`
-        if (osint.analysisSummary) md += `- **摘要**: ${osint.analysisSummary}\n`
-        md += `\n`
-    } else {
-        md += `_暂无结果_\n\n`
-    }
-
-    md += `## ⚖️ 逻辑质询Agent (Challenger Agent)\n\n`
-    if (data.challengerFeedback) {
-        const challenger = extractChallengerSnapshot(data.challengerFeedback)
-        md += `- **质量评分**: ${(challenger.qualityScore * 100).toFixed(1)}%\n`
-        md += `- **需要补充证据**: ${challenger.requiresMoreEvidence ? "是" : "否"}\n`
-        if (challenger.challenges.length > 0) {
-            md += `- **质疑点**:\n`
-            md += `${challenger.challenges.map((challenge) => `  - ${challenge}`).join("\n")}\n`
-        }
-        md += `\n`
-    } else {
-        md += `_暂无结果_\n\n`
-    }
-
-    // ── 决策权重 ──
-    if (data.agentWeights && Object.keys(data.agentWeights).length > 0) {
-        md += `---\n\n## 📊 决策权重分布\n\n`
-        md += `| Agent | 权重 |\n|---|---|\n`
-        Object.entries(data.agentWeights).forEach(([key, val]) => {
-            const label: Record<string, string> = {
-                forensics: "电子取证Agent", osint: "情报溯源Agent", challenger: "逻辑质询Agent"
-            }
-            md += `| ${label[key] || key} | ${(val * 100).toFixed(1)}% |\n`
-        })
-        md += `\n`
-    }
-
-    // ── 完整日志 ──
-    md += `---\n\n## 📜 完整检测日志\n\n`
-    if (data.logs.length > 0) {
-        const agentLabel: Record<string, string> = {
-            forensics: "🔬 取证", osint: "🕵️ 情报", challenger: "⚖️ 质询", commander: "🏛️ 指挥"
-        }
-        data.logs.forEach((log) => {
-            const label = agentLabel[log.agent] || log.agent
-            const time = log.timestamp ? `[${new Date(log.timestamp).toLocaleTimeString("zh-CN")}]` : ""
-            md += `- ${time} **${label}**: ${log.content}\n`
-        })
-    } else {
-        md += `_暂无日志_\n`
-    }
-
-    md += `\n---\n\n_本报告由 TruthSeeker AI 深度伪造鉴定系统自动生成_\n`
-    return md
 }
 
 /** 触发浏览器下载 Markdown 文件 */

@@ -7,6 +7,7 @@ from typing import Any
 
 from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.tools.llm_client import build_sample_references, challenger_cross_validate
+from app.services.audit_log import record_audit_event
 from app.utils.supabase_client import supabase
 
 try:
@@ -86,6 +87,10 @@ def _osint_issues(osint: dict[str, Any]) -> list[dict[str, Any]]:
     inferred_ratio = float(quality.get("model_inferred_ratio", 0.0) or 0.0)
     nodes = graph.get("nodes") or []
     citations = graph.get("citations") or []
+    tool_summary = osint.get("tool_summary") or {}
+    failed = int(tool_summary.get("failed", 0) or 0)
+    degraded = int(tool_summary.get("degraded", 0) or 0)
+    total = int(tool_summary.get("total", 0) or 0)
 
     if not osint:
         issues.append(_issue("missing_osint", "情报溯源报告缺失，无法进入最终研判阶段", "high", agent="osint"))
@@ -99,6 +104,12 @@ def _osint_issues(osint: dict[str, Any]) -> list[dict[str, Any]]:
         issues.append(_issue("low_citation_coverage", f"图谱引用覆盖率偏低（{citation_coverage:.1%}）", "medium", agent="osint"))
     if inferred_ratio > 0.65:
         issues.append(_issue("too_many_model_inferred_edges", f"模型推断关系占比过高（{inferred_ratio:.1%}）", "medium", agent="osint"))
+    if total == 0:
+        issues.append(_issue("missing_osint_tool_matrix", "情报溯源未形成工具矩阵，不能证明已等待外部工具结果", "high", agent="osint"))
+    if failed > 0:
+        issues.append(_issue("osint_tool_failed", f"情报溯源有 {failed} 个工具调用失败，需要重跑或记录风险", "high", agent="osint"))
+    if degraded > 0:
+        issues.append(_issue("osint_tool_degraded", f"情报溯源有 {degraded} 个工具降级，结论可靠性下降", "medium", agent="osint"))
     return issues
 
 
@@ -153,6 +164,12 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     log("thinking", f"逻辑质询Agent 启动：phase={phase}, phase_round={phase_round}/{max_rounds}")
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
+    record_audit_event(
+        action="challenger.start",
+        task_id=task_id,
+        agent="challenger",
+        metadata={"phase": phase, "phase_round": phase_round},
+    )
 
     try:
         known_ids = {m.get("id") for m in expert_messages if isinstance(m, dict) and m.get("id")}
@@ -235,6 +252,20 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     else:
         log("action", "审查通过，无阻断问题")
 
+    if issues_found:
+        record_audit_event(
+            action="challenger.issues_found",
+            task_id=task_id,
+            agent="challenger",
+            metadata={
+                "phase": phase,
+                "high": len(high),
+                "medium": len(medium),
+                "quality_score": quality_score,
+                "requires_more_evidence": requires_more_evidence,
+            },
+        )
+
     consultation_required = bool(phase == "forensics" and phase_round == 1 and high)
     consultation_resumed = False
     consultation_resume_payload = None
@@ -297,6 +328,17 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         phase_rounds[phase] = phase_round + 1
 
     log("conclusion", f"逻辑质询完成：phase={phase}，质量 {quality_score:.1%}，问题 {len(issues_found)} 个")
+    record_audit_event(
+        action="challenger.complete",
+        task_id=task_id,
+        agent="challenger",
+        metadata={
+            "phase": phase,
+            "quality_score": quality_score,
+            "issue_count": len(issues_found),
+            "requires_more_evidence": requires_more_evidence,
+        },
+    )
 
     return {
         "analysis_phase": phase,
