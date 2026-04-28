@@ -16,6 +16,8 @@
 | 2026-04-20 | Windows/npm | `npm run typecheck` 可能因本地 `.cmd` shim 启动失败而无报错退出 | 用 `npx tsc --noEmit --diagnostics` 或直接 `node ./node_modules/typescript/bin/tsc` 区分代码错误与命令启动层问题 |
 | 2026-04-21 | 后端/pytest | Python 3.13 下 `WinError 10106` 可能由残留进程/损坏的 `.next` 缓存导致；清理环境和重启后可恢复 | 先杀残留 Node 进程、清理 `.next`，再重跑 |
 | 2026-04-21 | 前端/Next.js | `next build` 超时（>300s）可能因 `.next` 缓存膨胀（1.6GB）导致 | 删除 `.next` 目录后重新构建，4.7s 即可完成 |
+| 2026-04-28 | 前端/React Flow | React Flow v12 的 `NodeProps` 不再包含 `style` prop，自定义节点内部读取 `style` 会报类型错误 | `style` 由 React Flow 外层容器应用，自定义节点只负责渲染内容；条件渲染 `data.xxx` 时需用 `Boolean()` 包裹避免 `unknown` 类型报错 |
+| 2026-04-28 | 后端/pytest | Python 3.13 下 `run_sync_coroutine()` 若仅 `coro.send(None)` 一次，遇到内部 `await asyncio.sleep()` 会挂起失败 | 检测到无运行事件循环时，改用 `asyncio.new_event_loop().run_until_complete(coro)` 完整驱动协程 |
 
 ---
 

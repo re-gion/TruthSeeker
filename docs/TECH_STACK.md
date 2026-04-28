@@ -16,7 +16,7 @@
 | @supabase/supabase-js | ^2.98.0 | Supabase 客户端 |
 | @supabase/ssr | ^0.8.0 | SSR 认证辅助 |
 | lucide-react | ^0.576.0 | 图标库 |
-| @xyflow/react | 待安装 | 情报溯源图谱交互画布 |
+| @xyflow/react | ^12.10.2 | 情报溯源图谱交互画布 |
 
 ### 前端脚本
 

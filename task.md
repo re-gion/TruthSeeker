@@ -24,7 +24,7 @@
 - [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
 - [x] Kimi 2.6 作为四 Agent 共享多模态推理基座，工具结果 all-settled 后再进入 Agent 推理。
 - [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
-- [ ] 待本机 npm 网络恢复后安装 `@xyflow/react` 并将图谱视图替换为 React Flow 交互渲染；2026-04-28 已在沙箱外重试官方 registry、默认 npmmirror 和显式 `127.0.0.1:7897` 代理，分别失败于 `EAI_FAIL` 与 `connect UNKNOWN 127.0.0.1:7897`。
+- [x] 安装 `@xyflow/react` ^12.10.2 并将图谱视图替换为 React Flow 交互渲染（支持拖拽、缩放、节点详情面板）。
 - [x] 任务创建保存 `case_prompt`、文件清单、模态和 storage path。
 - [x] 检测页按 `taskId` 从后端任务记录启动检测，不再通过 URL 传 signed file URL。
 - [x] 检测失败会写入 `failed` 状态并向前端发送 `task_failed`。
@@ -220,7 +220,7 @@
 - [x] 文件上传端点（接收文件 → 存储 → 返回 URL）
 
 ### 测试
-- [x] 后端单元测试 — 85 项 pytest 覆盖纯函数、降级管理、收敛路由、报告完整性、认证配置、文本校验、会诊恢复、数据库错误可见性（2026-04-21 验证通过）
+- [x] 后端单元测试 — 86 项 pytest 覆盖纯函数、降级管理、收敛路由、报告完整性、认证配置、文本校验、会诊恢复、数据库错误可见性（2026-04-28 验证通过）
 - [x] API 集成测试 — report/consultation/dashboard 端点 mock DB 测试通过
 - [ ] 前后端联调测试（需真实 Supabase 环境）
 
