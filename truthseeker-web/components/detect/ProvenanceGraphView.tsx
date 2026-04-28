@@ -8,9 +8,13 @@ import {
   Controls,
   Handle,
   Position,
+  applyNodeChanges,
+  applyEdgeChanges,
   type NodeProps,
   type Edge as RFEdge,
   type Node as RFNode,
+  type NodeChange,
+  type EdgeChange,
 } from "@xyflow/react"
 
 import {
@@ -142,6 +146,46 @@ function ProvenanceNodeComponent({ data, selected }: NodeProps) {
 
 const nodeTypes = { provenance: ProvenanceNodeComponent }
 
+function FlowCanvas({
+  initialNodes,
+  initialEdges,
+  onNodeClick,
+}: {
+  initialNodes: RFNode[]
+  initialEdges: RFEdge[]
+  onNodeClick: (_event: React.MouseEvent, node: RFNode) => void
+}) {
+  const [nodes, setNodes] = useState<RFNode[]>(initialNodes)
+  const [edges, setEdges] = useState<RFEdge[]>(initialEdges)
+
+  const onNodesChange = useCallback((changes: NodeChange<RFNode>[]) => {
+    setNodes((nds) => applyNodeChanges(changes, nds))
+  }, [])
+
+  const onEdgesChange = useCallback((changes: EdgeChange<RFEdge>[]) => {
+    setEdges((eds) => applyEdgeChanges(changes, eds))
+  }, [])
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onNodeClick={onNodeClick}
+      fitView
+      fitViewOptions={{ padding: 0.2 }}
+      minZoom={0.2}
+      maxZoom={2}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background color="#334155" gap={20} size={1} />
+      <Controls className="!bg-black/50 !border-white/10 !text-white/70" />
+    </ReactFlow>
+  )
+}
+
 export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewProps) {
   const filters = useMemo(() => getGraphFilters(graph), [graph])
   const [nodeTypesFilter, setNodeTypesFilter] = useState<Set<string>>(new Set())
@@ -153,6 +197,7 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
     [edgeTypesFilter, graph, nodeTypesFilter],
   )
   const mapped = useMemo(() => toReactFlowGraph(filteredGraph), [filteredGraph])
+
   const nodeLookup = useMemo(
     () => new Map((filteredGraph.nodes || []).map((node) => [node.id, node])),
     [filteredGraph.nodes],
@@ -172,6 +217,12 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
   const onNodeClick = useCallback((_event: React.MouseEvent, node: RFNode) => {
     setSelectedNodeId(node.id)
   }, [])
+
+  const flowKey = useMemo(() => {
+    const nodeIds = (mapped.nodes as RFNode[]).map((n) => n.id).join(",")
+    const edgeIds = (mapped.edges as RFEdge[]).map((e) => e.id).join(",")
+    return `${nodeIds}|${edgeIds}`
+  }, [mapped])
 
   if (!isComplete) {
     return (
@@ -229,20 +280,12 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
         </div>
 
         <div className="flex-1 min-h-0">
-          <ReactFlow
-            nodes={mapped.nodes as RFNode[]}
-            edges={mapped.edges as RFEdge[]}
-            nodeTypes={nodeTypes}
+          <FlowCanvas
+            key={flowKey}
+            initialNodes={mapped.nodes as RFNode[]}
+            initialEdges={mapped.edges as RFEdge[]}
             onNodeClick={onNodeClick}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            minZoom={0.2}
-            maxZoom={2}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#334155" gap={20} size={1} />
-            <Controls className="!bg-black/50 !border-white/10 !text-white/70" />
-          </ReactFlow>
+          />
         </div>
       </div>
 
