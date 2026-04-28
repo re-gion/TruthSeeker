@@ -1,6 +1,6 @@
 # TruthSeeker 开发错误记录本
 
-> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-28
+> 犯错后立即记录。开发前快速浏览。最后更新: 2026-04-29
 
 ---
 
@@ -20,7 +20,8 @@
 | 2026-04-28 | 后端/pytest | Python 3.13 下 `run_sync_coroutine()` 若仅 `coro.send(None)` 一次，遇到内部 `await asyncio.sleep()` 会挂起失败 | 检测到无运行事件循环时，改用 `asyncio.new_event_loop().run_until_complete(coro)` 完整驱动协程 |
 | 2026-04-28 | 后端/外部工具降级 | Reality Defender、VirusTotal 等外部工具降级时，mock 占位结果被报告和 LLM 当成真实检测结论 | 降级结果必须显式标注 `analysis_available=false`、真实失败原因和低置信度；报告中只能写“未取得外部结论”，不能写成“未检出/正常” |
 | 2026-04-28 | 后端/OSINT 报告 | Exa 搜索 query 混入内部诊断句，且返回正文被递归 dump 到最终报告，造成报告严重污染 | 搜索 query 优先域名/实体线索并过滤内部诊断；报告只展示标题、URL、短摘要，不输出网页全文或原始工具大对象 |
-| 2026-04-28 | 后端/Challenger 时间线 | 报告按全局 round 分组会掩盖 Challenger 分别质询 Forensics/OSINT/Commander 的阶段轮次 | Challenger 需要输出结构化 `phase/phase_round/satisfaction/quality_delta`，报告按“Challenger ↔ Agent 第 N 轮”展示 |
+| 2026-04-28 | 后端/Challenger 时间线 | 报告按全局 round 分组会掩盖 Challenger 分别质询 Forensics/OSINT/Commander 的阶段轮次 | Challenger 需要输出结构化 `phase/phase_round/confidence/quality_delta`，报告按“Challenger ↔ Agent 第 N 轮”展示 |
+| 2026-04-29 | 报告/时间轴 | LLM 长文本字段如果走通用字典渲染，会把 Markdown 段落压成一行；检测页只回放 agent_logs 会漏掉系统审计事件 | `llm_analysis`、`llm_cross_validation`、`llm_ruling` 要用 Markdown 专用渲染；前端时间轴合并 `agent_logs`、`timeline_events`、`audit_logs` 并按时间排序 |
 
 ---
 

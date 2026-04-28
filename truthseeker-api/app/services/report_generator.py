@@ -2,6 +2,7 @@
 import asyncio
 import importlib
 import io
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -18,6 +19,11 @@ logger = logging.getLogger(__name__)
 MAX_REPORT_FIELD_CHARS = 1200
 MAX_SEARCH_SUMMARY_CHARS = 280
 SKIP_REPORT_KEYS = {"signed_url", "raw_response"}
+MARKDOWN_REPORT_FIELDS = {
+    "llm_analysis": "LLM 分析",
+    "llm_cross_validation": "LLM 逻辑质询",
+    "llm_ruling": "LLM 最终研判",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +31,7 @@ SKIP_REPORT_KEYS = {"signed_url", "raw_response"}
 # ---------------------------------------------------------------------------
 
 async def _fetch_task_data(task_id: str) -> dict:
-    """从 Supabase 获取任务的完整数据（task + reports + analysis_states + agent_logs）"""
+    """从 Supabase 获取任务的完整数据（task + reports + analysis_states + agent_logs + audit_logs）"""
     return await asyncio.to_thread(_sync_fetch_task_data, task_id)
 
 
@@ -56,6 +62,15 @@ def _sync_fetch_task_data(task_id: str) -> dict:
     )
     agent_logs = logs_resp.data or []
 
+    audit_resp = (
+        supabase.table("audit_logs")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    audit_logs = audit_resp.data or []
+
     report_resp = (
         supabase.table("reports")
         .select("*")
@@ -70,6 +85,7 @@ def _sync_fetch_task_data(task_id: str) -> dict:
         "report": report,
         "analysis_states": analysis_states,
         "agent_logs": agent_logs,
+        "audit_logs": audit_logs,
     }
 
 
@@ -84,6 +100,7 @@ async def generate_markdown_report(task_id: str) -> str:
     report = data["report"]
     analysis_states = data["analysis_states"]
     agent_logs = data["agent_logs"]
+    audit_logs = data.get("audit_logs") or []
 
     lines: list[str] = []
 
@@ -196,46 +213,46 @@ async def generate_markdown_report(task_id: str) -> str:
     if forensics:
         lines.append("## 三、Forensics 取证分析")
         lines.append("")
-        lines.append(_dict_to_markdown(forensics))
+        lines.extend(_dict_to_markdown(forensics).splitlines())
         lines.append("")
 
     # ---- OSINT 情报 ----
     if osint:
         lines.append("## 四、OSINT 开源情报")
         lines.append("")
-        lines.append(_dict_to_markdown(osint))
+        lines.extend(_dict_to_markdown(osint).splitlines())
         lines.append("")
 
-    # ---- Challenger 交叉验证 ----
+    # ---- Challenger 逻辑质询 ----
     challenger = _extract_agent_result(analysis_states, "challenger")
     if challenger:
-        lines.append("## 五、Challenger 交叉验证")
+        lines.append("## 五、Challenger 逻辑质询")
         lines.append("")
-        lines.append(_dict_to_markdown(challenger))
+        lines.extend(_dict_to_markdown(challenger).splitlines())
         lines.append("")
 
-    # ---- 证据时间线 ----
+    # ---- 质询时间线 ----
     timeline_sections = _build_challenger_timeline_sections(analysis_states, agent_logs)
-    if timeline_sections or agent_logs:
-        lines.append("## 六、证据时间线（按质询阶段）")
+    lines.append("## 六、质询时间线")
+    lines.append("")
+    if timeline_sections:
+        lines.extend(timeline_sections)
+    else:
+        lines.append("- 暂无 Challenger 局部质询轮次记录。")
         lines.append("")
-        if timeline_sections:
-            lines.extend(timeline_sections)
-        else:
-            grouped = _group_logs_by_round(agent_logs)
-            for round_num, logs in grouped.items():
-                lines.append(f"### 全局流程记录 {round_num}")
-                lines.append("")
-                for log in logs:
-                    agent = log.get("agent", log.get("agent_name", "unknown"))
-                    log_type = log.get("type", log.get("log_type", "info"))
-                    content = _truncate_text(str(log.get("content", "")), 360)
-                    ts = _fmt_time(log.get("timestamp", log.get("created_at")))
-                    lines.append(f"- **[{ts}] {agent}** ({log_type}): {content}")
-                lines.append("")
+
+    # ---- 全程审计日志 ----
+    audit_sections = _build_full_audit_log_sections(agent_logs, analysis_states, audit_logs)
+    lines.append("## 七、全程审计日志")
+    lines.append("")
+    if audit_sections:
+        lines.extend(audit_sections)
+    else:
+        lines.append("- 暂无可展示的审计日志。")
+    lines.append("")
 
     # ---- 建议 ----
-    lines.append("## 七、建议与说明")
+    lines.append("## 八、建议与说明")
     lines.append("")
     if result:
         recommendations = result.get("recommendations", [])
@@ -416,12 +433,143 @@ def _render_provenance_graph_summary(graph: dict, indent: int = 0) -> str:
     return "\n".join(lines)
 
 
+def _render_markdown_field(key: str, value: str, indent: int = 0) -> str:
+    """Render LLM Markdown fields without collapsing paragraphs into one bullet."""
+    label = MARKDOWN_REPORT_FIELDS.get(key, key)
+    text = (value or "").strip()
+    if len(text) > 5000:
+        text = text[:4999].rstrip() + "\n\n..."
+    prefix = "  " * indent
+    if indent == 0:
+        return "\n".join([f"### {label}", "", text])
+
+    lines = [f"{prefix}- **{label}**:"]
+    for raw_line in text.splitlines():
+        lines.append(f"{prefix}  {raw_line}" if raw_line else "")
+    return "\n".join(lines)
+
+
+def _as_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _as_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _parse_timeline_time(value: str | None) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _safe_metadata_summary(metadata) -> str:
+    record = _as_dict(metadata)
+    if not record:
+        return ""
+    parts: list[str] = []
+    for key, value in record.items():
+        key_text = str(key)
+        lowered = key_text.lower()
+        if any(secret in lowered for secret in ("token", "secret", "password", "authorization", "signed_url")):
+            continue
+        if isinstance(value, (dict, list)):
+            rendered = json.dumps(value, ensure_ascii=False)
+        else:
+            rendered = str(value)
+        parts.append(f"{key_text}={_truncate_text(rendered, 90)}")
+        if len(parts) >= 4:
+            break
+    return "，".join(parts)
+
+
+def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audit_logs: list) -> list[str]:
+    """Merge agent logs, persisted timeline events, and audit_logs into one chronological audit trail."""
+    entries: list[dict] = []
+    for log in agent_logs:
+        timestamp = log.get("timestamp") or log.get("created_at")
+        entries.append({
+            "timestamp": timestamp,
+            "source": "Agent 日志",
+            "agent": log.get("agent", log.get("agent_name", "unknown")),
+            "kind": log.get("type", log.get("log_type", "info")),
+            "content": str(log.get("content") or ""),
+        })
+
+    for state in analysis_states:
+        board = _as_dict(state.get("evidence_board"))
+        for event in _as_list(board.get("timeline_events")):
+            if not isinstance(event, dict):
+                continue
+            timestamp = event.get("timestamp") or state.get("created_at")
+            entries.append({
+                "timestamp": timestamp,
+                "source": "阶段事件",
+                "agent": event.get("agent", state.get("agent_name", "system")),
+                "kind": event.get("event_type", "timeline"),
+                "content": event.get("summary") or event.get("content") or "",
+            })
+
+    for row in audit_logs:
+        metadata_summary = _safe_metadata_summary(row.get("metadata"))
+        action = str(row.get("action") or "audit")
+        content = action if not metadata_summary else f"{action}（{metadata_summary}）"
+        entries.append({
+            "timestamp": row.get("created_at") or row.get("timestamp"),
+            "source": "系统审计",
+            "agent": row.get("agent") or row.get("actor_role") or "system",
+            "kind": action,
+            "content": content,
+        })
+
+    entries = [
+        entry for entry in entries
+        if str(entry.get("content") or "").strip()
+    ]
+    entries.sort(key=lambda item: _parse_timeline_time(item.get("timestamp")))
+
+    lines: list[str] = []
+    for entry in entries[:80]:
+        ts = _fmt_time(entry.get("timestamp"))
+        agent = entry.get("agent") or "system"
+        source = entry.get("source") or "日志"
+        kind = entry.get("kind") or "info"
+        content = _truncate_text(str(entry.get("content") or ""), 320)
+        lines.append(f"- **[{ts}] {source} / {agent}** ({kind}): {content}")
+    if len(entries) > 80:
+        lines.append(f"- ... 及其他 {len(entries) - 80} 条审计记录")
+    return lines
+
+
 def _dict_to_markdown(data: dict, indent: int = 0) -> str:
     """将字典递归转为 Markdown 列表，自动把 ISO 时间戳转为北京时间"""
     lines = []
     prefix = "  " * indent
     for key, value in data.items():
         if key in SKIP_REPORT_KEYS:
+            continue
+        if key in MARKDOWN_REPORT_FIELDS and isinstance(value, str):
+            lines.append(_render_markdown_field(key, value, indent))
             continue
         if key == "tool_results" and isinstance(value, list):
             lines.append(f"{prefix}- **{key}**:")
@@ -481,7 +629,7 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
         sections.append("")
         sections.append(f"- 时间: {timestamp}")
         sections.append(f"- 质询对象: {label}")
-        sections.append(f"- 满意度/质量分: {_fmt_confidence(feedback.get('satisfaction', feedback.get('quality_score', 'N/A')))}")
+        sections.append(f"- 置信度/质量分: {_fmt_confidence(feedback.get('confidence', feedback.get('quality_score', 'N/A')))}")
         if feedback.get("quality_delta") is not None:
             sections.append(f"- 置信度变化 Δ(t): {float(feedback.get('quality_delta')):.3f}")
         sections.append(f"- 问题数: {feedback.get('issue_count', 0)}（高严重度 {feedback.get('high_severity_count', 0)}）")

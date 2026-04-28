@@ -18,11 +18,31 @@ describe("mapAgentHistoryToStreamState", () => {
       analysis_states: [
         {
           round_number: 1,
+          evidence_board: {
+            timeline_events: [
+              {
+                agent: "challenger",
+                event_type: "phase_review",
+                phase: "forensics",
+                phase_round: 1,
+                summary: "Forensics 第一轮质询",
+                timestamp: "2026-04-21T00:00:01.000Z",
+              },
+            ],
+          },
           result_snapshot: {
             forensics: { confidence: 0.71 },
             osint: { confidence: 0.62 },
             challenger: { quality_score: 0.8 },
           },
+        },
+      ],
+      audit_logs: [
+        {
+          action: "task_created",
+          agent: "system",
+          created_at: "2026-04-20T23:59:59.000Z",
+          metadata: { file_count: 2 },
         },
       ],
       report: {
@@ -34,8 +54,15 @@ describe("mapAgentHistoryToStreamState", () => {
       },
     })
 
-    expect(mapped.logs).toHaveLength(1)
-    expect(mapped.logs[0]).toMatchObject({ agent: "forensics", type: "finding", content: "检测完成" })
+    expect(mapped.logs).toHaveLength(3)
+    expect(mapped.logs[0]).toMatchObject({ agent: "system", type: "audit", sourceKind: "audit" })
+    expect(mapped.logs[1]).toMatchObject({ agent: "forensics", type: "finding", content: "检测完成" })
+    expect(mapped.logs[2]).toMatchObject({
+      agent: "challenger",
+      phase: "forensics",
+      phaseRound: 1,
+      sourceKind: "timeline",
+    })
     expect(mapped.forensicsResult).toEqual({ confidence: 0.71 })
     expect(mapped.osintResult).toEqual({ confidence: 0.62 })
     expect(mapped.challengerFeedback).toEqual({ quality_score: 0.8 })

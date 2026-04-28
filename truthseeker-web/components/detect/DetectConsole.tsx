@@ -109,7 +109,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const role = (searchParams.get("role") || "host") as UserRole
     const inviteToken = searchParams.get("invite_token")
     const [showExpertPanel, setShowExpertPanel] = useState(false)
-    const [viewMode, setViewMode] = useState<"2d" | "3d" | "timeline" | "graph">("3d")
+    const [viewMode, setViewMode] = useState<"3d" | "timeline" | "graph">("3d")
     const [taskContext, setTaskContext] = useState<TaskContext>({
         inputType: "mixed",
         priorityFocus: searchParams.get("focus") || "balanced",
@@ -132,7 +132,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         files: taskContext.files,
         casePrompt: taskContext.casePrompt,
         priorityFocus: taskContext.priorityFocus,
-        autoStart: role === "host" && taskLoaded,
+        autoStart: role === "host" && taskLoaded && taskContext.status !== "completed" && taskContext.status !== "waiting_consultation",
         role,
         inviteToken,
         channel,
@@ -152,10 +152,17 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         type: log.type ?? "action",
         content: log.content,
         timestamp: log.timestamp ?? new Date(0).toISOString(),
+        phase: log.phase,
+        phaseRound: log.phaseRound,
+        sourceKind: log.sourceKind,
+        action: log.action,
     }))
 
     const agentStatus = (key: string, hasResult: boolean) =>
         currentNode === key ? "analyzing" : hasResult ? "complete" : "idle"
+    const backgroundDensity = viewMode === "timeline" ? 3.0 : 1.0
+    const backgroundStarSpeed = viewMode === "timeline" ? 0.0015 : 0.15
+    const backgroundAnimationSpeed = viewMode === "timeline" ? 0.0035 : 0.35
 
     useEffect(() => {
         if (role === "expert") {
@@ -238,16 +245,16 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                 <StarBackground
                     mouseInteraction={false}
                     mouseRepulsion={false}
-                    density={0.5}
-                    glowIntensity={0.3}
+                    density={backgroundDensity}
+                    glowIntensity={0.15}
                     saturation={0}
                     hueShift={140}
                     twinkleIntensity={0.3}
                     rotationSpeed={0.05}
                     repulsionStrength={2}
                     autoCenterRepulsion={0}
-                    starSpeed={0.3}
-                    speed={0.7}
+                    starSpeed={backgroundStarSpeed}
+                    speed={backgroundAnimationSpeed}
                 />
             </div>
             
@@ -301,16 +308,6 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             }`}
                         >
                             {viewMode === 'graph' ? '返回 Agent 视图' : '图谱视图'}
-                        </button>
-                        <button
-                            onClick={() => setViewMode(v => v === '3d' ? '2d' : '3d')}
-                            className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
-                                viewMode === '2d'
-                                    ? 'text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/10'
-                                    : 'text-white/50 border border-white/10 hover:bg-white/5'
-                            }`}
-                        >
-                            {viewMode === '3d' ? '2D 正交' : '3D 拟真'}
                         </button>
                         <button
                             onClick={() => setShowExpertPanel(!showExpertPanel)}
@@ -453,118 +450,6 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         }
                         activeAgent={currentNode || (isComplete ? 'commander' : null)}
                     />
-                </div>
-            ) : viewMode !== "timeline" ? (
-                <div className="flex-1 p-4 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-7xl mx-auto w-full auto-rows-fr">
-                    {/* 左上：媒体与溯源（OSINT） */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-                        className={`liquid-glass border border-white/10 shadow-lg rounded-2xl p-5 flex flex-col gap-4 min-h-[300px] transition-all duration-500 ${agentStatus("osint", !!osintResult) === "analyzing" ? "agent-glow-green" : ""}`}
-                    >
-                        <AgentCard
-                            name="情报溯源Agent"
-                            agentKey="osint"
-                            icon={<Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={20} height={20} className="w-5 h-5" />}
-                            status={agentStatus("osint", !!osintResult)}
-                            confidence={osintSnapshot ? osintSnapshot.confidence : undefined}
-                            description="网络威胁情报 · 路由追踪 · 元数据校验"
-                        />
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
-                            <AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" />
-                        </div>
-                    </motion.div>
-
-                    {/* 右上：电子取证 */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-                        className={`liquid-glass border border-white/10 shadow-lg rounded-2xl p-5 flex flex-col gap-4 min-h-[300px] transition-all duration-500 ${agentStatus("forensics", !!forensicsResult) === "analyzing" ? "agent-glow-indigo" : ""}`}
-                    >
-                        <AgentCard
-                            name="电子取证Agent"
-                            agentKey="forensics"
-                            icon={<Image src="/agent-icons/forensics.svg" alt="电子取证Agent" width={20} height={20} className="w-5 h-5" />}
-                            status={agentStatus("forensics", !!forensicsResult)}
-                            confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined}
-                            description="全模态取证 · RD/VT 工具矩阵"
-                        />
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
-                            <AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" />
-                        </div>
-                    </motion.div>
-
-                    {/* 左下：逻辑质询Agent */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-                        className={`liquid-glass border border-white/10 shadow-lg rounded-2xl p-5 flex flex-col gap-4 min-h-[300px] transition-all duration-500 ${agentStatus("challenger", !!challengerFeedback) === "analyzing" ? "agent-glow-amber" : ""}`}
-                    >
-                        <AgentCard
-                            name="逻辑质询Agent"
-                            agentKey="challenger"
-                            icon={<Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={20} height={20} className="w-5 h-5" />}
-                            status={agentStatus("challenger", !!challengerFeedback)}
-                            confidence={challengerSnapshot ? challengerSnapshot.qualityScore : undefined}
-                            description="跨模态矛盾检测 · 置信度自适应校验"
-                        />
-
-                        {/* 重审提示条 */}
-                        <AnimatePresence>
-                            {!!challengerSnapshot?.requiresMoreEvidence && (
-                                <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    className="bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg p-2.5 flex items-center gap-2"
-                                >
-                                    <span className="animate-pulse">🔄</span>
-                                    <span className="text-xs text-[#F59E0B]">发现证据矛盾，触发深度研判机制重审</span>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-
-                        <div className="flex-1 rounded-xl glass-card p-3 min-h-[140px] overflow-hidden flex flex-col">
-                            <AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" />
-                        </div>
-                    </motion.div>
-
-                    {/* 右下：研判指挥Agent */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-                        className={`liquid-glass border border-white/10 shadow-lg rounded-2xl p-5 flex flex-col gap-4 min-h-[300px] transition-all duration-500 ${agentStatus("commander", !!finalVerdict) === "analyzing" ? "agent-glow-cyan" : ""}`}
-                    >
-                        <AgentCard
-                            name="研判指挥Agent"
-                            agentKey="commander"
-                            icon={<Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={20} height={20} className="w-5 h-5" />}
-                            status={agentStatus("commander", !!finalVerdict)}
-                            confidence={verdictSnapshot ? verdictSnapshot.confidence : undefined}
-                            description="多维向量收敛中心 · 最终判决生成"
-                        />
-                        <div className="flex-1 min-h-[120px] overflow-hidden flex flex-col">
-                            <AnimatePresence mode="wait">
-                                {finalVerdict ? (
-                                    <motion.div
-                                        key="verdict"
-                                        className="flex-1 min-h-0 flex flex-col gap-3"
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                    >
-                                        <VerdictBadge verdict={finalVerdict} />
-                                        <div className="rounded-xl glass-card p-3 flex-1 min-h-0">
-                                            <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
-                                        </div>
-                                    </motion.div>
-                                ) : (
-                                    <motion.div
-                                        key="logs"
-                                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                                        className="rounded-xl glass-card p-3 flex-1 min-h-0"
-                                    >
-                                        <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-                    </motion.div>
                 </div>
             ) : null}
 

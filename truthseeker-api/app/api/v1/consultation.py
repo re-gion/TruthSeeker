@@ -237,11 +237,19 @@ async def get_agent_history(task_id: str, request: Request, invite_token: Option
         .order("generated_at", desc=True)
         .execute()
     )
+    audit_resp = (
+        supabase.table("audit_logs")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
 
     return {
         "task": task_resp.data[0],
         "agent_logs": logs_resp.data or [],
         "analysis_states": states_resp.data or [],
+        "audit_logs": audit_resp.data or [],
         "report": reports_resp.data[0] if reports_resp.data else None,
     }
 

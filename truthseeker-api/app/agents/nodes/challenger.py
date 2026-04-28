@@ -7,7 +7,7 @@ from typing import Any
 
 from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.edges.conditions import evaluate_phase_convergence
-from app.agents.tools.llm_client import build_sample_references, challenger_cross_validate
+from app.agents.tools.llm_client import build_sample_references, challenger_model_review
 from app.services.audit_log import record_audit_event
 from app.utils.supabase_client import supabase
 
@@ -57,6 +57,37 @@ def _phase_delta(history: list[float], current: float) -> float | None:
     if not history:
         return None
     return abs(float(history[-1]) - float(current))
+
+
+def _merge_issues(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for group in groups:
+        for issue in group:
+            if not isinstance(issue, dict):
+                continue
+            issue_type = str(issue.get("type") or "model_challenge")
+            description = str(issue.get("description") or issue.get("summary") or issue_type)
+            severity = str(issue.get("severity") or "medium").lower()
+            if severity not in {"high", "medium", "low"}:
+                severity = "medium"
+            agent = str(issue.get("agent") or "")
+            key = (issue_type, description, agent)
+            if key in seen:
+                continue
+            normalized = dict(issue)
+            normalized.update({"type": issue_type, "description": description, "severity": severity})
+            if agent:
+                normalized["agent"] = agent
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+def _normalize_target_agent(value: Any, fallback: str) -> str:
+    if value in {"forensics", "osint", "commander"}:
+        return str(value)
+    return fallback if fallback in {"forensics", "osint", "commander"} else "forensics"
 
 
 def _forensics_issues(forensics: dict[str, Any]) -> list[dict[str, Any]]:
@@ -141,7 +172,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     task_id = state["task_id"]
     phase = state.get("analysis_phase") or "forensics"
     round_num = state.get("current_round", 1)
-    max_rounds = int(state.get("max_rounds", 3) or 3)
+    max_rounds = min(int(state.get("max_rounds", 5) or 5), 5)
     threshold = float(state.get("convergence_threshold", 0.08) or 0.08)
     phase_rounds = dict(state.get("phase_rounds") or {"forensics": 1, "osint": 1, "commander": 1})
     phase_round = int(phase_rounds.get(phase, 1))
@@ -201,44 +232,70 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         base_quality = float(final_verdict.get("quality_score", final_verdict.get("confidence", 0.5)) or 0.5)
 
     llm_cross_validation = ""
+    model_confidence = base_quality
+    model_requires_more_evidence = False
+    model_target_agent = phase
+    model_issues: list[dict[str, Any]] = []
+    model_residual_risks: list[dict[str, Any]] = []
     log("action", "调用 Kimi 多模态上下文进行逻辑交叉审查")
     try:
-        llm_cross_validation = await challenger_cross_validate(
+        model_review = await challenger_model_review(
             forensics,
             {**osint, "final_verdict": final_verdict if phase == "commander" else None},
             state.get("challenges") or [],
             case_prompt,
             sample_refs,
+            phase=phase,
+            phase_round=phase_round,
+            base_confidence=base_quality,
+            deterministic_issues=issues_found,
         )
-        if any(keyword in llm_cross_validation for keyword in ["矛盾", "冲突", "不一致"]):
-            issues_found.append(_issue(
-                "llm_logic_challenge",
-                "LLM 逻辑审查提示存在潜在矛盾或不一致",
-                "medium",
-                agent=phase,
-            ))
+        llm_cross_validation = str(model_review.get("markdown") or "")
+        model_confidence = float(model_review.get("confidence", base_quality) or base_quality)
+        model_requires_more_evidence = bool(model_review.get("requires_more_evidence"))
+        model_target_agent = _normalize_target_agent(model_review.get("target_agent"), phase)
+        model_issues = [issue for issue in (model_review.get("issues") or []) if isinstance(issue, dict)]
+        model_residual_risks = [risk for risk in (model_review.get("residual_risks") or []) if isinstance(risk, dict)]
     except Exception as exc:
-        llm_cross_validation = f"[降级模式: LLM不可用] 逻辑审查异常: {exc}"
+        llm_cross_validation = (
+            "### 质询对象与本轮置信度\n"
+            f"- 质询对象: {phase}\n"
+            f"- 本轮置信度: {base_quality:.1%}\n\n"
+            "### 主要质询点\n"
+            f"- Kimi 逻辑审查异常: {type(exc).__name__}\n\n"
+            "### 打回/放行建议\n"
+            "- 使用代码侧硬门槛继续判定，并建议人工复核。\n\n"
+            "### 收敛依据\n"
+            f"- 异常详情: {exc}"
+        )
         log("action", f"LLM 逻辑审查异常: {type(exc).__name__}")
 
+    issues_found = _merge_issues(issues_found, model_issues)
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
-    quality_score = _score_issues(issues_found, base=base_quality)
-    satisfaction = quality_score
+    confidence = _score_issues(issues_found, base=model_confidence)
+    quality_score = confidence
     previous_scores = list(quality_history.get(phase) or [])
-    delta = _phase_delta(previous_scores, quality_score)
-    quality_history[phase] = previous_scores + [quality_score]
+    delta = _phase_delta(previous_scores, confidence)
+    quality_history[phase] = previous_scores + [confidence]
 
     convergence = evaluate_phase_convergence(
         quality_delta=delta,
-        satisfaction=satisfaction,
+        confidence=confidence,
         round_count=phase_round,
         max_rounds=max_rounds,
         threshold=threshold,
     )
     maxed = bool(convergence.get("force_max_rounds"))
     phase_stable = bool(convergence.get("is_stable"))
-    requires_more_evidence = bool(high) and not maxed and not phase_stable
+    requires_more_evidence = (
+        not maxed
+        and (
+            phase_round < 2
+            or model_requires_more_evidence
+            or (bool(high) and not phase_stable)
+        )
+    )
     residual_risks: list[dict[str, Any]] = []
     if bool(high) and maxed:
         residual_risks = [
@@ -250,11 +307,15 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             }
             for issue in high
         ]
+    if model_residual_risks:
+        residual_risks.extend(model_residual_risks)
 
     if phase_stable and not high:
-        log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，满意度 {satisfaction:.1%}，阶段收敛")
+        log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，置信度 {confidence:.1%}，阶段收敛")
+    elif phase_round < 2 and not maxed:
+        log("challenge", f"最少质询轮次未满足，继续打回 {model_target_agent or phase} 阶段复核")
     elif requires_more_evidence:
-        log("challenge", f"发现 {len(high)} 个高严重度问题，打回 {phase} 阶段重审")
+        log("challenge", f"模型建议或硬门槛要求补证，打回 {model_target_agent or phase} 阶段重审")
     elif high and maxed:
         log("challenge", f"{phase} 阶段达到最大轮次，保留 {len(high)} 个高风险问题并继续推进")
     elif issues_found:
@@ -271,8 +332,10 @@ async def challenger_node(state: TruthSeekerState) -> dict:
                 "phase": phase,
                 "high": len(high),
                 "medium": len(medium),
-                "quality_score": quality_score,
+                "confidence": confidence,
                 "requires_more_evidence": requires_more_evidence,
+                "model_requires_more_evidence": model_requires_more_evidence,
+                "model_target_agent": model_target_agent,
             },
         )
 
@@ -307,7 +370,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "timestamp": _now(),
         })
 
-    target_agent = phase if requires_more_evidence else None
+    target_agent = model_target_agent if requires_more_evidence else None
+    if requires_more_evidence and phase_round < 2:
+        target_agent = phase
     if phase == "commander" and requires_more_evidence:
         target_agent = "commander"
 
@@ -323,7 +388,11 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "high_severity_count": len(high),
         "medium_severity_count": len(medium),
         "quality_score": quality_score,
-        "satisfaction": satisfaction,
+        "confidence": confidence,
+        "satisfaction": confidence,
+        "model_confidence": model_confidence,
+        "model_requires_more_evidence": model_requires_more_evidence,
+        "model_target_agent": model_target_agent,
         "quality_delta": delta,
         "convergence_threshold": threshold,
         "convergence_stable": phase_stable,
@@ -340,16 +409,18 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     if requires_more_evidence:
         phase_rounds[phase] = phase_round + 1
 
-    log("conclusion", f"逻辑质询完成：phase={phase}，质量 {quality_score:.1%}，问题 {len(issues_found)} 个")
+    log("conclusion", f"逻辑质询完成：phase={phase}，置信度 {confidence:.1%}，问题 {len(issues_found)} 个")
     record_audit_event(
         action="challenger.complete",
         task_id=task_id,
         agent="challenger",
         metadata={
             "phase": phase,
-            "quality_score": quality_score,
+            "confidence": confidence,
             "issue_count": len(issues_found),
             "requires_more_evidence": requires_more_evidence,
+            "model_requires_more_evidence": model_requires_more_evidence,
+            "model_target_agent": model_target_agent,
         },
     )
 
@@ -368,11 +439,14 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "phase": phase,
             "phase_round": phase_round,
             "quality_score": quality_score,
-            "satisfaction": satisfaction,
+            "confidence": confidence,
+            "satisfaction": confidence,
             "quality_delta": delta,
             "requires_more_evidence": requires_more_evidence,
+            "model_requires_more_evidence": model_requires_more_evidence,
+            "model_target_agent": model_target_agent,
             "maxed_rounds": maxed,
-            "summary": f"Challenger 质询 {phase}: 第 {phase_round} 轮，质量 {quality_score:.1%}",
+            "summary": f"Challenger 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}",
         }],
         "expert_messages": expert_messages,
         "current_round": round_num + (1 if requires_more_evidence else 0),

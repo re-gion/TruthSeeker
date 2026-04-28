@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
+from typing import Any
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -78,6 +80,111 @@ def _sample_references_text(sample_refs: list[dict] | None) -> str:
             "storage_path": ref.get("storage_path"),
         })
     return json.dumps(safe_refs, ensure_ascii=False, indent=2)
+
+
+def _clamp_unit(value: Any, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0.0, min(1.0, parsed))
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1", "y"}:
+            return True
+        if lowered in {"false", "no", "0", "n"}:
+            return False
+    return default
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _normalize_issue_list(value: Any, phase: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    issues: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            description = str(item.get("description") or item.get("issue") or item.get("summary") or "").strip()
+            if not description:
+                continue
+            severity = str(item.get("severity") or "medium").lower()
+            if severity not in {"high", "medium", "low"}:
+                severity = "medium"
+            issues.append({
+                "type": str(item.get("type") or "model_challenge"),
+                "description": description,
+                "severity": severity,
+                "agent": str(item.get("agent") or item.get("target_agent") or phase),
+            })
+        elif isinstance(item, str) and item.strip():
+            issues.append({
+                "type": "model_challenge",
+                "description": item.strip(),
+                "severity": "medium",
+                "agent": phase,
+            })
+    return issues
+
+
+def _default_challenger_markdown(
+    *,
+    phase: str,
+    confidence: float,
+    requires_more_evidence: bool,
+    target_agent: str | None,
+    issues: list[dict[str, Any]],
+    residual_risks: list[dict[str, Any]],
+) -> str:
+    issue_lines = [
+        f"- {issue.get('severity', 'medium')}: {issue.get('description', issue.get('type', '未命名质询点'))}"
+        for issue in issues[:6]
+    ] or ["- 暂未发现新的阻断性质询点。"]
+    risk_lines = [
+        f"- {risk.get('description') or risk.get('reason') or risk}"
+        for risk in residual_risks[:4]
+    ] or ["- 暂无新增残留风险；仍建议保留人工复核入口。"]
+    suggestion = (
+        f"建议打回 {target_agent or phase} 继续补证。"
+        if requires_more_evidence
+        else "建议放行至下一阶段，并在报告中保留限制说明。"
+    )
+    return "\n".join([
+        "### 质询对象与本轮置信度",
+        f"- 质询对象: {target_agent or phase}",
+        f"- 本轮置信度: {confidence:.1%}",
+        "",
+        "### 主要质询点",
+        *issue_lines,
+        "",
+        "### 打回/放行建议",
+        f"- {suggestion}",
+        "",
+        "### 收敛依据",
+        *risk_lines,
+    ])
 
 
 _MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -247,13 +354,15 @@ async def forensics_interpret(
     system_prompt = (
             "你是一位专攻深度伪造检测的取证分析专家。"
             "你需要在同一上下文中综合样本引用、全局检测目标、Reality Defender 和 VirusTotal 等工具结果，"
-            "撰写结构清晰、术语准确的中文电子取证报告。"
-            "报告应包含：1) 检材概况；2) 工具矩阵与等待结果；3) 跨模态取证鉴伪结论；"
-            "4) 关键证据、限制和后续复核建议。"
+            "撰写结构清晰、术语准确的中文电子取证 Markdown 报告。"
+            "必须使用以下二级内小标题，且标题原样保留："
+            "### 自主检材观察；### 外部检测结果解读；### 融合判断；### 限制与复核建议。"
+            "自主检材观察必须融合你对可访问图片、文本内容和样本摘要的直接观察；"
+            "若视频、音频或文件本体无法直接读取，要明确说明可见输入边界，不能只复述外部 API。"
             "如果工具结果标记 degraded、analysis_available=false 或 method=local_fallback_no_external_verdict，"
             "只能写成外部工具未取得真实结论，不得把降级占位字段解释为真实检测通过、面部自然或无伪影。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
-            "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
+            "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
     human_text = (
         f"全局检测目标/案件背景：{case_prompt or '用户未补充额外提示。'}\n\n"
@@ -266,10 +375,15 @@ async def forensics_interpret(
         human_text=human_text,
         sample_refs=sample_refs,
         fallback_text=(
-            f"基于规则推断: 检测对象类型={input_type}, "
-            f"是否伪造={raw_api_result.get('is_deepfake', False)}, "
-            f"置信度/概率={raw_api_result.get('deepfake_probability', raw_api_result.get('confidence', 'N/A'))}。"
-            f"原始数据如下: {json.dumps(raw_api_result, ensure_ascii=False)}"
+            "### 自主检材观察\n"
+            f"- 降级模式下无法调用 Kimi 完成自主图像/文本复核；当前仅能读取样本类型 {input_type} 与工具摘要。\n\n"
+            "### 外部检测结果解读\n"
+            f"- 是否伪造: {raw_api_result.get('is_deepfake', False)}\n"
+            f"- 置信度/概率: {raw_api_result.get('deepfake_probability', raw_api_result.get('confidence', 'N/A'))}\n\n"
+            "### 融合判断\n"
+            "- 当前判断主要来自规则化工具摘要，不能替代多模态模型复核。\n\n"
+            "### 限制与复核建议\n"
+            f"- 原始数据摘要: {json.dumps(raw_api_result, ensure_ascii=False)[:800]}"
         ),
     )
 
@@ -290,12 +404,14 @@ async def osint_interpret(
             "你是一位专攻威胁评估的开源情报(OSINT)分析师。"
             "你需要对传入的原始情报数据、Exa 检索结果、VirusTotal 结果和样本引用进行专业研判，"
             "并说明情报溯源图谱的关键节点、关系和引用覆盖情况。"
-            "报告应包含：1) 威胁等级判定；2) 关键指标与异常信号分析；"
-            "3) 来源可信度评估；4) 关联风险、溯源线索和图谱质量限制。"
+            "必须输出 Markdown，并原样保留这些小标题："
+            "### 自主情报推理；### 外部情报结果解读；### 来源可信度与图谱质量；### 关联风险与复核建议。"
+            "自主情报推理要基于案件提示、样本摘要、实体关系和文本线索进行推断，"
+            "外部情报结果解读再汇总 Exa、VirusTotal 等 API 证据。"
             "如果 VirusTotal 或 Exa 标记 degraded，只能说明外部情报不可用或需复核，"
             "不得把未实际调用的结果写成安全厂商未检出。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
-            "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
+            "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
     human_text = (
         f"全局检测目标/案件背景：{case_prompt or '用户未补充额外提示。'}\n\n"
@@ -308,9 +424,15 @@ async def osint_interpret(
         human_text=human_text,
         sample_refs=sample_refs,
         fallback_text=(
-            f"基于规则推断: 威胁评分={raw_intel.get('threat_score', 'N/A')}, "
-            f"关键指标数={len(indicators) if isinstance(indicators, list) else 'N/A'}。"
-            f"原始数据如下: {json.dumps(raw_intel, ensure_ascii=False)}"
+            "### 自主情报推理\n"
+            "- 降级模式下无法调用 Kimi 深度推理；当前仅能基于已抽取指标和图谱摘要做保守判断。\n\n"
+            "### 外部情报结果解读\n"
+            f"- 威胁评分: {raw_intel.get('threat_score', 'N/A')}\n"
+            f"- 关键指标数: {len(indicators) if isinstance(indicators, list) else 'N/A'}\n\n"
+            "### 来源可信度与图谱质量\n"
+            "- 需复核 Exa/VirusTotal 是否实际返回可引用证据。\n\n"
+            "### 关联风险与复核建议\n"
+            f"- 原始情报摘要: {json.dumps(raw_intel, ensure_ascii=False)[:800]}"
         ),
     )
 
@@ -319,6 +441,93 @@ async def osint_interpret(
 # Challenger Agent
 # ---------------------------------------------------------------------------
 
+async def challenger_model_review(
+    forensics: dict,
+    osint: dict,
+    challenges: list,
+    case_prompt: str = "",
+    sample_refs: list[dict] | None = None,
+    *,
+    phase: str = "forensics",
+    phase_round: int = 1,
+    base_confidence: float = 0.5,
+    deterministic_issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Let Kimi produce structured challenger reasoning and a Markdown report."""
+    base_confidence = _clamp_unit(base_confidence)
+    deterministic_issues = deterministic_issues or []
+    system_prompt = (
+            "你是一位批判性思维挑战者，职责是交叉验证多个智能体的证据。"
+            "你需要主动审阅当前 phase 对应的 Forensics、OSINT 或 Commander 结果，"
+            "给出阶段置信度、是否建议打回、建议打回的目标 Agent、主要质询点、残留风险，"
+            "并撰写 Markdown 逻辑质询报告。"
+            "输出必须是 JSON 对象，不要用代码块包裹，字段如下："
+            "confidence: 0 到 1 的数字；requires_more_evidence: 布尔值；"
+            "target_agent: forensics/osint/commander/null；issues: 数组，每项含 type、description、severity、agent；"
+            "residual_risks: 数组；markdown: Markdown 字符串。"
+            "markdown 必须原样保留这些小标题："
+            "### 质询对象与本轮置信度；### 主要质询点；### 打回/放行建议；### 收敛依据。"
+            "模型可以建议打回，但代码会另外用 Δ(t)<0.08、置信度>0.8、最少 2 轮、最多 5 轮兜底。"
+            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
+    )
+    human_text = (
+        f"【全局检测目标/案件背景】\n{case_prompt or '用户未补充额外提示。'}\n\n"
+        f"【当前质询阶段】\nphase={phase}, phase_round={phase_round}, base_confidence={base_confidence}\n\n"
+        f"【样本引用摘要】\n{_sample_references_text(sample_refs)}\n\n"
+        f"【取证分析结果】\n{json.dumps(forensics, ensure_ascii=False, indent=2)}\n\n"
+        f"【情报评估结果】\n{json.dumps(osint, ensure_ascii=False, indent=2)}\n\n"
+        f"【代码侧已发现的问题】\n{json.dumps(deterministic_issues, ensure_ascii=False, indent=2)}\n\n"
+        f"【已有质疑记录】\n{json.dumps(challenges, ensure_ascii=False, indent=2)}"
+    )
+    fallback_payload = {
+        "confidence": base_confidence,
+        "requires_more_evidence": False,
+        "target_agent": phase,
+        "issues": [],
+        "residual_risks": [{"reason": "Kimi 结构化质询不可用，使用代码侧硬门槛继续判定"}],
+        "markdown": _default_challenger_markdown(
+            phase=phase,
+            confidence=base_confidence,
+            requires_more_evidence=False,
+            target_agent=phase,
+            issues=deterministic_issues,
+            residual_risks=[{"reason": "Kimi 结构化质询不可用，需人工复核代码侧质询结果"}],
+        ),
+    }
+    raw = await _invoke_multimodal_llm(
+        system_prompt=system_prompt,
+        human_text=human_text,
+        sample_refs=sample_refs,
+        fallback_text=json.dumps(fallback_payload, ensure_ascii=False),
+    )
+    parsed = _extract_json_object(raw) or {}
+    confidence = _clamp_unit(parsed.get("confidence"), base_confidence)
+    issues = _normalize_issue_list(parsed.get("issues"), phase)
+    residual_risks = parsed.get("residual_risks") if isinstance(parsed.get("residual_risks"), list) else []
+    target_agent_raw = parsed.get("target_agent")
+    target_agent = str(target_agent_raw) if target_agent_raw in {"forensics", "osint", "commander"} else phase
+    requires_more_evidence = _coerce_bool(parsed.get("requires_more_evidence"), False)
+    markdown = parsed.get("markdown") if isinstance(parsed.get("markdown"), str) else ""
+    if not markdown.strip():
+        markdown = _default_challenger_markdown(
+            phase=phase,
+            confidence=confidence,
+            requires_more_evidence=requires_more_evidence,
+            target_agent=target_agent,
+            issues=issues or deterministic_issues,
+            residual_risks=residual_risks,
+        )
+    return {
+        "confidence": confidence,
+        "requires_more_evidence": requires_more_evidence,
+        "target_agent": target_agent,
+        "issues": issues,
+        "residual_risks": residual_risks,
+        "markdown": markdown,
+        "raw_response": raw,
+    }
+
+
 async def challenger_cross_validate(
     forensics: dict,
     osint: dict,
@@ -326,36 +535,15 @@ async def challenger_cross_validate(
     case_prompt: str = "",
     sample_refs: list[dict] | None = None,
 ) -> str:
-    """Let the LLM cross-validate evidence from forensics and OSINT agents."""
-    system_prompt = (
-            "你是一位批判性思维挑战者，职责是交叉验证多个智能体的证据。"
-            "你需要仔细比对取证分析与情报评估的结论，找出其中的矛盾、"
-            "薄弱证据、逻辑漏洞，或在证据一致时予以确认。"
-            "请撰写结构化的中文交叉验证报告，包含："
-            "1) 证据一致性总览；2) 矛盾与差异点；3) 薄弱环节与不确定性；"
-            "4) 需要进一步调查的问题；5) 整体证据链强度评级(强/中/弱)。"
-            "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
-            "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
+    """Compatibility wrapper returning only the Markdown challenger report."""
+    review = await challenger_model_review(
+        forensics,
+        osint,
+        challenges,
+        case_prompt,
+        sample_refs,
     )
-    human_text = (
-        f"【全局检测目标/案件背景】\n{case_prompt or '用户未补充额外提示。'}\n\n"
-        f"【样本引用摘要】\n{_sample_references_text(sample_refs)}\n\n"
-        f"【取证分析结果】\n{json.dumps(forensics, ensure_ascii=False, indent=2)}\n\n"
-        f"【情报评估结果】\n{json.dumps(osint, ensure_ascii=False, indent=2)}\n\n"
-        f"【已有质疑记录】\n{json.dumps(challenges, ensure_ascii=False, indent=2)}"
-    )
-    return await _invoke_multimodal_llm(
-        system_prompt=system_prompt,
-        human_text=human_text,
-        sample_refs=sample_refs,
-        fallback_text=(
-            "基于规则推断: "
-            f"取证结论={json.dumps(forensics, ensure_ascii=False)[:200]}, "
-            f"情报结论={json.dumps(osint, ensure_ascii=False)[:200]}, "
-            f"已有质疑数={len(challenges) if isinstance(challenges, list) else 'N/A'}。"
-            "交叉验证未能执行，建议人工复核。"
-        ),
-    )
+    return str(review.get("markdown") or "")
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +567,7 @@ async def commander_ruling(
             "2) 置信度评估与证据链完整性分析；3) 各智能体结论对比与权重考量；"
             "4) 关键分歧点及处理意见；5) 后续取证建议与风险提示。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
-            "请直接输出分析文本，不要使用 Markdown 代码块包裹。"
+            "请直接输出分析文本，不要用代码块包裹。"
     )
     human_text = (
         f"【全局检测目标/案件背景】\n{case_prompt or '用户未补充额外提示。'}\n\n"

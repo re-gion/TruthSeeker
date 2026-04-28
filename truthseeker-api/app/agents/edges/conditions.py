@@ -12,7 +12,7 @@ PHASE_SEQUENCE = {
 def evaluate_phase_convergence(
     *,
     quality_delta: float | None,
-    satisfaction: float,
+    confidence: float,
     round_count: int,
     max_rounds: int,
     threshold: float,
@@ -20,7 +20,7 @@ def evaluate_phase_convergence(
     """Evaluate the Challenger phase-stability gate.
 
     Stable reasoning requires all three user-visible gates:
-    Δ(t) < threshold, satisfaction > 0.8, and round_count >= 2.
+    Δ(t) < threshold, confidence > 0.8, and round_count >= 2.
     round_count >= max_rounds is a hard guard to stop repeated retries.
     """
     if round_count >= max_rounds:
@@ -32,16 +32,16 @@ def evaluate_phase_convergence(
 
     stable_delta = quality_delta is not None and quality_delta < threshold
     enough_rounds = round_count >= 2
-    high_satisfaction = satisfaction > 0.8
-    is_stable = bool(stable_delta and high_satisfaction and enough_rounds)
+    high_confidence = confidence > 0.8
+    is_stable = bool(stable_delta and high_confidence and enough_rounds)
     return {
         "is_stable": is_stable,
         "force_max_rounds": False,
         "stable_delta": stable_delta,
-        "high_satisfaction": high_satisfaction,
+        "high_confidence": high_confidence,
         "enough_rounds": enough_rounds,
         "reason": (
-            "满足 Δ(t)、满意度和最小轮次要求，推理趋于稳定"
+            "满足 Δ(t)、置信度和最小轮次要求，推理趋于稳定"
             if is_stable
             else "未同时满足稳定收敛条件"
         ),
@@ -113,6 +113,7 @@ def challenger_route(state: TruthSeekerState) -> str:
         return "commander"
 
     if feedback.get("requires_more_evidence", False):
-        return phase if phase in PHASE_SEQUENCE and phase != "complete" else "forensics"
+        target_agent = feedback.get("target_agent") or phase
+        return target_agent if target_agent in PHASE_SEQUENCE and target_agent != "complete" else "forensics"
 
     return PHASE_SEQUENCE.get(phase, "osint")

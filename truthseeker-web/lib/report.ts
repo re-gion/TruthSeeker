@@ -92,7 +92,7 @@ export function extractAnalysisSnapshot(value: unknown) {
 export function extractChallengerSnapshot(value: unknown) {
     const record = isRecord(value) ? value : {}
     return {
-        qualityScore: readNumber(record, ["quality_score", "confidence", "score"], 0),
+        qualityScore: readNumber(record, ["confidence", "quality_score", "score"], 0),
         requiresMoreEvidence: readBoolean(record, ["requires_more_evidence", "needs_more_evidence"], false),
         challenges: normalizeTextList(readValue(record, ["challenges", "issues_found", "issues", "findings"])),
     }

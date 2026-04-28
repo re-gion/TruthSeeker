@@ -52,13 +52,52 @@ class DetectRequest(BaseModel):
     files: list[dict[str, Any]] = Field(default_factory=list)
     case_prompt: Optional[str] = None
     priority_focus: str = "balanced"
-    max_rounds: int = Field(3, ge=1, le=5)
+    max_rounds: int = Field(5, ge=1, le=5)
     resume: bool = False
 
 
 def _sse(data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=True).replace("\n", "\\n")
     return f"data: {payload}\n\n"
+
+
+AUDIT_ACTION_LABELS = {
+    "detect_start": "检测流程启动",
+    "detect_completed": "检测流程完成",
+    "detect_failed": "检测流程失败",
+    "detect_cancelled": "检测流程取消",
+    "consultation_resume": "专家会诊恢复",
+}
+
+
+def audit_timeline_event(
+    action: str,
+    *,
+    agent: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Convert a persisted audit action into a frontend timeline event."""
+    safe_metadata = metadata or {}
+    label = AUDIT_ACTION_LABELS.get(action)
+    if not label and action.startswith("node_complete."):
+        label = f"节点完成：{action.split('.', 1)[1]}"
+    label = label or action
+    details = []
+    for key in ("input_type", "file_count", "round", "verdict", "has_final_verdict"):
+        if key in safe_metadata and safe_metadata[key] is not None:
+            details.append(f"{key}={safe_metadata[key]}")
+    content = label if not details else f"{label}（{', '.join(details)}）"
+    return {
+        "agent": agent or "system",
+        "type": "audit",
+        "event_type": "audit",
+        "source_kind": "audit",
+        "action": action,
+        "content": content,
+        "summary": content,
+        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+    }
 
 
 async def _heartbeat_sender(queue: asyncio.Queue[str], stop: asyncio.Event) -> None:
@@ -329,6 +368,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 },
             )
             await queue.put(_sse({
+                "type": "timeline_update",
+                "events": [audit_timeline_event(
+                    "consultation_resume",
+                    metadata={"mode": "persistence_recovery", "expert_message_count": len(expert_messages)},
+                )],
+            }))
+            await queue.put(_sse({
                 "type": "complete",
                 "task_id": task_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -365,6 +411,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     metadata={"expert_message_count": len(expert_messages)},
                 )
                 await queue.put(_sse({"type": "consultation_resumed", "task_id": task_id}))
+                await queue.put(_sse({
+                    "type": "timeline_update",
+                    "events": [audit_timeline_event(
+                        "consultation_resume",
+                        metadata={"expert_message_count": len(expert_messages)},
+                    )],
+                }))
             else:
                 graph_input = initial_state
                 await queue.put(_sse({
@@ -390,6 +443,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     user_id=user_id,
                     metadata={"input_type": input_type, "file_count": len(evidence_files)},
                 )
+                await queue.put(_sse({
+                    "type": "timeline_update",
+                    "events": [audit_timeline_event(
+                        "detect_start",
+                        metadata={"input_type": input_type, "file_count": len(evidence_files)},
+                    )],
+                }))
 
             async for chunk in compiled_graph.astream(graph_input, config=config, stream_mode="updates"):
                 if "__interrupt__" in chunk:
@@ -448,16 +508,25 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
 
                     persistence.persist_update(task_id, node_name, updates)
                     await queue.put(_sse({"type": "node_complete", "node": node_name}))
+                    node_audit_metadata = {
+                        "round": updates.get("current_round"),
+                        "has_final_verdict": bool(updates.get("final_verdict")),
+                    }
                     record_audit_event(
                         action=f"node_complete.{node_name}",
                         task_id=task_id,
                         user_id=user_id,
                         agent=node_name,
-                        metadata={
-                            "round": updates.get("current_round"),
-                            "has_final_verdict": bool(updates.get("final_verdict")),
-                        },
+                        metadata=node_audit_metadata,
                     )
+                    await queue.put(_sse({
+                        "type": "timeline_update",
+                        "events": [audit_timeline_event(
+                            f"node_complete.{node_name}",
+                            agent=node_name,
+                            metadata=node_audit_metadata,
+                        )],
+                    }))
 
             if final_verdict_data:
                 persistence.mark_task_completed(task_id, final_verdict_data)
@@ -468,6 +537,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     metadata={"verdict": final_verdict_data.get("verdict")},
                 )
                 await queue.put(_sse({
+                    "type": "timeline_update",
+                    "events": [audit_timeline_event(
+                        "detect_completed",
+                        metadata={"verdict": final_verdict_data.get("verdict")},
+                    )],
+                }))
+                await queue.put(_sse({
                     "type": "complete",
                     "task_id": task_id,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -475,6 +551,10 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             elif not interrupted:
                 persistence.mark_task_failed(task_id, error_summary="检测流程未生成最终裁决")
                 record_audit_event(action="detect_failed", task_id=task_id, user_id=user_id)
+                await queue.put(_sse({
+                    "type": "timeline_update",
+                    "events": [audit_timeline_event("detect_failed")],
+                }))
                 await queue.put(_sse({
                     "type": "task_failed",
                     "task_id": task_id,
@@ -500,6 +580,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 user_id=user_id,
                 metadata={"error_type": type(exc).__name__},
             )
+            await queue.put(_sse({
+                "type": "timeline_update",
+                "events": [audit_timeline_event(
+                    "detect_failed",
+                    metadata={"error_type": type(exc).__name__},
+                )],
+            }))
             await queue.put(_sse({
                 "type": "task_failed",
                 "task_id": task_id,

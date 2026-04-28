@@ -238,6 +238,13 @@
 - [ ] 案例库真实加载功能
 - [x] 文件上传进度条接入真实进度
 
+### 2026-04-29 质询、报告与检测页体验修订
+- [x] Challenger 改为 Kimi 结构化质询建议 + 代码硬门槛兜底（Δ(t)<0.08、置信度 >0.8、最少 2 轮、最多 5 轮）
+- [x] Forensics / OSINT / Challenger LLM 字段改为 Agent 定制 Markdown 输出，保留模型自主推理段落
+- [x] 报告章节改为逻辑质询、质询时间线、全程审计日志、建议与说明顺延
+- [x] 检测页历史回放合并 agent_logs、timeline_events、audit_logs；时间轴展示 Challenger 局部轮次
+- [x] 删除检测页 2D Agent 视图，仅保留 3D、时间轴、图谱入口
+
 ---
 
 ## 每日开发检查清单

@@ -30,12 +30,17 @@ export interface AgentLogEntry {
     content: string
     timestamp: string
     round?: number
+    phase?: string
+    phaseRound?: number
+    sourceKind?: "agent" | "timeline" | "audit" | "system"
+    action?: string
 }
 
 export interface AgentHistoryResponse {
     task?: Record<string, unknown> | null
     agent_logs?: Record<string, unknown>[]
     analysis_states?: Record<string, unknown>[]
+    audit_logs?: Record<string, unknown>[]
     report?: Record<string, unknown> | null
 }
 
@@ -99,6 +104,39 @@ function readNumber(value: unknown): number | undefined {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
+function readString(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function readSourceKind(value: unknown, fallback: AgentLogEntry["sourceKind"]): AgentLogEntry["sourceKind"] {
+    return value === "agent" || value === "timeline" || value === "audit" || value === "system"
+        ? value
+        : fallback
+}
+
+function timestampValue(entry: AgentLogEntry) {
+    const time = Date.parse(entry.timestamp)
+    return Number.isFinite(time) ? time : 0
+}
+
+function sortTimelineEntries(entries: AgentLogEntry[]) {
+    return [...entries].sort((a, b) => timestampValue(a) - timestampValue(b))
+}
+
+function mergeTimelineEntries(current: AgentLogEntry[], incoming: AgentLogEntry[]) {
+    const merged = [...current]
+    const keys = new Set(
+        current.map(entry => `${entry.timestamp}|${entry.agent}|${entry.type}|${entry.content}|${entry.phase ?? ""}|${entry.phaseRound ?? ""}`),
+    )
+    for (const entry of incoming) {
+        const key = `${entry.timestamp}|${entry.agent}|${entry.type}|${entry.content}|${entry.phase ?? ""}|${entry.phaseRound ?? ""}`
+        if (keys.has(key)) continue
+        keys.add(key)
+        merged.push(entry)
+    }
+    return sortTimelineEntries(merged)
+}
+
 function readLogEntry(value: unknown): AgentLogEntry | null {
     if (!isObject(value)) return null
 
@@ -114,10 +152,14 @@ function readLogEntry(value: unknown): AgentLogEntry | null {
 
     return {
         agent,
-        type: typeof value.type === "string" ? value.type : "timeline_update",
+        type: readString(value.type) ?? readString(value.event_type) ?? "timeline_update",
         content,
         timestamp: typeof value.timestamp === "string" ? value.timestamp : new Date().toISOString(),
         round: typeof value.round === "number" ? value.round : undefined,
+        phase: readString(value.phase),
+        phaseRound: readNumber(value.phase_round) ?? readNumber(value.phaseRound),
+        sourceKind: readSourceKind(value.source_kind, "timeline"),
+        action: readString(value.action),
     }
 }
 
@@ -131,12 +173,60 @@ function readPersistedLogEntry(value: unknown): AgentLogEntry | null {
         content,
         timestamp: typeof value.timestamp === "string" ? value.timestamp : typeof value.created_at === "string" ? value.created_at : new Date().toISOString(),
         round: readNumber(value.round_number) ?? readNumber(value.round),
+        phase: readString(value.phase),
+        phaseRound: readNumber(value.phase_round) ?? readNumber(value.phaseRound),
+        sourceKind: "agent",
+    }
+}
+
+function readTimelineEventsFromState(value: unknown): AgentLogEntry[] {
+    if (!isObject(value)) return []
+    const board = readRecord(value.evidence_board)
+    const events = Array.isArray(board?.timeline_events) ? board.timeline_events : []
+    const entries: AgentLogEntry[] = []
+    for (const event of events) {
+        const entry = readLogEntry(event)
+        if (!entry) continue
+        entries.push({
+            ...entry,
+            timestamp: entry.timestamp || readString(value.created_at) || new Date().toISOString(),
+            sourceKind: "timeline",
+        })
+    }
+    return entries
+}
+
+function formatAuditContent(value: Record<string, unknown>) {
+    const action = readString(value.action) ?? "audit"
+    const metadata = readRecord(value.metadata)
+    const fragments: string[] = []
+    for (const key of ["input_type", "file_count", "round", "verdict", "has_final_verdict"]) {
+        const item = metadata?.[key]
+        if (item === undefined || item === null) continue
+        fragments.push(`${key}=${String(item)}`)
+    }
+    return fragments.length > 0 ? `${action}（${fragments.join(", ")}）` : action
+}
+
+function readAuditLogEntry(value: unknown): AgentLogEntry | null {
+    if (!isObject(value)) return null
+    const action = readString(value.action) ?? "audit"
+    return {
+        agent: readString(value.agent) ?? readString(value.actor_role) ?? "system",
+        type: "audit",
+        content: formatAuditContent(value),
+        timestamp: readString(value.created_at) ?? readString(value.timestamp) ?? new Date().toISOString(),
+        sourceKind: "audit",
+        action,
     }
 }
 
 export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): StreamStateFromHistory {
-    const logs = Array.isArray(history.agent_logs)
+    const persistedLogs = Array.isArray(history.agent_logs)
         ? history.agent_logs.map(readPersistedLogEntry).filter((entry): entry is AgentLogEntry => entry !== null)
+        : []
+    const auditLogs = Array.isArray(history.audit_logs)
+        ? history.audit_logs.map(readAuditLogEntry).filter((entry): entry is AgentLogEntry => entry !== null)
         : []
 
     let forensicsResult: Record<string, unknown> | null = null
@@ -144,10 +234,12 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
     let challengerFeedback: Record<string, unknown> | null = null
     let finalVerdict: Record<string, unknown> | null = null
     let currentRound = 1
+    const timelineLogs: AgentLogEntry[] = []
 
     const states = Array.isArray(history.analysis_states) ? history.analysis_states : []
     for (const row of states) {
         currentRound = Math.max(currentRound, readNumber(row.round_number) ?? 1)
+        timelineLogs.push(...readTimelineEventsFromState(row))
         const snapshot = readRecord(row.result_snapshot)
         if (!snapshot) continue
         forensicsResult = readRecord(snapshot.forensics) ?? forensicsResult
@@ -164,7 +256,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
     const status = typeof task?.status === "string" ? task.status : ""
 
     return {
-        logs,
+        logs: sortTimelineEntries([...auditLogs, ...persistedLogs, ...timelineLogs]),
         forensicsResult,
         osintResult,
         challengerFeedback,
@@ -199,7 +291,7 @@ export function useAgentStream({
     casePrompt = "",
     priorityFocus = "balanced",
     autoStart = true,
-    maxRounds = 3,
+    maxRounds = 5,
     role = 'host',
     inviteToken,
     channel
@@ -231,11 +323,11 @@ export function useAgentStream({
         } else if (event.type === "node_start") {
             setCurrentNode(event.node)
         } else if (event.type === "agent_log") {
-            setLogs(prev => [...prev, event.log])
+            setLogs(prev => mergeTimelineEntries(prev, [{ ...event.log, sourceKind: event.log.sourceKind ?? "agent" }]))
         } else if (event.type === "timeline_update") {
             const timelineEntries = readTimelineEntries(event)
             if (timelineEntries.length > 0) {
-                setLogs(prev => [...prev, ...timelineEntries])
+                setLogs(prev => mergeTimelineEntries(prev, timelineEntries))
             }
         } else if (event.type === "forensics_result") {
             setForensicsResult(event.result)
@@ -398,20 +490,22 @@ export function useAgentStream({
     }, [runStream])
 
     useEffect(() => {
-        if (role !== "expert") return
         let cancelled = false
 
         async function loadAgentHistory() {
             try {
                 const url = new URL(`${API_BASE}/api/v1/consultation/${taskId}/agent-history`)
                 if (inviteToken) url.searchParams.set("invite_token", inviteToken)
-                const response = await fetch(url.toString())
+                const headers: Record<string, string> = {}
+                const authToken = await getAuthToken()
+                if (authToken) headers.Authorization = `Bearer ${authToken}`
+                const response = await fetch(url.toString(), { headers })
                 if (!response.ok) throw new Error(`history HTTP ${response.status}`)
                 const history = await response.json() as AgentHistoryResponse
                 if (cancelled) return
 
                 const mapped = mapAgentHistoryToStreamState(history)
-                setLogs((prev) => prev.length > 0 ? prev : mapped.logs)
+                setLogs((prev) => mergeTimelineEntries(prev, mapped.logs))
                 setForensicsResult(mapped.forensicsResult)
                 setOsintResult(mapped.osintResult)
                 setChallengerFeedback(mapped.challengerFeedback)
@@ -420,11 +514,16 @@ export function useAgentStream({
                 setCurrentRound(mapped.currentRound)
                 setIsComplete(mapped.isComplete)
                 setIsWaitingConsultation(mapped.isWaitingConsultation)
-                setIsRunning(!mapped.isComplete && !mapped.isWaitingConsultation)
+                if (mapped.isComplete) {
+                    startedRef.current = true
+                    setIsRunning(false)
+                } else if (role === "expert") {
+                    setIsRunning(!mapped.isWaitingConsultation)
+                }
             } catch (err) {
                 if (!cancelled) {
                     console.error("[useAgentStream] Failed to load agent history:", err)
-                    setIsRunning(false)
+                    if (role === "expert") setIsRunning(false)
                 }
             }
         }
@@ -438,7 +537,6 @@ export function useAgentStream({
 
     useEffect(() => {
         if (role === 'expert') {
-            setIsRunning(true)
             // Expert just listens to broadcast channel
             if (channel) {
                 channel.on('broadcast', { event: 'agent_stream' }, (payload: { payload?: unknown }) => {
