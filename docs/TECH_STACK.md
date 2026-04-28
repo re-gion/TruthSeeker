@@ -17,6 +17,11 @@
 | @supabase/ssr | ^0.8.0 | SSR 认证辅助 |
 | lucide-react | ^0.576.0 | 图标库 |
 | @xyflow/react | ^12.10.2 | 情报溯源图谱交互画布 |
+| `three` | ^0.183.2 | 3D 引擎 |
+| `gsap` | ^3.14.2 | 高级动画库 |
+| `echarts` / `echarts-for-react` | ^6.0.0 / ^3.0.6 | 数据大屏图表 |
+| `react-markdown` / `remark-gfm` | ^10.1.0 / ^4.0.1 | Markdown 渲染（报告分享页） |
+| `postprocessing` | ^6.38.3 | 3D 后处理特效 |
 
 ### 前端脚本
 
@@ -42,6 +47,12 @@
 | httpx | >=0.28.0 | HTTP 客户端 |
 | aiofiles | >=24.1.0 | 文件操作 |
 | weasyprint | >=62.0 | PDF 输出 |
+| markdown | >=3.7 | Markdown 转 HTML（PDF 生成） |
+| Pillow | >=10.0.0 | 图片处理（PDF fallback、媒体元数据） |
+| PyJWT | >=2.8.0,<3.0.0 | JWT 验证 |
+| filetype | >=1.2.0 | 文件类型魔数校验 |
+| pydantic-settings | >=2.8.0 | 环境变量配置管理 |
+| python-dotenv | >=1.0.0 | .env 文件加载 |
 
 ## 环境变量
 
@@ -64,9 +75,12 @@ SUPABASE_JWT_SECRET=NOT_SET
 REALITY_DEFENDER_API_KEY=
 VIRUSTOTAL_API_KEY=
 EXA_API_KEY=
+EXA_BASE_URL=https://api.exa.ai
 KIMI_API_KEY=
-KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL=kimi-k2.6
+KIMI_FALLBACK_MODEL=moonshot-v1-128k
+# 以下当前未被代码直接使用，保留用于未来 LLM 提供商切换
 OPENAI_API_KEY=
 QWEN_API_KEY=
 

@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-04-28（后端阶段式重建与图谱视图核验）
+> **最后审查日期**: 2026-04-28（审计日志增强与文档同步更新）
 
 ---
 
@@ -64,6 +64,15 @@
 - [ ] 案例库真实加载功能暂不实现。
 - [ ] FedPaRS 训练底座运行时代码暂不实现，白皮书/PRD 保持目标架构叙事。
 - [ ] 部署配置暂不实现。
+
+## 2026-04-28 审计日志与降级可见性增强 ✅
+
+- [x] 全库降级/模拟结果在后端终端和鉴伪溯源报告中可见（osint_search、threat_intel、report_generator 等 16 处修复）。
+- [x] `audit_logs` 表增加 `agent` 字段和索引，支持按 Agent 追溯。
+- [x] 四 Agent 节点（forensics/osint/commander/challenger）关键位置插入审计日志调用。
+- [x] SSE 流 `node_complete` 处补充审计事件。
+- [x] `audit_log.py` 成功写入时输出格式化终端日志 `[AUDIT][AGENT] action | task=xxx`。
+- [x] 删除前端废弃 `generateMarkdownReport` 及相关死代码。
 
 ## Layer 1: 核心鉴伪能力（MVP） ✅ 已完成
 

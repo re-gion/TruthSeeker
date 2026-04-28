@@ -94,10 +94,10 @@
 
 | Tool类别 |候选服务 |用途 |
 |----------|----------|------|
-| **视觉伪造检测** | Microsoft Video Authenticator / Reality Defender |面部篡改检测、帧间一致性分析 |
-| **音频伪造检测** | Resemble Detect / ElevenLabs检测API /自建Whisper+Classifier |语音克隆检测、频谱异常分析 |
-| **恶意URL识别** | VirusTotal API / Google Safe Browsing / URLVoid |域名信誉查询、威胁情报关联 |
-| **开源情报查询** | Exa API / Shodan / Censys / WHOIS XML API | 脱敏联网搜索、IP归属、域名注册信息、资产测绘 |
+| **视觉伪造检测** | Reality Defender |面部篡改检测、帧间一致性分析 |
+| **音频伪造检测** | Reality Defender（与视频共用） |语音克隆检测、频谱异常分析 |
+| **恶意URL识别** | VirusTotal API |域名信誉查询、威胁情报关联 |
+| **开源情报查询** | Exa API | 脱敏联网搜索、公开情报来源检索 |
 | **多模态大模型** | Kimi/Moonshot (kimi-k2.6) |四 Agent 共享的多模态基本认知、跨模态推理和报告生成 |
 
 ---

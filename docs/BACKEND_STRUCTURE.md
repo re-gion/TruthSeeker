@@ -46,6 +46,7 @@ truthseeker-api/
 │   ├── services/
 │   │   ├── evidence_files.py
 │   │   ├── text_validation.py
+│   │   ├── auth_config.py       # 认证配置辅助（JWT 设置、公开路由白名单）
 │   │   ├── analysis_persistence.py
 │   │   ├── report_integrity.py
 │   │   ├── audit_log.py

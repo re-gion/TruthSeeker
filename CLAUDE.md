@@ -17,9 +17,11 @@ Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)
 └── Supabase Auth + Realtime            └── Supabase 持久化
 ```
 
-## 当前进度（2026-04-21 审查）
+## 当前进度（2026-04-28 审查）
 
 - **M1 ✅ M2 ✅ M3 ✅** — 四 Agent 辩论完整运行，SSE 流式可用，专家会诊闭环
+- **审计日志 ✅** — 全 Agent 节点审计埋点、终端格式化输出、数据库 agent 字段
+- **降级可见性 ✅** — 所有降级/模拟结果在后端终端和鉴伪溯源报告中可见
 - **M4 ❌** — 部署和竞赛准备未开始
 - 详见 `task.md` 获取完整任务状态
 
