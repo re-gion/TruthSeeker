@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 logger = logging.getLogger(__name__)
 
@@ -435,7 +435,7 @@ def _build_flow_sankey(tasks: list[dict[str, Any]], reports: list[dict[str, Any]
 def _build_capability_metrics(
     reports: list[dict[str, Any]],
     consultation_invites: list[dict[str, Any]],
-    now: datetime,
+    consultation_sessions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     report_task_ids = {
         _read_string(report.get("task_id"))
@@ -443,11 +443,15 @@ def _build_capability_metrics(
         if _read_string(report.get("task_id"))
     }
     consultation_task_ids = {
+        _read_string(session.get("task_id"))
+        for session in consultation_sessions
+        if _read_string(session.get("task_id"))
+    }
+    consultation_task_ids.update({
         _read_string(invite.get("task_id"))
         for invite in consultation_invites
         if _read_string(invite.get("task_id"))
-        and ((_to_datetime(invite.get("expires_at")) or now) > now)
-    }
+    })
     return [
         {
             "id": "reports-generated",
@@ -487,26 +491,47 @@ def _select_rows(table: str, columns: str, warnings: list[dict[str, str]] | None
 
 
 @router.get("/overview")
-async def get_dashboard_overview():
+async def get_dashboard_overview(request: Request):
     generated_at = datetime.now(timezone.utc)
     generated_at_iso = generated_at.isoformat()
     data_warnings: list[dict[str, str]] = []
+    user_id = getattr(request.state, "user_id", None)
 
     tasks = _select_rows(
         "tasks",
-        "id,status,input_type,result,verdict,response_ms,duration_ms,started_at,completed_at,created_at",
+        "id,user_id,status,input_type,result,started_at,completed_at,created_at",
         data_warnings,
     )
+    if user_id and user_id != "anonymous":
+        tasks = [task for task in tasks if task.get("user_id") == user_id]
+
+    task_ids = {_read_string(task.get("id")) for task in tasks if _read_string(task.get("id"))}
+
     reports = _select_rows(
         "reports",
         "task_id,verdict,generated_at,key_evidence,verdict_payload",
         data_warnings,
     )
+    reports = [report for report in reports if _read_string(report.get("task_id")) in task_ids]
+
     consultation_invites = _select_rows(
         "consultation_invites",
         "task_id,status,created_at,expires_at",
         data_warnings,
     )
+    consultation_invites = [
+        invite for invite in consultation_invites
+        if _read_string(invite.get("task_id")) in task_ids
+    ]
+    consultation_sessions = _select_rows(
+        "consultation_sessions",
+        "task_id,status,created_at,closed_at",
+        data_warnings,
+    )
+    consultation_sessions = [
+        session for session in consultation_sessions
+        if _read_string(session.get("task_id")) in task_ids
+    ]
 
     threat_snapshots = _build_threat_snapshots(tasks, reports)
     shanghai_today = _format_zoned_date(generated_at)
@@ -537,6 +562,6 @@ async def get_dashboard_overview():
         "status_breakdown": _build_distribution_items([_display_status(task.get("status")) for task in tasks]),
         "evidence_mix": _build_evidence_mix(reports),
         "flow_sankey": _build_flow_sankey(tasks, reports),
-        "capability_metrics": _build_capability_metrics(reports, consultation_invites, generated_at),
+        "capability_metrics": _build_capability_metrics(reports, consultation_invites, consultation_sessions),
         "data_warnings": data_warnings,
     }

@@ -7,6 +7,42 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+SUPABASE_TABLE_COLUMNS = {
+    "tasks": {
+        "id",
+        "user_id",
+        "status",
+        "input_type",
+        "result",
+        "started_at",
+        "completed_at",
+        "created_at",
+    },
+    "reports": {
+        "id",
+        "task_id",
+        "verdict",
+        "generated_at",
+        "key_evidence",
+        "verdict_payload",
+    },
+    "consultation_invites": {
+        "id",
+        "task_id",
+        "status",
+        "created_at",
+        "expires_at",
+    },
+    "consultation_sessions": {
+        "id",
+        "task_id",
+        "status",
+        "created_at",
+        "closed_at",
+    },
+}
+
+
 class FakeQuery:
     def __init__(self, table_name, db):
         self.table_name = table_name
@@ -15,7 +51,12 @@ class FakeQuery:
         self.sort = None
         self.limit_value = None
 
-    def select(self, _columns):
+    def select(self, columns):
+        if columns != "*":
+            requested = {column.strip() for column in columns.split(",") if column.strip()}
+            unknown_columns = requested - SUPABASE_TABLE_COLUMNS.get(self.table_name, set())
+            if unknown_columns:
+                raise ValueError(f"unknown columns for {self.table_name}: {sorted(unknown_columns)}")
         return self
 
     def eq(self, key, value):
@@ -68,7 +109,6 @@ def build_dashboard_db():
                 "status": "completed",
                 "input_type": "video",
                 "result": {"verdict": "forged", "threat_type": "政务短视频换脸"},
-                "response_ms": 180,
                 "started_at": f"{today_str}T08:00:00.000Z",
                 "completed_at": f"{today_str}T08:00:00.180Z",
                 "created_at": f"{today_str}T07:55:00.000Z",
@@ -142,6 +182,15 @@ def build_dashboard_db():
                 "expires_at": "2999-01-01T00:00:00+00:00",
             },
         ],
+        "consultation_sessions": [
+            {
+                "id": "session-1",
+                "task_id": "task-1",
+                "status": "active",
+                "created_at": f"{today_str}T08:03:00.000Z",
+                "closed_at": None,
+            },
+        ],
     }
 
 
@@ -187,6 +236,14 @@ class DashboardApiTests(TestCase):
         )
         self.assertTrue(body["flow_sankey"]["nodes"])
         self.assertTrue(body["flow_sankey"]["links"])
+        self.assertEqual(
+            body["capability_metrics"],
+            [
+                {"id": "reports-generated", "label": "已生成报告", "value": 2, "helper": "已入库的鉴定报告总量"},
+                {"id": "consultation-triggered", "label": "会诊触发任务", "value": 1, "helper": "触发专家会诊的唯一任务数"},
+                {"id": "reports-covered", "label": "报告覆盖任务", "value": 2, "helper": "已形成报告闭环的唯一任务数"},
+            ],
+        )
 
         serialized = str(body)
         self.assertNotIn("task-secret", serialized)
@@ -211,3 +268,19 @@ class DashboardApiTests(TestCase):
         self.assertEqual(body["evidence_mix"], [])
         self.assertEqual(body["flow_sankey"], {"nodes": [], "links": []})
         self.assertEqual(body["capability_metrics"][0]["value"], 0)
+
+    def test_dashboard_counts_consultation_sessions_without_active_invites(self):
+        from app.api.v1 import dashboard as dashboard_module
+
+        db = build_dashboard_db()
+        db["consultation_invites"] = []
+
+        with patch.object(dashboard_module, "supabase", FakeSupabase(db)), \
+             patch("app.middleware.auth._is_public", lambda path, method="GET": True):
+            client = TestClient(app)
+            response = client.get("/api/v1/dashboard/overview")
+
+        self.assertEqual(response.status_code, 200)
+
+        metrics = {metric["id"]: metric["value"] for metric in response.json()["capability_metrics"]}
+        self.assertEqual(metrics["consultation-triggered"], 1)
