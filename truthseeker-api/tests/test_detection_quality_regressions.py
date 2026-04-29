@@ -96,7 +96,7 @@ class ChallengerTimelineSourceTests(unittest.TestCase):
         self.assertIn("## 五、Challenger 逻辑质询", source)
         self.assertIn("## 六、质询时间线", source)
         self.assertIn("## 七、全程审计日志", source)
-        self.assertIn("## 八、建议与说明", source)
+        self.assertIn("## 九、建议与说明", source)
         self.assertIn("_build_full_audit_log_sections", source)
         self.assertIn("_render_markdown_field", source)
         self.assertIn("llm_cross_validation", source)

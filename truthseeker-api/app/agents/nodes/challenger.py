@@ -9,6 +9,10 @@ from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.edges.conditions import evaluate_phase_convergence
 from app.agents.tools.llm_client import build_sample_references, challenger_model_review
 from app.services.audit_log import record_audit_event
+from app.services.consultation_workflow import (
+    build_consultation_context,
+    evaluate_consultation_trigger,
+)
 from app.utils.supabase_client import supabase
 
 try:
@@ -88,6 +92,20 @@ def _normalize_target_agent(value: Any, fallback: str) -> str:
     if value in {"forensics", "osint", "commander"}:
         return str(value)
     return fallback if fallback in {"forensics", "osint", "commander"} else "forensics"
+
+
+def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("consultation_sessions")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return [item for item in (resp.data or []) if isinstance(item, dict)]
+    except Exception:
+        return []
 
 
 def _forensics_issues(forensics: dict[str, Any]) -> list[dict[str, Any]]:
@@ -178,6 +196,11 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     phase_round = int(phase_rounds.get(phase, 1))
     quality_history = dict(state.get("phase_quality_history") or {"forensics": [], "osint": [], "commander": []})
     expert_messages = list(state.get("expert_messages") or [])
+    consultation_sessions = list(state.get("consultation_sessions") or [])
+    consultation_trigger_history = list(state.get("consultation_trigger_history") or [])
+    active_consultation_session = state.get("active_consultation_session")
+    pending_consultation_approval = state.get("pending_consultation_approval")
+    confirmed_consultation_summary = state.get("confirmed_consultation_summary")
     sample_refs = build_sample_references(_all_evidence_files(state))
     case_prompt = state.get("case_prompt", "")
 
@@ -339,25 +362,84 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             },
         )
 
-    consultation_required = bool(phase == "forensics" and phase_round == 1 and high)
+    target_agent = model_target_agent if requires_more_evidence else None
+    if requires_more_evidence and phase_round < 2:
+        target_agent = phase
+    if phase == "commander" and requires_more_evidence:
+        target_agent = "commander"
+
+    challenge_record = {
+        "round": round_num,
+        "phase": phase,
+        "phase_round": phase_round,
+        "target_agent": target_agent or model_target_agent or phase,
+        "confidence": confidence,
+        "quality_delta": delta,
+        "high_severity_count": len(high),
+        "medium_severity_count": len(medium),
+        "issues": issues_found,
+        "timestamp": _now(),
+    }
+    if high or requires_more_evidence:
+        consultation_trigger_history.append(challenge_record)
+
+    db_sessions = _fetch_consultation_sessions(task_id)
+    if db_sessions:
+        consultation_sessions = db_sessions
+    consultation_trigger = evaluate_consultation_trigger(
+        consultation_trigger_history,
+        existing_sessions=consultation_sessions,
+    )
+    consultation_required = bool(consultation_trigger.get("should_pause"))
     consultation_resumed = False
     consultation_resume_payload = None
     if consultation_required and interrupt is not None:
+        event_type = str(consultation_trigger.get("event_type") or "consultation_required")
+        context_payload = build_consultation_context(
+            task_id=task_id,
+            case_prompt=case_prompt,
+            evidence_files=_all_evidence_files(state),
+            forensics_result=forensics,
+            osint_result=osint,
+            challenger_feedback={"confidence": confidence, "issues_found": issues_found},
+            trigger=consultation_trigger,
+        )
         payload = {
-            "type": "consultation_required",
+            "type": event_type,
             "task_id": task_id,
             "round": round_num,
             "phase": phase,
-            "reason": high[0].get("description", "电子取证阶段存在高严重度问题"),
+            "target_agent": consultation_trigger.get("target_agent"),
+            "repeat_index": consultation_trigger.get("repeat_index"),
+            "requires_user_approval": consultation_trigger.get("requires_user_approval", False),
+            "reason": consultation_trigger.get("reason") or (high[0].get("description") if high else "连续高质询触发会诊"),
             "issues": high,
             "case_prompt": case_prompt,
+            "context": context_payload,
         }
+        pending_consultation_approval = payload if event_type == "consultation_approval_required" else None
+        active_consultation_session = payload if event_type == "consultation_required" else None
         consultation_resume_payload = interrupt(payload)
         consultation_resumed = True
         if isinstance(consultation_resume_payload, dict):
             resumed_messages = consultation_resume_payload.get("expert_messages")
             if isinstance(resumed_messages, list):
                 expert_messages.extend(m for m in resumed_messages if isinstance(m, dict))
+            resumed_sessions = consultation_resume_payload.get("consultation_sessions")
+            if isinstance(resumed_sessions, list):
+                consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
+            summary = consultation_resume_payload.get("confirmed_consultation_summary")
+            if isinstance(summary, dict):
+                confirmed_consultation_summary = summary
+                residual_risks.append({
+                    "phase": phase,
+                    "issue": {"type": "consultation_summary", "description": summary.get("confirmed_summary", "")},
+                    "reason": "用户确认的会诊摘要已回注证据板",
+                    "timestamp": _now(),
+                })
+            if consultation_resume_payload.get("action") in {"skip_consultation", "resume_after_consultation"}:
+                requires_more_evidence = False
+                target_agent = None
             log("thinking", f"会诊已恢复，恢复指令: {consultation_resume_payload.get('action', 'resume')}")
     elif consultation_required:
         log("action", "当前 LangGraph 运行时不可用 interrupt，继续自动重审/推进")
@@ -369,12 +451,6 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "issue": issue,
             "timestamp": _now(),
         })
-
-    target_agent = model_target_agent if requires_more_evidence else None
-    if requires_more_evidence and phase_round < 2:
-        target_agent = phase
-    if phase == "commander" and requires_more_evidence:
-        target_agent = "commander"
 
     feedback = {
         "round": round_num,
@@ -403,6 +479,13 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "consultation_required": consultation_required,
         "consultation_resumed": consultation_resumed,
         "consultation_resume_payload": consultation_resume_payload if isinstance(consultation_resume_payload, dict) else None,
+        "consultation_event_type": consultation_trigger.get("event_type") if consultation_required else None,
+        "consultation_trigger": consultation_trigger,
+        "consultation_sessions": consultation_sessions,
+        "consultation_trigger_history": consultation_trigger_history,
+        "active_consultation_session": active_consultation_session,
+        "pending_consultation_approval": pending_consultation_approval,
+        "confirmed_consultation_summary": confirmed_consultation_summary,
         "timestamp": _now(),
     }
 
@@ -429,6 +512,11 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "phase_rounds": phase_rounds,
         "phase_quality_history": quality_history,
         "phase_residual_risks": residual_risks,
+        "consultation_sessions": consultation_sessions,
+        "consultation_trigger_history": consultation_trigger_history,
+        "active_consultation_session": active_consultation_session,
+        "pending_consultation_approval": pending_consultation_approval,
+        "confirmed_consultation_summary": confirmed_consultation_summary,
         "challenger_feedback": feedback,
         "challenges": challenges,
         "logs": logs,
@@ -446,6 +534,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "model_requires_more_evidence": model_requires_more_evidence,
             "model_target_agent": model_target_agent,
             "maxed_rounds": maxed,
+            "consultation_event_type": consultation_trigger.get("event_type") if consultation_required else None,
             "summary": f"Challenger 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}",
         }],
         "expert_messages": expert_messages,

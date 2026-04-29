@@ -220,6 +220,81 @@ def _fetch_consultation_messages(task_id: str) -> list[dict[str, Any]]:
         return []
 
 
+def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("consultation_sessions")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        logger.warning("Failed to fetch consultation sessions for %s: %s", task_id, exc)
+        return []
+
+
+def _latest_consultation_session(task_id: str) -> dict[str, Any] | None:
+    sessions = _fetch_consultation_sessions(task_id)
+    return sessions[-1] if sessions else None
+
+
+def _create_consultation_session(
+    task_id: str,
+    interrupt_payload: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any] | None:
+    context = interrupt_payload.get("context") if isinstance(interrupt_payload.get("context"), dict) else {}
+    record = {
+        "task_id": task_id,
+        "status": status,
+        "reason": interrupt_payload.get("reason"),
+        "triggered_by_agent": interrupt_payload.get("target_agent") or interrupt_payload.get("phase"),
+        "trigger_phase": interrupt_payload.get("phase"),
+        "trigger_round": interrupt_payload.get("round"),
+        "repeat_index": interrupt_payload.get("repeat_index", 1),
+        "context_payload": context,
+        "summary_payload": {},
+        "created_by": interrupt_payload.get("target_agent") or "challenger",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        resp = supabase.table("consultation_sessions").insert(record).execute()
+        return resp.data[0] if resp.data else record
+    except Exception as exc:
+        logger.warning("Failed to create consultation session for %s: %s", task_id, exc)
+        return record
+
+
+def _resume_payload_from_consultations(task_id: str, user_id: str) -> dict[str, Any]:
+    expert_messages = _fetch_consultation_messages(task_id)
+    sessions = _fetch_consultation_sessions(task_id)
+    latest = sessions[-1] if sessions else None
+    action = "resume"
+    confirmed_summary = None
+    if latest:
+        status = latest.get("status")
+        if status == "skipped":
+            action = "skip_consultation"
+        elif status == "summary_confirmed":
+            action = "resume_after_consultation"
+            summary = latest.get("summary_payload")
+            if isinstance(summary, dict):
+                confirmed_summary = summary
+    return {
+        "action": action,
+        "resumed_by": user_id,
+        "expert_messages": expert_messages,
+        "consultation_sessions": sessions,
+        "latest_consultation_session": latest,
+        "confirmed_consultation_summary": confirmed_summary,
+        "resumed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _fetch_analysis_state_rows(task_id: str) -> list[dict[str, Any]]:
     try:
         resp = (
@@ -296,6 +371,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
         "tool_results": {},
         "expert_messages": [],
         "consultation_resume": None,
+        "consultation_sessions": [],
+        "consultation_trigger_history": [],
+        "active_consultation_session": None,
+        "pending_consultation_approval": None,
+        "confirmed_consultation_summary": None,
         "timeline_events": [],
     }
 
@@ -323,6 +403,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             from app.agents.nodes.commander import commander_node
 
             expert_messages = _fetch_consultation_messages(task_id)
+            sessions = _fetch_consultation_sessions(task_id)
+            latest_session = sessions[-1] if sessions else None
+            confirmed_summary = None
+            if isinstance(latest_session, dict):
+                summary_payload = latest_session.get("summary_payload")
+                if latest_session.get("status") == "summary_confirmed" and isinstance(summary_payload, dict):
+                    confirmed_summary = summary_payload
             resume_state = build_resume_state_from_rows(
                 task_id=task_id,
                 user_id=user_id,
@@ -334,6 +421,8 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 max_rounds=request.max_rounds,
                 expert_messages=expert_messages,
                 rows=rows,
+                persisted_consultation_sessions=sessions,
+                persisted_consultation_summary=confirmed_summary,
             )
             updates = await commander_node(resume_state)  # type: ignore[arg-type]
 
@@ -385,13 +474,8 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             if request.resume:
                 if Command is None:
                     raise RuntimeError("当前 LangGraph 版本不支持 Command resume")
-                expert_messages = _fetch_consultation_messages(task_id)
-                resume_payload = {
-                    "action": "resume",
-                    "resumed_by": user_id,
-                    "expert_messages": expert_messages,
-                    "resumed_at": datetime.now(timezone.utc).isoformat(),
-                }
+                resume_payload = _resume_payload_from_consultations(task_id, user_id)
+                expert_messages = resume_payload["expert_messages"]
                 graph_input = Command(resume=resume_payload)
                 persistence.mark_task_started(
                     task_id,
@@ -402,6 +486,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         "case_prompt": case_prompt,
                         "files": _task_storage_files(evidence_files),
                         "waiting_consultation": False,
+                        "waiting_consultation_approval": False,
                     },
                 )
                 record_audit_event(
@@ -410,6 +495,26 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     user_id=user_id,
                     metadata={"expert_message_count": len(expert_messages)},
                 )
+                latest_session = resume_payload.get("latest_consultation_session")
+                if isinstance(latest_session, dict) and resume_payload.get("action") == "skip_consultation":
+                    await queue.put(_sse({
+                        "type": "consultation_skipped",
+                        "task_id": task_id,
+                        "reason": "用户跳过本次重复专家会诊",
+                        "session": latest_session,
+                        "payload": {"session": latest_session, "summary": latest_session.get("summary_payload")},
+                    }))
+                elif isinstance(latest_session, dict) and resume_payload.get("action") == "resume_after_consultation":
+                    await queue.put(_sse({
+                        "type": "consultation_summary_confirmed",
+                        "task_id": task_id,
+                        "session": latest_session,
+                        "summary": resume_payload.get("confirmed_consultation_summary"),
+                        "payload": {
+                            "session": latest_session,
+                            "summary": resume_payload.get("confirmed_consultation_summary"),
+                        },
+                    }))
                 await queue.put(_sse({"type": "consultation_resumed", "task_id": task_id}))
                 await queue.put(_sse({
                     "type": "timeline_update",
@@ -455,19 +560,58 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 if "__interrupt__" in chunk:
                     interrupt_payload = _extract_interrupt_payload(chunk["__interrupt__"])
                     reason = str(interrupt_payload.get("reason") or "高冲突证据触发专家会诊")
+                    event_type = str(interrupt_payload.get("type") or "consultation_required")
+                    waiting_status = (
+                        "waiting_consultation_approval"
+                        if event_type == "consultation_approval_required"
+                        else "waiting_consultation"
+                    )
+                    session_status = (
+                        "waiting_user_approval"
+                        if event_type == "consultation_approval_required"
+                        else "active"
+                    )
+                    session = _create_consultation_session(task_id, interrupt_payload, status=session_status)
                     interrupted = True
                     metadata = {
                         **_safe_metadata(task),
                         "case_prompt": case_prompt,
                         "files": _task_storage_files(evidence_files),
+                        "waiting_consultation": waiting_status == "waiting_consultation",
+                        "waiting_consultation_approval": waiting_status == "waiting_consultation_approval",
+                        "consultation_session_id": (session or {}).get("id"),
                     }
-                    persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                    if waiting_status == "waiting_consultation":
+                        persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                    else:
+                        persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                        supabase.table("tasks").update({
+                            "status": "waiting_consultation_approval",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "metadata": metadata,
+                        }).eq("id", task_id).execute()
+                    record_audit_event(
+                        action=event_type,
+                        task_id=task_id,
+                        user_id=user_id,
+                        agent="challenger",
+                        metadata={"session_id": (session or {}).get("id"), "reason": reason},
+                    )
                     await queue.put(_sse({
-                        "type": "consultation_required",
+                        "type": event_type,
                         "task_id": task_id,
                         "reason": reason,
                         "payload": interrupt_payload,
+                        "session": session,
                     }))
+                    if event_type == "consultation_required":
+                        await queue.put(_sse({
+                            "type": "consultation_started",
+                            "task_id": task_id,
+                            "reason": reason,
+                            "payload": {**interrupt_payload, "session": session},
+                            "session": session,
+                        }))
                     return
 
                 for node_name, updates in chunk.items():

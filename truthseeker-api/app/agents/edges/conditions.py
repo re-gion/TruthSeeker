@@ -108,10 +108,6 @@ def challenger_route(state: TruthSeekerState) -> str:
     feedback = state.get("challenger_feedback") or {}
     phase = state.get("analysis_phase") or "forensics"
 
-    # 会诊恢复后直接进 Commander，避免旧 checkpoint 恢复时反复打开工具链。
-    if feedback.get("consultation_resumed"):
-        return "commander"
-
     if feedback.get("requires_more_evidence", False):
         target_agent = feedback.get("target_agent") or phase
         return target_agent if target_agent in PHASE_SEQUENCE and target_agent != "complete" else "forensics"

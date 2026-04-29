@@ -31,7 +31,7 @@ MARKDOWN_REPORT_FIELDS = {
 # ---------------------------------------------------------------------------
 
 async def _fetch_task_data(task_id: str) -> dict:
-    """从 Supabase 获取任务的完整数据（task + reports + analysis_states + agent_logs + audit_logs）"""
+    """从 Supabase 获取任务的完整数据。"""
     return await asyncio.to_thread(_sync_fetch_task_data, task_id)
 
 
@@ -71,6 +71,24 @@ def _sync_fetch_task_data(task_id: str) -> dict:
     )
     audit_logs = audit_resp.data or []
 
+    sessions_resp = (
+        supabase.table("consultation_sessions")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    consultation_sessions = sessions_resp.data or []
+
+    messages_resp = (
+        supabase.table("consultation_messages")
+        .select("*")
+        .eq("task_id", task_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    consultation_messages = messages_resp.data or []
+
     report_resp = (
         supabase.table("reports")
         .select("*")
@@ -86,6 +104,8 @@ def _sync_fetch_task_data(task_id: str) -> dict:
         "analysis_states": analysis_states,
         "agent_logs": agent_logs,
         "audit_logs": audit_logs,
+        "consultation_sessions": consultation_sessions,
+        "consultation_messages": consultation_messages,
     }
 
 
@@ -101,6 +121,8 @@ async def generate_markdown_report(task_id: str) -> str:
     analysis_states = data["analysis_states"]
     agent_logs = data["agent_logs"]
     audit_logs = data.get("audit_logs") or []
+    consultation_sessions = data.get("consultation_sessions") or []
+    consultation_messages = data.get("consultation_messages") or []
 
     lines: list[str] = []
 
@@ -251,8 +273,18 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("- 暂无可展示的审计日志。")
     lines.append("")
 
+    # ---- 人机协同专家会诊 ----
+    consultation_sections = _build_consultation_sections(consultation_sessions, consultation_messages, result or {})
+    lines.append("## 八、人机协同专家会诊")
+    lines.append("")
+    if consultation_sections:
+        lines.extend(consultation_sections)
+    else:
+        lines.append("- 本任务未触发专家会诊。")
+        lines.append("")
+
     # ---- 建议 ----
-    lines.append("## 八、建议与说明")
+    lines.append("## 九、建议与说明")
     lines.append("")
     if result:
         recommendations = result.get("recommendations", [])
@@ -431,6 +463,52 @@ def _render_provenance_graph_summary(graph: dict, indent: int = 0) -> str:
             f"model_inferred_ratio={quality.get('model_inferred_ratio', 'N/A')}"
         )
     return "\n".join(lines)
+
+
+def _build_consultation_sections(sessions: list, messages: list, result: dict) -> list[str]:
+    if not sessions and not result.get("consultation_summary"):
+        return []
+    lines: list[str] = []
+    for index, session in enumerate(sessions, start=1):
+        if not isinstance(session, dict):
+            continue
+        lines.append(f"### 会诊轮次 {index}")
+        lines.append("")
+        lines.append(f"- **状态**: {session.get('status', 'unknown')}")
+        if session.get("triggered_by_agent"):
+            lines.append(f"- **触发对象**: {session.get('triggered_by_agent')}")
+        if session.get("reason"):
+            lines.append(f"- **触发原因**: {session.get('reason')}")
+        summary = session.get("summary_payload") if isinstance(session.get("summary_payload"), dict) else {}
+        confirmed = summary.get("confirmed_summary")
+        if confirmed:
+            lines.append(f"- **用户确认摘要**: {confirmed}")
+        quotes = summary.get("key_quotes") if isinstance(summary.get("key_quotes"), list) else []
+        if quotes:
+            lines.append("- **关键意见摘录**:")
+            for quote in quotes[:5]:
+                if not isinstance(quote, dict):
+                    continue
+                role = quote.get("role", "participant")
+                message = _truncate_text(str(quote.get("message") or ""), 240)
+                lines.append(f"  - {role}: {message}")
+        related_messages = [
+            item for item in messages
+            if isinstance(item, dict) and item.get("session_id") == session.get("id")
+        ]
+        if related_messages and not quotes:
+            lines.append("- **关键意见摘录**:")
+            for item in related_messages[:5]:
+                role = item.get("role", "participant")
+                lines.append(f"  - {role}: {_truncate_text(str(item.get('message') or ''), 240)}")
+        lines.append("")
+    consultation_summary = result.get("consultation_summary")
+    if isinstance(consultation_summary, dict) and consultation_summary.get("confirmed_summary"):
+        lines.append("### 对最终研判的影响")
+        lines.append("")
+        lines.append(f"- {consultation_summary.get('confirmed_summary')}")
+        lines.append("")
+    return lines
 
 
 def _render_markdown_field(key: str, value: str, indent: int = 0) -> str:

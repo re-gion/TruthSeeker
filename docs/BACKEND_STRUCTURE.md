@@ -1,6 +1,6 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-04-28
+> 更新时间：2026-04-29
 
 ## 1. 当前运行时边界
 
@@ -65,6 +65,9 @@ truthseeker-api/
 - `analysis_phase`: `forensics | osint | commander | complete`
 - `phase_rounds`: 每个阶段当前轮次，默认每阶段从 1 开始。
 - `phase_quality_history`: 每阶段质量评分历史，用于 0.08 阈值收敛。
+- `consultation_sessions`: 已知会诊 session 列表，包含首次自动触发、重复触发审批、跳过本次、摘要待确认和摘要确认状态。
+- `consultation_trigger_history`: Challenger 对同一目标 Agent 的质询历史，用于判断 3 轮 high 质询、置信度 `< 0.8`、相邻变化 `< 0.08`。
+- `active_consultation_session` / `pending_consultation_approval` / `confirmed_consultation_summary`: 当前会诊、待用户审批会诊和已确认摘要。
 - `tool_results`: 电子取证和 OSINT 工具 all-settled 结果。
 - `provenance_graph`: 阶段图谱或最终审定图谱。
 
@@ -129,13 +132,28 @@ Exa：
 
 ## 6. 持久化与报告
 
-不新增数据库表。图谱复用 JSONB：
+图谱复用 JSONB：
 
 - `analysis_states.result_snapshot.osint.provenance_graph`
 - `reports.verdict_payload.provenance_graph`
 - `tasks.result.provenance_graph`
 
 `analysis_states.result_snapshot` 继续保存 `forensics/osint/challenger/final_verdict`，避免前端历史回放、会诊恢复和报告生成失效。
+
+会诊持久化：
+
+- `consultation_sessions`: 每轮会诊一行，记录状态、触发原因、目标 Agent、阶段/轮次、repeat index、上下文、关闭时间和摘要。
+- `consultation_invites`: 按任务和 session 生成专家链接，当前运行时默认 `INVITE_TTL_HOURS = 24`。邀请过期后不能提交意见；同一链接可标记为 `used`，允许专家刷新同一上下文。
+- `consultation_messages`: 保存 Commander、用户和专家消息；结构化列包括 `session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
+- `audit_logs`: 记录会诊触发、审批、跳过、结束、摘要确认、恢复研判和邀请创建。
+
+会诊恢复：
+
+- 首次满足“同一目标最近 3 轮 high 质询、本轮置信度 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `consultation_required` 并写入 active session。
+- 同一任务再次满足门槛时，后端发送 `consultation_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
+- 用户结束会诊后，Commander 生成 `summary_pending` 摘要；用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- `resume=true` 时读取 `consultation_messages`、`consultation_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。
+- 报告必须保留会诊触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。
 
 `reports.verdict` 仍只允许：
 
@@ -154,4 +172,5 @@ Exa：
 - 工具 all-settled 结果必须有单元测试。
 - 图谱 schema 必须有单元测试。
 - SSE 和持久化必须验证旧 key 兼容。
+- 会诊触发、首次自动暂停、重复触发审批、邀请 TTL、摘要确认、恢复和结束动作必须有 API 或服务层测试。
 - 外部 API 测试必须 mock，不能依赖真实网络或真实密钥。

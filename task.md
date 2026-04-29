@@ -74,6 +74,14 @@
 - [x] `audit_log.py` 成功写入时输出格式化终端日志 `[AUDIT][AGENT] action | task=xxx`。
 - [x] 删除前端废弃 `generateMarkdownReport` 及相关死代码。
 
+## 2026-04-29 人机专家会诊机制文档同步
+
+- [x] 将根目录会诊草稿整理进 `docs/PRD.md`、`docs/APP_FLOW.md` 和 `docs/BACKEND_STRUCTURE.md`。
+- [x] 明确三轮高严重度质询触发、首次自动会诊、重复触发需主持人审批、Commander 主持摘要、用户控制结束、邀请 TTL、结构化消息、摘要确认、报告和时间线影响。
+- [x] 后端实现 `consultation_sessions` / `consultation_trigger_history` 等状态字段，替换当前首轮高风险即触发的临时逻辑。
+- [x] API 与前端补齐会诊摘要确认、重复触发审批、用户结束会诊和结构化消息类型。
+- [x] 报告与时间线补齐会诊摘要确认、恢复或结束后的可见记录。
+
 ## Layer 1: 核心鉴伪能力（MVP） ✅ 已完成
 
 ### Phase 1.1: 基础设施搭建 ✅

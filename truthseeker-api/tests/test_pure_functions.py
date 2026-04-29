@@ -391,7 +391,7 @@ class ConditionsTests(unittest.TestCase):
             "analysis_phase": "forensics",
             "challenger_feedback": {"requires_more_evidence": True, "consultation_resumed": True},
         }
-        self.assertEqual(challenger_route(state), "commander")
+        self.assertEqual(challenger_route(state), "forensics")
 
     def test_challenger_route_ends_after_commander_review(self):
         state = {

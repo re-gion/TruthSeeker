@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-04-28
+> 更新时间：2026-04-29
 
 ## 1. 输入边界
 
@@ -60,8 +60,38 @@ flowchart TD
 - `challenger` 在三个阶段分别审查取证报告、溯源图谱、最终报告。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回。
 - `commander` 生成最终鉴伪与溯源报告。它同样先综合样本、证据板和各 Agent 结论进行自主裁决，再输出最终报告；报告阶段如果被 Challenger 打回，只重写报告，不重新打开取证或搜索工具链。
 - 每阶段最多 5 轮，质量变化阈值为 0.08。达到阈值则视为收敛；达到轮次上限仍未完全解决时继续推进，但写入残留风险。
+- 人机会诊触发采用统一门槛：同一目标 Agent 最近 3 轮都存在 high 质询，本轮置信度 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`。首次触发自动暂停为 `waiting_consultation`；同一任务后续再次触发进入 `waiting_consultation_approval`，由用户决定“再次会诊”或“跳过本次”。
 
-## 4. 工具调用与降级
+## 4. 人机专家会诊
+
+会诊不是普通聊天，也不是事后批注。它是自动流程遇到高争议证据时的人工证据回注机制。
+
+会诊状态流：
+
+```mermaid
+flowchart TD
+  H["同一目标连续 3 轮 high 质询 + 低置信停滞"] --> A{"本任务首次触发?"}
+  A -->|是| W["自动暂停 waiting_consultation"]
+  A -->|否| P["提示用户审批是否再次会诊"]
+  P -->|批准| W
+  P -->|跳过本次| R["记录残留高质询风险，回到 Challenger 继续"]
+  W --> I["创建本次会诊邀请"]
+  I --> E["用户/专家提交轻结构化意见"]
+  E --> S["用户结束会诊，Commander 汇总摘要"]
+  S --> C{"用户编辑确认摘要"}
+  C -->|确认| M["resume=true，带确认摘要回到 Challenger"]
+  C -->|继续等待| E
+```
+
+会诊合同：
+
+- 邀请按 `task_id` 和 `consultation_session.id` 绑定，默认 24 小时 TTL；样本链接沿用本轮邀请有效期，不生成永久公开链接。
+- 消息保存为轻结构化记录：`session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
+- Commander 是主持人，负责在会诊开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。
+- 只有用户能批准重复会诊、跳过本次、结束会诊、编辑确认 Commander 摘要。摘要确认后回注全局证据板，流程恢复到 Challenger。
+- 会诊恢复时，后端通过 `resume=true` 注入专家/用户消息、会诊 sessions 和已确认摘要；若 LangGraph checkpoint 丢失，则从 `analysis_states`、`consultation_messages` 和 `consultation_sessions` 重建可裁决状态。
+
+## 5. 工具调用与降级
 
 专业工具必须使用 `all-settled` 语义：所有工具都要返回结构化结果，结果可以是 `success`、`degraded` 或 `failed`。任务不能因为某个工具失败就伪装成正常检测，也不能无限等待。
 
@@ -72,7 +102,7 @@ flowchart TD
 - Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
 - 所有外部工具保留硬超时；超时必须写成结构化失败结果。
 
-## 5. 情报溯源图谱
+## 6. 情报溯源图谱
 
 图谱采用混合模型：
 
@@ -94,7 +124,7 @@ flowchart TD
 
 无引用但来自模型推理的关系可以进入图谱，但必须标记 `model_inferred=true`，不能作为外部事实展示。
 
-## 6. SSE 事件
+## 7. SSE 事件
 
 检测流使用 `POST /api/v1/detect/stream` 返回 SSE。保留现有事件契约：
 
@@ -112,14 +142,19 @@ flowchart TD
 - `final_verdict`
 - `node_complete`
 - `consultation_required`
+- `consultation_approval_required`
+- `consultation_started`
+- `consultation_summary_pending`
+- `consultation_summary_confirmed`
+- `consultation_skipped`
 - `consultation_resumed`
 - `task_failed`
 - `error`
 - `complete`
 
-新图谱不新增必须消费的新 SSE 事件，随 `final_verdict.provenance_graph` 下发；历史回放从 `reports.verdict_payload` 和 `analysis_states.result_snapshot` 读取。
+新图谱不新增必须消费的新 SSE 事件，随 `final_verdict.provenance_graph` 下发；历史回放从 `reports.verdict_payload`、`analysis_states.result_snapshot`、`agent_logs`、`timeline_events` 和 `audit_logs` 读取。
 
-## 7. 报告与可信输出
+## 8. 报告与可信输出
 
 检测完成后，Commander 生成最终裁决，后端写入 `reports`：
 
@@ -133,9 +168,11 @@ flowchart TD
 
 `verdict_payload` 承载子结论：取证结论、溯源结论、威胁判断、图谱质量、Challenger 审查结果和 `provenance_graph`。主 verdict 不扩展枚举，避免破坏数据库和前端颜色体系。
 
+如果发生会诊，`verdict_payload` 还应包含会诊状态、邀请与确认摘要、专家意见数量、主持人最终动作和残留争议。Markdown/PDF 报告需要展示会诊触发原因、专家共识/分歧、Commander 摘要、主持人确认时间，以及这些意见如何影响最终裁决；时间线需要展示会诊触发、邀请创建、专家提交、摘要待确认、摘要确认、恢复或结束。
+
 `report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 
-## 8. 暂不实现
+## 9. 暂不实现
 
 - 不新增独立图数据库，图谱先复用现有 JSONB。
 - 不实现真实案例库升级。

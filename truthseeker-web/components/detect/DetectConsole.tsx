@@ -314,14 +314,14 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         logs, forensicsResult, osintResult, challengerFeedback,
         finalVerdict, isRunning, isComplete,
         currentNode, currentRound, isWaitingConsultation,
-        errorMessage, resume
+        errorMessage, consultationState, resume
     } = useAgentStream({
         taskId,
         inputType: taskContext.inputType,
         files: taskContext.files,
         casePrompt: taskContext.casePrompt,
         priorityFocus: taskContext.priorityFocus,
-        autoStart: role === "host" && taskLoaded && taskContext.status !== "completed" && taskContext.status !== "waiting_consultation",
+        autoStart: role === "host" && taskLoaded && taskContext.status !== "completed" && taskContext.status !== "waiting_consultation" && taskContext.status !== "waiting_consultation_approval",
         role,
         inviteToken,
         channel,
@@ -514,7 +514,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             {showExpertPanel ? '收起会诊面板' : '打开会诊面板'}
                         </button>
                         {role === 'host' && <InviteButton taskId={taskId} />}
-                        {role === 'host' && isWaitingConsultation && (
+                        {role === 'host' && (consultationState.status === "summary_confirmed" || consultationState.status === "skipped") && (
                             <button
                                 onClick={resume}
                                 className="text-xs text-[#F59E0B] border border-[#F59E0B]/40 px-3 py-1.5 rounded-full hover:bg-[#F59E0B]/10 transition-colors"
@@ -598,9 +598,13 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                 </div>
             </header>
 
-            {(taskLoadError || errorMessage || isWaitingConsultation) && (
+            {(taskLoadError || errorMessage || isWaitingConsultation || consultationState.status === "summary_pending") && (
                 <div className="mx-6 mt-3 rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/10 px-4 py-3 text-sm text-[#FCD34D]">
-                    {taskLoadError || errorMessage || "逻辑质询Agent已暂停研判，等待专家会诊意见；主持人可在会诊后继续研判。"}
+                    {taskLoadError || errorMessage || (consultationState.status === "summary_pending"
+                        ? "Commander 已整理会诊摘要，等待用户确认后回注研判流程。"
+                        : consultationState.status === "approval_required"
+                            ? "逻辑质询再次陷入僵持，等待用户决定是否再次发起专家会诊。"
+                            : "Commander 已接管会诊主持，等待专家意见；用户可在会诊后确认摘要并继续研判。")}
                 </div>
             )}
 
@@ -668,9 +672,15 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         initial={{ x: 400, opacity: 0 }}
                         animate={{ x: 0, opacity: 1 }}
                         exit={{ x: 400, opacity: 0 }}
-                        className="fixed right-4 top-20 bottom-4 w-80 z-40 hidden lg:block"
+                        className="fixed right-4 top-20 bottom-4 w-96 z-40 hidden lg:block"
                     >
-                        <ExpertPanel taskId={taskId} inviteToken={inviteToken} currentRole={role} />
+                        <ExpertPanel
+                            taskId={taskId}
+                            inviteToken={inviteToken}
+                            currentRole={role}
+                            consultationState={consultationState}
+                            onResume={resume}
+                        />
                     </motion.div>
                 )}
             </AnimatePresence>

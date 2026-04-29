@@ -67,6 +67,9 @@ class FakeQuery:
                 rows = [row for row in rows if row.get(key, "") > value[1]]
             else:
                 rows = [row for row in rows if row.get(key) == value]
+        if self.order_by:
+            key, desc = self.order_by
+            rows = sorted(rows, key=lambda row: row.get(key) or "", reverse=desc)
         return SimpleNamespace(data=rows)
 
 
@@ -228,6 +231,124 @@ def test_used_consultation_invite_can_still_read_messages(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["messages"][0]["message"] == "建议人工复核"
+
+
+def test_consultation_invite_is_scoped_to_its_session(monkeypatch):
+    from app.api.v1 import consultation as consultation_module
+
+    db = {
+        "consultation_invites": [
+            {
+                "id": "invite-1",
+                "task_id": "task-10",
+                "session_id": "session-1",
+                "token": "session-token",
+                "status": "pending",
+                "expires_at": "2999-01-01T00:00:00+00:00",
+            }
+        ],
+        "consultation_messages": [
+            {
+                "task_id": "task-10",
+                "session_id": "session-1",
+                "role": "expert",
+                "message": "本轮会诊意见",
+                "created_at": "2026-04-21T00:00:00+00:00",
+            },
+            {
+                "task_id": "task-10",
+                "session_id": "session-2",
+                "role": "expert",
+                "message": "其他轮次意见",
+                "created_at": "2026-04-21T00:00:01+00:00",
+            },
+        ],
+    }
+    monkeypatch.setattr(consultation_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    response = client.get("/api/v1/consultation/task-10/messages?invite_token=session-token")
+
+    assert response.status_code == 200
+    messages = response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["message"] == "本轮会诊意见"
+
+
+def test_consultation_session_approval_skip_close_and_summary(monkeypatch):
+    from app.api.v1 import consultation as consultation_module
+
+    monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+
+    db = {
+        "tasks": [{"id": "task-10", "status": "waiting_consultation", "user_id": "owner"}],
+        "consultation_sessions": [
+            {
+                "id": "session-1",
+                "task_id": "task-10",
+                "status": "waiting_user_approval",
+                "repeat_index": 2,
+                "triggered_by_agent": "osint",
+                "reason": "连续三轮低置信高质询",
+                "context_payload": {"current_blocker": "图谱引用不足"},
+            }
+        ],
+        "consultation_messages": [],
+    }
+    monkeypatch.setattr(consultation_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    current = client.get("/api/v1/consultation/task-10/session")
+    assert current.status_code == 200
+    assert current.json()["session"]["id"] == "session-1"
+
+    approved = client.post("/api/v1/consultation/task-10/sessions/session-1/approve")
+    assert approved.status_code == 200
+    assert approved.json()["session"]["status"] == "active"
+
+    closed = client.post("/api/v1/consultation/task-10/sessions/session-1/close")
+    assert closed.status_code == 200
+    assert closed.json()["session"]["status"] == "summary_pending"
+    assert db["consultation_messages"][-1]["role"] == "commander"
+
+    confirmed = client.post(
+        "/api/v1/consultation/task-10/sessions/session-1/summary",
+        json={"summary": "用户确认：专家意见已纳入，优先复核来源账号。"},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["session"]["status"] == "summary_confirmed"
+    assert confirmed.json()["session"]["summary_payload"]["confirmed_summary"].startswith("用户确认")
+
+
+def test_consultation_session_skip_records_this_round_only(monkeypatch):
+    from app.api.v1 import consultation as consultation_module
+
+    monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+
+    db = {
+        "tasks": [{"id": "task-11", "status": "waiting_consultation_approval", "user_id": "owner"}],
+        "consultation_sessions": [
+            {
+                "id": "session-skip",
+                "task_id": "task-11",
+                "status": "waiting_user_approval",
+                "repeat_index": 2,
+                "triggered_by_agent": "commander",
+                "reason": "最终报告连续低置信",
+            }
+        ],
+    }
+    monkeypatch.setattr(consultation_module, "supabase", FakeSupabase(db))
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/consultation/task-11/sessions/session-skip/skip",
+        json={"reason": "本次先跳过，保留风险继续流程。"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session"]["status"] == "skipped"
+    assert response.json()["session"]["summary_payload"]["skip_scope"] == "current_only"
 
 
 def test_agent_history_available_to_expert_invite(monkeypatch):

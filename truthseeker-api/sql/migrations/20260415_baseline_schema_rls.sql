@@ -26,7 +26,7 @@ create table if not exists public.tasks (
     check (priority_focus in ('visual', 'audio', 'text', 'balanced')),
   storage_paths jsonb not null default '{}'::jsonb,
   status text not null default 'pending'
-    check (status in ('pending', 'preprocessing', 'analyzing', 'deliberating', 'waiting_consultation', 'completed', 'failed')),
+    check (status in ('pending', 'preprocessing', 'analyzing', 'deliberating', 'waiting_consultation', 'waiting_consultation_approval', 'completed', 'failed')),
   progress integer default 0 check (progress >= 0 and progress <= 100),
   created_at timestamptz not null default now(),
   started_at timestamptz,
@@ -82,10 +82,32 @@ create table if not exists public.reports (
   generated_at timestamptz default now()
 );
 
+-- consultation_sessions: per-round human-in-the-loop consultation state
+create table if not exists public.consultation_sessions (
+  id uuid default gen_random_uuid() primary key,
+  task_id uuid references public.tasks(id) on delete cascade not null,
+  status text not null default 'requested'
+    check (status in ('requested', 'waiting_user_approval', 'active', 'summary_pending', 'summary_confirmed', 'skipped', 'cancelled')),
+  reason text,
+  triggered_by_agent text,
+  trigger_phase text,
+  trigger_round integer,
+  repeat_index integer not null default 1,
+  context_payload jsonb not null default '{}'::jsonb,
+  summary_payload jsonb not null default '{}'::jsonb,
+  created_by text,
+  approved_by uuid references public.profiles(id) on delete set null,
+  approved_at timestamptz,
+  closed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 -- consultation_invites: expert invitation tokens
 create table if not exists public.consultation_invites (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
+  session_id uuid references public.consultation_sessions(id) on delete set null,
   token text not null unique,
   status text default 'pending',
   expires_at timestamptz,
@@ -96,9 +118,16 @@ create table if not exists public.consultation_invites (
 create table if not exists public.consultation_messages (
   id uuid default gen_random_uuid() primary key,
   task_id uuid references public.tasks(id) on delete cascade not null,
+  session_id uuid references public.consultation_sessions(id) on delete set null,
   role text not null default 'expert',
   message text not null,
   expert_name text,
+  message_type text not null default 'expert_opinion',
+  anchor_agent text,
+  anchor_phase text,
+  confidence float check (confidence is null or (confidence >= 0 and confidence <= 1)),
+  suggested_action text,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz default now()
 );
 
@@ -109,6 +138,7 @@ create table if not exists public.audit_logs (
   task_id uuid references public.tasks(id) on delete set null,
   user_id text,
   actor_role text default 'user',
+  agent text,
   metadata jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );
@@ -131,11 +161,16 @@ create index if not exists idx_analysis_states_task_round on public.analysis_sta
 create index if not exists idx_agent_logs_task_round on public.agent_logs(task_id, round_number);
 create index if not exists idx_reports_share_token on public.reports(share_token);
 create index if not exists idx_reports_report_hash on public.reports(report_hash);
+create index if not exists idx_consultation_sessions_task_created on public.consultation_sessions(task_id, created_at desc);
+create index if not exists idx_consultation_sessions_status on public.consultation_sessions(status, created_at desc);
 create index if not exists idx_consultation_invites_token on public.consultation_invites(token);
 create index if not exists idx_consultation_invites_task_id on public.consultation_invites(task_id);
+create index if not exists idx_consultation_invites_session_id on public.consultation_invites(session_id);
 create index if not exists idx_consultation_messages_task_created on public.consultation_messages(task_id, created_at);
+create index if not exists idx_consultation_messages_session_created on public.consultation_messages(session_id, created_at);
 create index if not exists idx_audit_logs_task_created on public.audit_logs(task_id, created_at desc);
 create index if not exists idx_audit_logs_action_created on public.audit_logs(action, created_at desc);
+create index if not exists idx_audit_logs_agent_created on public.audit_logs(agent, created_at desc);
 
 -- Enable RLS on all tables
 alter table public.profiles enable row level security;
@@ -143,6 +178,7 @@ alter table public.tasks enable row level security;
 alter table public.analysis_states enable row level security;
 alter table public.agent_logs enable row level security;
 alter table public.reports enable row level security;
+alter table public.consultation_sessions enable row level security;
 alter table public.consultation_invites enable row level security;
 alter table public.consultation_messages enable row level security;
 alter table public.audit_logs enable row level security;
@@ -206,6 +242,17 @@ create policy reports_insert_by_owner on public.reports
   for insert to authenticated
   with check (exists (select 1 from public.tasks where tasks.id = reports.task_id and (tasks.user_id = (select auth.uid()) or tasks.user_id is null)));
 
+-- consultation_sessions RLS
+create policy consultation_sessions_select_task_owner on public.consultation_sessions
+  for select to authenticated
+  using (exists (select 1 from public.tasks where tasks.id = consultation_sessions.task_id and tasks.user_id = (select auth.uid())));
+create policy consultation_sessions_insert_task_owner on public.consultation_sessions
+  for insert to authenticated
+  with check (exists (select 1 from public.tasks where tasks.id = consultation_sessions.task_id and tasks.user_id = (select auth.uid())));
+create policy consultation_sessions_update_task_owner on public.consultation_sessions
+  for update to authenticated
+  using (exists (select 1 from public.tasks where tasks.id = consultation_sessions.task_id and tasks.user_id = (select auth.uid())));
+
 -- consultation_invites RLS
 create policy consultation_invites_select_task_owner on public.consultation_invites
   for select to authenticated
@@ -238,6 +285,8 @@ create policy system_stats_select_all on public.system_stats
 
 -- Triggers
 create trigger set_updated_at before update on public.tasks
+  for each row execute function public.set_updated_at();
+create trigger set_consultation_sessions_updated_at before update on public.consultation_sessions
   for each row execute function public.set_updated_at();
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();

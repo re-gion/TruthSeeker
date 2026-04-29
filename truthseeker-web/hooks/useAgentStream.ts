@@ -17,7 +17,12 @@ export type AgentEvent =
     | { type: "weights_update"; weights: Record<string, number> }
     | { type: "round_update"; round: number }
     | { type: "final_verdict"; verdict: Record<string, unknown> }
-    | { type: "consultation_required"; task_id: string; reason?: string; payload?: unknown }
+    | { type: "consultation_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "consultation_approval_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "consultation_started"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "consultation_summary_pending"; task_id: string; reason?: string; payload?: unknown; summary?: unknown; session?: unknown }
+    | { type: "consultation_summary_confirmed"; task_id: string; reason?: string; payload?: unknown; summary?: unknown; session?: unknown }
+    | { type: "consultation_skipped"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
     | { type: "consultation_resumed"; task_id: string }
     | { type: "task_failed"; task_id?: string; message: string; detail?: unknown }
     | { type: "node_complete"; node: string }
@@ -41,7 +46,42 @@ export interface AgentHistoryResponse {
     agent_logs?: Record<string, unknown>[]
     analysis_states?: Record<string, unknown>[]
     audit_logs?: Record<string, unknown>[]
+    consultation_session?: Record<string, unknown> | null
     report?: Record<string, unknown> | null
+}
+
+export type ConsultationStatus =
+    | "idle"
+    | "approval_required"
+    | "started"
+    | "summary_pending"
+    | "summary_confirmed"
+    | "skipped"
+    | "resumed"
+
+export interface ConsultationLink {
+    label: string
+    url: string
+}
+
+export interface ConsultationContext {
+    background?: string
+    progress?: string
+    blockers: string[]
+    helpNeeded?: string
+    sampleLinks: ConsultationLink[]
+}
+
+export interface ConsultationState {
+    status: ConsultationStatus
+    taskId?: string
+    reason?: string
+    context: ConsultationContext
+    session?: Record<string, unknown>
+    history: Record<string, unknown>[]
+    summaryDraft?: string
+    summaryConfirmed?: string
+    lastEventType?: string
 }
 
 export interface StreamStateFromHistory {
@@ -54,6 +94,7 @@ export interface StreamStateFromHistory {
     currentRound: number
     isComplete: boolean
     isWaitingConsultation: boolean
+    consultationState: ConsultationState
 }
 
 interface UseAgentStreamOptions {
@@ -85,12 +126,35 @@ interface UseAgentStreamReturn {
     currentNode: string | null
     isWaitingConsultation: boolean
     errorMessage: string | null
+    consultationState: ConsultationState
     start: () => void
     resume: () => void
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 const EMPTY_FILES: Record<string, unknown>[] = []
+
+const EMPTY_CONSULTATION_CONTEXT: ConsultationContext = {
+    blockers: [],
+    sampleLinks: [],
+}
+
+const INITIAL_CONSULTATION_STATE: ConsultationState = {
+    status: "idle",
+    context: EMPTY_CONSULTATION_CONTEXT,
+    history: [],
+}
+
+type ConsultationEvent = Extract<AgentEvent, {
+    type:
+        | "consultation_required"
+        | "consultation_approval_required"
+        | "consultation_started"
+        | "consultation_summary_pending"
+        | "consultation_summary_confirmed"
+        | "consultation_skipped"
+        | "consultation_resumed"
+}>
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null
@@ -106,6 +170,75 @@ function readNumber(value: unknown): number | undefined {
 
 function readString(value: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function readStringArray(value: unknown): string[] {
+    if (typeof value === "string" && value.trim()) return [value.trim()]
+    if (!Array.isArray(value)) return []
+    return value
+        .map(item => typeof item === "string" ? item.trim() : undefined)
+        .filter((item): item is string => Boolean(item))
+}
+
+function readRecordArray(value: unknown): Record<string, unknown>[] {
+    if (!Array.isArray(value)) return []
+    return value.filter((item): item is Record<string, unknown> => isObject(item))
+}
+
+function pickString(...values: unknown[]) {
+    for (const value of values) {
+        const text = readString(value)
+        if (text) return text
+    }
+    return undefined
+}
+
+function pickStringArray(...values: unknown[]) {
+    for (const value of values) {
+        const list = readStringArray(value)
+        if (list.length > 0) return list
+    }
+    return []
+}
+
+function readProgressSummary(value: unknown): string | undefined {
+    const text = readString(value)
+    if (text) return text
+    if (!isObject(value)) return undefined
+    const fragments: string[] = []
+    for (const [key, item] of Object.entries(value)) {
+        if (item === undefined || item === null || item === "") continue
+        fragments.push(`${key}=${String(item)}`)
+    }
+    return fragments.length > 0 ? fragments.join("，") : undefined
+}
+
+function readConsultationLinks(value: unknown): ConsultationLink[] {
+    if (!Array.isArray(value)) return []
+    return value
+        .map((item, index): ConsultationLink | null => {
+            if (typeof item === "string" && item.trim()) {
+                return { label: `样本 ${index + 1}`, url: item.trim() }
+            }
+            if (!isObject(item)) return null
+            const url = pickString(item.url, item.href, item.link, item.file_url, item.signed_url, item.signedUrl)
+            if (!url) return null
+            return {
+                label: pickString(item.title, item.label, item.name) ?? `样本 ${index + 1}`,
+                url,
+            }
+        })
+        .filter((item): item is ConsultationLink => item !== null)
+}
+
+function mergeConsultationContext(current: ConsultationContext, incoming: Partial<ConsultationContext>): ConsultationContext {
+    return {
+        background: incoming.background ?? current.background,
+        progress: incoming.progress ?? current.progress,
+        blockers: incoming.blockers && incoming.blockers.length > 0 ? incoming.blockers : current.blockers,
+        helpNeeded: incoming.helpNeeded ?? current.helpNeeded,
+        sampleLinks: incoming.sampleLinks && incoming.sampleLinks.length > 0 ? incoming.sampleLinks : current.sampleLinks,
+    }
 }
 
 function readSourceKind(value: unknown, fallback: AgentLogEntry["sourceKind"]): AgentLogEntry["sourceKind"] {
@@ -221,6 +354,113 @@ function readAuditLogEntry(value: unknown): AgentLogEntry | null {
     }
 }
 
+function consultationStatusForEvent(type: ConsultationEvent["type"]): ConsultationStatus {
+    if (type === "consultation_approval_required") return "approval_required"
+    if (type === "consultation_required") return "started"
+    if (type === "consultation_started") return "started"
+    if (type === "consultation_summary_pending") return "summary_pending"
+    if (type === "consultation_summary_confirmed") return "summary_confirmed"
+    if (type === "consultation_skipped") return "skipped"
+    if (type === "consultation_resumed") return "resumed"
+    return "idle"
+}
+
+function readConsultationContext(payload: Record<string, unknown> | null): Partial<ConsultationContext> {
+    const session = readRecord(payload?.session)
+    const context = readRecord(payload?.context)
+        ?? readRecord(session?.context_payload)
+        ?? readRecord(session?.context)
+        ?? readRecord(payload?.consultation)
+        ?? payload
+    const sampleSource = context?.sample_links ?? context?.sampleLinks ?? context?.samples ?? context?.evidence_links ?? context?.links
+
+    return {
+        background: pickString(context?.background, context?.case_background, context?.background_notes, context?.caseBackground),
+        progress: pickString(context?.progress, context?.current_progress, context?.status_summary, context?.statusSummary)
+            ?? readProgressSummary(context?.progress_summary),
+        blockers: pickStringArray(context?.blockers, context?.current_blocker, context?.blocking_points, context?.open_questions, context?.conflicts),
+        helpNeeded: pickString(context?.help_needed, context?.helpNeeded, context?.requested_help, context?.assistance_needed)
+            ?? readStringArray(context?.help_needed).join("；")
+            ?? undefined,
+        sampleLinks: readConsultationLinks(sampleSource),
+    }
+}
+
+function readConsultationSummary(event: ConsultationEvent, payload: Record<string, unknown> | null) {
+    const payloadSummary = readRecord(payload?.summary)
+    const session = readRecord(payload?.session)
+    const sessionSummary = readRecord(session?.summary_payload)
+    const directSummary = readRecord("summary" in event ? event.summary : undefined)
+    return pickString(
+        "summary" in event ? event.summary : undefined,
+        directSummary?.text,
+        directSummary?.content,
+        payload?.summary_draft,
+        payload?.draft_summary,
+        payload?.summaryDraft,
+        payloadSummary?.text,
+        payloadSummary?.content,
+        sessionSummary?.user_confirmed_summary,
+        sessionSummary?.confirmed_summary,
+        sessionSummary?.generated_summary,
+    )
+}
+
+export function normalizeConsultationEvent(event: ConsultationEvent, current: ConsultationState = INITIAL_CONSULTATION_STATE): ConsultationState {
+    const payload = readRecord("payload" in event ? event.payload : undefined)
+    const eventSession = readRecord("session" in event ? event.session : undefined)
+    const session = readRecord(payload?.session) ?? eventSession ?? current.session
+    const history = readRecordArray(payload?.history ?? payload?.messages)
+    const status = consultationStatusForEvent(event.type)
+    const summary = readConsultationSummary(event, payload)
+    const contextPayload = session ? { ...(payload ?? {}), session } : payload
+
+    return {
+        status,
+        taskId: "task_id" in event ? event.task_id : current.taskId,
+        reason: "reason" in event ? event.reason ?? current.reason : current.reason,
+        context: mergeConsultationContext(current.context, readConsultationContext(contextPayload)),
+        session,
+        history: history.length > 0 ? history : current.history,
+        summaryDraft: status === "summary_pending" || summary ? summary ?? current.summaryDraft : current.summaryDraft,
+        summaryConfirmed: status === "summary_confirmed" ? summary ?? current.summaryDraft ?? current.summaryConfirmed : current.summaryConfirmed,
+        lastEventType: event.type,
+    }
+}
+
+function consultationLogContent(state: ConsultationState, fallback: string) {
+    if (state.status === "approval_required") return state.reason ?? fallback
+    if (state.status === "started") return "Commander 已开启专家会诊，并作为主持汇总人工意见"
+    if (state.status === "summary_pending") return "会诊摘要待用户确认"
+    if (state.status === "summary_confirmed") return "用户已确认会诊摘要，人工意见可回注研判流程"
+    if (state.status === "skipped") return state.reason ?? "用户跳过本轮会诊"
+    return fallback
+}
+
+export function canModerateConsultation(role: "host" | "expert" | "viewer") {
+    return role === "host"
+}
+
+function consultationStatusFromSession(session: Record<string, unknown> | null, taskStatus: string): ConsultationStatus {
+    const sessionStatus = readString(session?.status)
+    if (sessionStatus === "waiting_user_approval") return "approval_required"
+    if (sessionStatus === "active" || sessionStatus === "requested") return "started"
+    if (sessionStatus === "summary_pending") return "summary_pending"
+    if (sessionStatus === "summary_confirmed") return "summary_confirmed"
+    if (sessionStatus === "skipped") return "skipped"
+    if (taskStatus === "waiting_consultation_approval") return "approval_required"
+    if (taskStatus === "waiting_consultation") return "started"
+    return "idle"
+}
+
+function isConsultationWaiting(status: string, consultationStatus: ConsultationStatus) {
+    return status === "waiting_consultation"
+        || status === "waiting_consultation_approval"
+        || consultationStatus === "approval_required"
+        || consultationStatus === "started"
+        || consultationStatus === "summary_pending"
+}
+
 export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): StreamStateFromHistory {
     const persistedLogs = Array.isArray(history.agent_logs)
         ? history.agent_logs.map(readPersistedLogEntry).filter((entry): entry is AgentLogEntry => entry !== null)
@@ -254,6 +494,24 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
 
     const agentWeights = readRecord(finalVerdict?.agent_weights) as Record<string, number> | null
     const status = typeof task?.status === "string" ? task.status : ""
+    const metadata = readRecord(task?.metadata)
+    const consultationSession = readRecord(history.consultation_session)
+    const consultationContext = readRecord(metadata?.consultation) ?? readRecord(metadata?.consultation_context)
+    const consultationStatus = consultationStatusFromSession(consultationSession, status)
+    const summaryPayload = readRecord(consultationSession?.summary_payload)
+    const consultationState: ConsultationState = {
+        ...INITIAL_CONSULTATION_STATE,
+        status: consultationStatus,
+        taskId: readString(task?.id),
+        reason: readString(consultationSession?.reason) ?? readString(metadata?.consultation_reason),
+        context: mergeConsultationContext(EMPTY_CONSULTATION_CONTEXT, readConsultationContext({
+            ...(consultationContext ?? {}),
+            session: consultationSession ?? undefined,
+        })),
+        session: consultationSession ?? undefined,
+        summaryDraft: readString(summaryPayload?.generated_summary),
+        summaryConfirmed: readString(summaryPayload?.user_confirmed_summary) ?? readString(summaryPayload?.confirmed_summary),
+    }
 
     return {
         logs: sortTimelineEntries([...auditLogs, ...persistedLogs, ...timelineLogs]),
@@ -264,7 +522,8 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
         finalVerdict,
         currentRound,
         isComplete: status === "completed" || Boolean(finalVerdict),
-        isWaitingConsultation: status === "waiting_consultation",
+        isWaitingConsultation: isConsultationWaiting(status, consultationStatus),
+        consultationState,
     }
 }
 
@@ -309,9 +568,16 @@ export function useAgentStream({
     const [isComplete, setIsComplete] = useState(false)
     const [currentNode, setCurrentNode] = useState<string | null>(null)
     const [isWaitingConsultation, setIsWaitingConsultation] = useState(false)
+    const [consultationState, setConsultationState] = useState<ConsultationState>(INITIAL_CONSULTATION_STATE)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const abortRef = useRef<AbortController | null>(null)
     const startedRef = useRef(false)
+    const consultationStateRef = useRef<ConsultationState>(INITIAL_CONSULTATION_STATE)
+
+    const updateConsultationState = useCallback((next: ConsultationState) => {
+        consultationStateRef.current = next
+        setConsultationState(next)
+    }, [])
 
     const processEvent = useCallback((event: AgentEvent) => {
         setEvents(prev => [...prev, event])
@@ -341,21 +607,33 @@ export function useAgentStream({
             setCurrentRound(event.round)
         } else if (event.type === "final_verdict") {
             setFinalVerdict(event.verdict)
-        } else if (event.type === "consultation_required") {
+        } else if (
+            event.type === "consultation_required" ||
+            event.type === "consultation_approval_required" ||
+            event.type === "consultation_started" ||
+            event.type === "consultation_summary_pending" ||
+            event.type === "consultation_summary_confirmed" ||
+            event.type === "consultation_skipped"
+        ) {
+            const nextConsultationState = normalizeConsultationEvent(event, consultationStateRef.current)
+            updateConsultationState(nextConsultationState)
             const reason = event.reason || "检测证据存在高冲突，等待专家会诊"
-            setIsWaitingConsultation(true)
+            const waiting = event.type !== "consultation_summary_confirmed" && event.type !== "consultation_skipped"
+            setIsWaitingConsultation(waiting)
             setIsRunning(false)
             setCurrentNode(null)
             setLogs(prev => [
                 ...prev,
                 {
-                    agent: "challenger",
-                    type: "consultation_required",
-                    content: reason,
+                    agent: "commander",
+                    type: event.type,
+                    content: consultationLogContent(nextConsultationState, reason),
                     timestamp: new Date().toISOString(),
+                    sourceKind: "system",
                 },
             ])
         } else if (event.type === "consultation_resumed") {
+            updateConsultationState(normalizeConsultationEvent(event, consultationStateRef.current))
             setIsWaitingConsultation(false)
             setIsRunning(true)
             setLogs(prev => [
@@ -365,6 +643,7 @@ export function useAgentStream({
                     type: "consultation_resumed",
                     content: "主持人已恢复研判流程",
                     timestamp: new Date().toISOString(),
+                    sourceKind: "system",
                 },
             ])
         } else if (event.type === "task_failed") {
@@ -400,7 +679,7 @@ export function useAgentStream({
             setIsWaitingConsultation(false)
             setCurrentNode(null)
         }
-    }, [])
+    }, [updateConsultationState])
 
     const runStream = useCallback(async (resume = false) => {
         if (startedRef.current && !resume) return
@@ -514,6 +793,7 @@ export function useAgentStream({
                 setCurrentRound(mapped.currentRound)
                 setIsComplete(mapped.isComplete)
                 setIsWaitingConsultation(mapped.isWaitingConsultation)
+                updateConsultationState(mapped.consultationState)
                 if (mapped.isComplete) {
                     startedRef.current = true
                     setIsRunning(false)
@@ -533,7 +813,7 @@ export function useAgentStream({
         return () => {
             cancelled = true
         }
-    }, [inviteToken, role, taskId])
+    }, [inviteToken, role, taskId, updateConsultationState])
 
     useEffect(() => {
         if (role === 'expert') {
@@ -572,6 +852,7 @@ export function useAgentStream({
         currentNode,
         isWaitingConsultation,
         errorMessage,
+        consultationState,
         start,
         resume,
     }

@@ -57,6 +57,8 @@ def build_resume_state_from_rows(
     max_rounds: int,
     expert_messages: list[dict[str, Any]],
     rows: list[dict[str, Any]],
+    persisted_consultation_sessions: list[dict[str, Any]] | None = None,
+    persisted_consultation_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebuild enough graph state to finalize a consultation after process restart."""
     forensics_result: dict[str, Any] | None = None
@@ -70,6 +72,11 @@ def build_resume_state_from_rows(
     phase_rounds = {"forensics": 1, "osint": 1, "commander": 1}
     phase_quality_history: dict[str, Any] = {"forensics": [], "osint": [], "commander": []}
     phase_residual_risks: list[Any] = []
+    consultation_sessions: list[Any] = []
+    consultation_trigger_history: list[Any] = []
+    active_consultation_session: dict[str, Any] | None = None
+    pending_consultation_approval: dict[str, Any] | None = None
+    confirmed_consultation_summary: dict[str, Any] | None = None
     provenance_graph: dict[str, Any] | None = None
     tool_results: dict[str, Any] = {}
 
@@ -94,6 +101,11 @@ def build_resume_state_from_rows(
             quality = challenger_feedback.get("quality_score")
             if isinstance(quality, (int, float)) and analysis_phase in phase_quality_history:
                 phase_quality_history[analysis_phase].append(float(quality))
+            consultation_sessions = _as_list(challenger_feedback.get("consultation_sessions")) or consultation_sessions
+            consultation_trigger_history = _as_list(challenger_feedback.get("consultation_trigger_history")) or consultation_trigger_history
+            active_consultation_session = _as_record(challenger_feedback.get("active_consultation_session")) or active_consultation_session
+            pending_consultation_approval = _as_record(challenger_feedback.get("pending_consultation_approval")) or pending_consultation_approval
+            confirmed_consultation_summary = _as_record(challenger_feedback.get("confirmed_consultation_summary")) or confirmed_consultation_summary
         if snapshot.get("final_verdict"):
             final_snapshot = _as_record(snapshot.get("final_verdict"))
             graph = _as_record(final_snapshot.get("provenance_graph"))
@@ -109,6 +121,11 @@ def build_resume_state_from_rows(
         evidence_board.extend(_as_list(board.get("evidence")))
         challenges.extend(_as_list(board.get("challenges")))
         timeline_events.extend(_as_list(board.get("timeline_events")))
+
+    if persisted_consultation_sessions:
+        consultation_sessions = persisted_consultation_sessions
+    if persisted_consultation_summary:
+        confirmed_consultation_summary = persisted_consultation_summary
 
     return {
         "task_id": task_id,
@@ -146,6 +163,11 @@ def build_resume_state_from_rows(
             "resumed_at": utc_now_iso(),
             "expert_message_count": len(expert_messages),
         },
+        "consultation_sessions": consultation_sessions,
+        "consultation_trigger_history": consultation_trigger_history,
+        "active_consultation_session": active_consultation_session,
+        "pending_consultation_approval": pending_consultation_approval,
+        "confirmed_consultation_summary": confirmed_consultation_summary,
         "timeline_events": timeline_events,
     }
 
@@ -205,6 +227,11 @@ def build_analysis_state_row(
         "analysis_phase": updates.get("analysis_phase"),
         "phase_rounds": updates.get("phase_rounds"),
         "phase_quality_history": updates.get("phase_quality_history"),
+        "consultation_sessions": updates.get("consultation_sessions"),
+        "consultation_trigger_history": updates.get("consultation_trigger_history"),
+        "active_consultation_session": updates.get("active_consultation_session"),
+        "pending_consultation_approval": updates.get("pending_consultation_approval"),
+        "confirmed_consultation_summary": updates.get("confirmed_consultation_summary"),
         "provenance_graph": updates.get("provenance_graph"),
     }
     forensics_result = updates.get("forensics_result") or {}

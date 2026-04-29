@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 
-import { mapAgentHistoryToStreamState } from "./useAgentStream"
+import {
+  canModerateConsultation,
+  mapAgentHistoryToStreamState,
+  normalizeConsultationEvent,
+} from "./useAgentStream"
 
 describe("mapAgentHistoryToStreamState", () => {
   it("restores persisted logs, snapshots, and completion state for invited experts", () => {
@@ -70,5 +74,47 @@ describe("mapAgentHistoryToStreamState", () => {
     expect(mapped.agentWeights).toEqual({ forensics: 0.5, osint: 0.5 })
     expect(mapped.isComplete).toBe(true)
     expect(mapped.isWaitingConsultation).toBe(false)
+  })
+})
+
+describe("consultation event helpers", () => {
+  it("normalizes the new consultation SSE payload into a user-facing context", () => {
+    const state = normalizeConsultationEvent({
+      type: "consultation_approval_required",
+      task_id: "task-1",
+      reason: "核心证据冲突",
+      payload: {
+        context: {
+          background: "疑似公开视频二次编辑",
+          progress: "Challenger 已完成三轮质询",
+          blockers: ["取证分数与溯源证据冲突"],
+          help_needed: "请判断是否需要补充来源链路",
+          sample_links: [
+            { title: "样本 A", url: "https://example.invalid/a" },
+            "https://example.invalid/b",
+          ],
+        },
+        session: { id: "session-1" },
+        summary_draft: "建议等待专家意见后再恢复裁决",
+      },
+    })
+
+    expect(state.status).toBe("approval_required")
+    expect(state.reason).toBe("核心证据冲突")
+    expect(state.context.background).toBe("疑似公开视频二次编辑")
+    expect(state.context.progress).toBe("Challenger 已完成三轮质询")
+    expect(state.context.blockers).toEqual(["取证分数与溯源证据冲突"])
+    expect(state.context.helpNeeded).toBe("请判断是否需要补充来源链路")
+    expect(state.context.sampleLinks).toEqual([
+      { label: "样本 A", url: "https://example.invalid/a" },
+      { label: "样本 2", url: "https://example.invalid/b" },
+    ])
+    expect(state.summaryDraft).toBe("建议等待专家意见后再恢复裁决")
+  })
+
+  it("keeps moderation actions limited to the logged-in owner host role", () => {
+    expect(canModerateConsultation("host")).toBe(true)
+    expect(canModerateConsultation("expert")).toBe(false)
+    expect(canModerateConsultation("viewer")).toBe(false)
   })
 })

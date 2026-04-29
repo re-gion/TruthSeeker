@@ -31,7 +31,7 @@ const AGENT_CONFIG: Record<string, { color: string; label: string; icon: string 
   forensics:  { color: "#6366F1", label: "取证Agent",  icon: "🔍" },
   osint:      { color: "#10B981", label: "溯源Agent",  icon: "🕵️" },
   challenger: { color: "#F59E0B", label: "质询Agent",  icon: "⚖️" },
-  commander:  { color: "#06B6D4", label: "指挥Agent",  icon: "👑" },
+  commander:  { color: "#06B6D4", label: "Commander 主持",  icon: "◇" },
   system:     { color: "#94A3B8", label: "系统审计",  icon: "•" },
   audit:      { color: "#94A3B8", label: "系统审计",  icon: "•" },
 }
@@ -44,6 +44,13 @@ const LOG_TYPE_STYLES: Record<string, { border: string; bg: string }> = {
   conclusion:{ border: "border-white/20",  bg: "bg-white/[0.05]" },
   audit:     { border: "border-slate-400/25", bg: "bg-slate-400/[0.05]" },
   phase_review: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
+  consultation_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
+  consultation_approval_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
+  consultation_started: { border: "border-[#06B6D4]/35", bg: "bg-[#06B6D4]/[0.06]" },
+  consultation_summary_pending: { border: "border-[#D4FF12]/35", bg: "bg-[#D4FF12]/[0.05]" },
+  consultation_summary_confirmed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
+  consultation_skipped: { border: "border-slate-400/25", bg: "bg-slate-400/[0.05]" },
+  consultation_resumed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
 }
 
 const PHASE_ROUND_PREFIX: Record<string, string> = {
@@ -82,6 +89,7 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
         const cfg = AGENT_CONFIG[entry.agent] || AGENT_CONFIG[entry.sourceKind || ""] || AGENT_CONFIG.forensics
         const typeStyle = LOG_TYPE_STYLES[entry.type] || LOG_TYPE_STYLES.action
         const isChallenge = entry.type === "challenge" || entry.type === "phase_review"
+        const isConsultation = entry.type.startsWith("consultation_")
         const isAudit = entry.type === "audit" || entry.sourceKind === "audit"
         const roundLabel = formatRoundLabel(entry)
 
@@ -122,6 +130,11 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
                     质询
                   </span>
                 )}
+                {isConsultation && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#06B6D4]/15 text-[#67E8F9] font-medium">
+                    会诊
+                  </span>
+                )}
                 {isAudit && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-400/15 text-slate-300 font-medium">
                     审计
@@ -148,7 +161,7 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
           <div className="absolute left-[19px] top-0 w-[17px] h-[17px] rounded-full bg-[#06B6D4] shadow-[0_0_12px_#06B6D4]" />
           <div className="bg-[#06B6D4]/10 border border-[#06B6D4]/30 rounded-lg px-4 py-3">
             <p className="text-sm font-semibold text-[#06B6D4]">
-              👑 裁决完成 — 分析流程结束
+              Commander 裁决完成 - 分析流程结束
             </p>
           </div>
         </motion.div>

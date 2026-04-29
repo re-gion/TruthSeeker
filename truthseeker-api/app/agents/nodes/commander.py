@@ -22,6 +22,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     challenger = state.get("challenger_feedback") or {}
     evidence_board = state.get("evidence_board", [])
     expert_messages = state.get("expert_messages", [])
+    confirmed_consultation_summary = state.get("confirmed_consultation_summary")
     case_prompt = state.get("case_prompt", "")
     sample_refs = build_sample_references(state.get("evidence_files") or [])
     phase_residual_risks = list(state.get("phase_residual_risks") or [])
@@ -46,6 +47,10 @@ async def commander_node(state: TruthSeekerState) -> dict:
         log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
     if expert_messages:
         log("thinking", f"💬 纳入 {len(expert_messages)} 条专家会诊意见")
+    if confirmed_consultation_summary:
+        summary_text = confirmed_consultation_summary.get("confirmed_summary") if isinstance(confirmed_consultation_summary, dict) else None
+        if summary_text:
+            log("thinking", f"🧑‍⚖️ 纳入用户确认的会诊摘要: {summary_text[:160]}")
 
     # === 加权计算（保留数值计算的确定性） ===
     forensics_conf = forensics.get("confidence", 0.5)
@@ -111,7 +116,12 @@ async def commander_node(state: TruthSeekerState) -> dict:
     llm_ruling = ""
     log("action", "🧠 正在调用大模型生成最终裁决报告...")
     try:
-        llm_ruling = await commander_ruling(forensics, osint, challenger, agent_weights, case_prompt, sample_refs)
+        enriched_challenger = {
+            **challenger,
+            "expert_messages": expert_messages[:10],
+            "confirmed_consultation_summary": confirmed_consultation_summary,
+        }
+        llm_ruling = await commander_ruling(forensics, osint, enriched_challenger, agent_weights, case_prompt, sample_refs)
         if llm_ruling.startswith("[LLM降级]"):
             log("action", "⚠️  LLM 裁决不可用，使用规则推断")
         else:
@@ -162,6 +172,12 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "residual_risks": phase_residual_risks + (challenger.get("residual_risks") or []),
         "case_prompt": case_prompt,
         "expert_message_count": len(expert_messages),
+        "consultation_summary": confirmed_consultation_summary,
+        "consultation_key_quotes": (
+            confirmed_consultation_summary.get("key_quotes", [])
+            if isinstance(confirmed_consultation_summary, dict)
+            else []
+        ),
         "key_evidence": [
             {"type": e.get("type"), "source": e.get("source"), "confidence": e.get("confidence")}
             for e in evidence_board[:5]

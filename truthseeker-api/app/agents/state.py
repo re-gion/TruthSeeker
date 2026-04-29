@@ -82,6 +82,11 @@ class TruthSeekerState(TypedDict):
     # 专家会诊消息
     expert_messages: list[dict]  # [{role, content, timestamp}, ...]
     consultation_resume: Optional[dict]
+    consultation_sessions: list[dict]
+    consultation_trigger_history: list[dict]
+    active_consultation_session: Optional[dict]
+    pending_consultation_approval: Optional[dict]
+    confirmed_consultation_summary: Optional[dict]
 
     # 时间轴关键事件（仅记录重要节点，非全量 log）
     timeline_events: Annotated[list[dict], add]  # [{round, agent, event_type, summary}, ...]
