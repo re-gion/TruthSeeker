@@ -250,17 +250,16 @@ function SystemFlowBoard({ steps }: { steps: WorkflowStep[] }) {
     }
     const current = steps[activeIndex] || steps[steps.length - 1]
     const progress = steps.length > 1 ? ((activeIndex + 1) / steps.length) * 100 : 10
-    const recent = steps.slice(Math.max(0, steps.length - 4))
 
     return (
-        <div className="liquid-glass rounded-lg px-4 py-2 border border-white/10 shadow-sm w-full md:w-[420px] md:max-w-[42vw]">
+        <div className="liquid-glass rounded-lg px-3 py-1.5 border border-white/10 shadow-sm w-full md:w-[300px] md:max-w-[28vw]">
             <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                     <div className="text-[10px] text-[#6B7280] uppercase tracking-wider">系统流程</div>
                     <div className="truncate text-xs font-medium text-white">{current?.title || "等待流程启动"}</div>
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-[#10B981] shrink-0">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981]" />
+                <div className="flex items-center gap-1 text-[10px] text-[#10B981] shrink-0">
+                    <span className="h-1 w-1 rounded-full bg-[#10B981] shadow-[0_0_6px_#10B981]" />
                     实时推进
                 </div>
             </div>
@@ -270,23 +269,6 @@ function SystemFlowBoard({ steps }: { steps: WorkflowStep[] }) {
                     animate={{ width: `${Math.min(100, Math.max(8, progress))}%` }}
                     transition={{ duration: 0.45 }}
                 />
-            </div>
-            <div className="mt-2 grid grid-cols-4 gap-1.5">
-                {recent.map((step) => (
-                    <div
-                        key={step.key}
-                        className={`min-w-0 rounded-md border px-2 py-1 ${
-                            step.tone === "running"
-                                ? "border-[#D4FF12]/30 bg-[#D4FF12]/10 text-[#D4FF12]"
-                                : step.tone === "waiting"
-                                    ? "border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#F59E0B]"
-                                    : "border-white/10 bg-white/[0.03] text-white/60"
-                        }`}
-                        title={`${step.title}: ${step.detail}`}
-                    >
-                        <div className="truncate text-[10px] leading-tight">{step.title}</div>
-                    </div>
-                ))}
             </div>
         </div>
     )

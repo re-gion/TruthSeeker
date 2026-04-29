@@ -24,13 +24,13 @@ export default function LoginPage() {
 
     return (
         <main className="relative min-h-screen flex items-center justify-center overflow-hidden bg-[#020107] dark:bg-[#020107] selection:bg-[#6366F1]/30">
-            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+            <div className="absolute inset-0 z-0 pointer-events-none">
                 <Image
                     src="/auth-bg.png"
                     alt=""
                     fill
                     sizes="100vw"
-                    className="absolute inset-0 h-full w-full object-contain object-center opacity-90 dark:opacity-90"
+                    className="absolute inset-0 h-full w-full object-cover object-center opacity-90 dark:opacity-90 -scale-y-100"
                     draggable={false}
                 />
                 <div className="absolute inset-0 bg-gradient-to-b from-[#6366F1]/5 via-transparent to-[#020107]/60" />
@@ -148,9 +148,9 @@ export default function LoginPage() {
                                 />
                                 <span className="text-xs font-medium text-white select-none">记住我</span>
                             </label>
-                            <button type="button" className="text-xs text-white/70 underline underline-offset-2 hover:text-white transition-colors cursor-default">
-                                忘记密码？<span className="text-white/40 no-underline"> (暂未开放)</span>
-                            </button>
+                            <Link href="/forgot-password" className="text-xs text-white/70 underline underline-offset-2 hover:text-white transition-colors">
+                                忘记密码？
+                            </Link>
                         </div>
 
                         <AnimatePresence>

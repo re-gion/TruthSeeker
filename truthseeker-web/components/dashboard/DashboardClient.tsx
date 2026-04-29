@@ -135,34 +135,27 @@ function buildArcProgressOption(module: ExternalInsightModule): EChartsOption {
   return {
     backgroundColor: "transparent",
     animationDuration: 900,
-    graphic: [
-      {
-        type: "text",
-        left: "center",
-        top: "38%",
-        style: {
-          text: formatInsightValue(headline.value, headline.unit),
-          fill: "#FFFFFF",
-          fontSize: 28,
-          fontWeight: 700,
-        },
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const p = params as { seriesIndex: number }
+        const metric = rings[p.seriesIndex]
+        if (!metric) return ""
+        return `<div style="font-weight:600">${metric.label}</div>
+                <div style="font-size:16px;font-weight:700;color:${CHART_COLORS[p.seriesIndex]};margin-top:4px">
+                  ${formatInsightValue(metric.value, metric.unit)}
+                </div>
+                ${metric.description ? `<div style="font-size:11px;color:#aaa;margin-top:4px;max-width:200px;white-space:normal">${metric.description}</div>` : ""}`
       },
-      {
-        type: "text",
-        left: "center",
-        top: "52%",
-        style: {
-          text: headline.label,
-          fill: "rgba(255,255,255,0.58)",
-          fontSize: 12,
-        },
-      },
-    ],
+    },
     series: rings.map((metric, index) => ({
       type: "gauge",
       startAngle: 210,
       endAngle: -30,
-      radius: `${96 - index * 18}%`,
+      radius: `${93 - index * 19}%`,
       min: 0,
       max: 100,
       pointer: {
@@ -170,14 +163,14 @@ function buildArcProgressOption(module: ExternalInsightModule): EChartsOption {
       },
       axisLine: {
         lineStyle: {
-          width: 12,
+          width: 14,
           color: [[1, "rgba(255,255,255,0.08)"]],
         },
       },
       progress: {
         show: true,
         roundCap: true,
-        width: 12,
+        width: 14,
         itemStyle: {
           color: CHART_COLORS[index],
         },
@@ -193,9 +186,10 @@ function buildArcProgressOption(module: ExternalInsightModule): EChartsOption {
   }
 }
 
-function buildLollipopOption(module: ExternalInsightModule): EChartsOption {
-  const labels = module.metrics.map((metric) => metric.label)
-  const values = module.metrics.map((metric) => metric.value)
+function buildPictorialBarOption(module: ExternalInsightModule): EChartsOption {
+  const items = module.pictorialItems ?? module.metrics.map((m) => ({ ...m, symbol: "circle" }))
+  const labels = items.map((item) => item.label)
+  const values = items.map((item) => item.value)
 
   return {
     backgroundColor: "transparent",
@@ -213,6 +207,17 @@ function buildLollipopOption(module: ExternalInsightModule): EChartsOption {
       backgroundColor: "rgba(10, 10, 15, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const arr = Array.isArray(params) ? params : []
+        const idx = (arr[0] as { dataIndex: number })?.dataIndex ?? 0
+        const item = items[idx]
+        if (!item) return ""
+        return `<div style="font-weight:600">${item.label}</div>
+                <div style="font-size:16px;font-weight:700;color:${CHART_COLORS[idx % CHART_COLORS.length]};margin-top:4px">
+                  ${formatInsightValue(item.value, item.unit)}
+                </div>
+                ${item.description ? `<div style="font-size:11px;color:#aaa;margin-top:4px;max-width:200px;white-space:normal">${item.description}</div>` : ""}`
+      },
     },
     xAxis: {
       type: "value",
@@ -228,34 +233,55 @@ function buildLollipopOption(module: ExternalInsightModule): EChartsOption {
     yAxis: {
       type: "category",
       data: labels,
+      inverse: true,
       axisTick: { show: false },
       axisLine: { show: false },
       axisLabel: {
         color: "rgba(255,255,255,0.74)",
+        formatter: (value: string, index: number) => {
+          const item = items[index]
+          if (!item) return value
+          return `{name|${value}}\n{value|${item.value}${item.unit}}`
+        },
+        rich: {
+          name: {
+            color: "rgba(255,255,255,0.74)",
+            fontSize: 12,
+            lineHeight: 18,
+          },
+          value: {
+            color: "#FFFFFF",
+            fontSize: 12,
+            fontWeight: 600,
+            lineHeight: 18,
+          },
+        },
       },
     },
     series: [
       {
         type: "bar",
         data: values,
-        barWidth: 8,
+        barWidth: 6,
         itemStyle: {
-          color: "rgba(122, 119, 255, 0.38)",
+          color: "rgba(122, 119, 255, 0.22)",
           borderRadius: 999,
         },
         z: 1,
       },
       {
         type: "pictorialBar",
-        data: values,
-        symbol: "circle",
+        data: values.map((value, idx) => ({
+          value,
+          symbol: items[idx]?.symbol ?? "circle",
+          itemStyle: {
+            color: CHART_COLORS[idx % CHART_COLORS.length],
+            shadowBlur: 16,
+            shadowColor: CHART_COLORS[idx % CHART_COLORS.length] + "66",
+          },
+        })),
         symbolPosition: "end",
-        symbolSize: 16,
-        itemStyle: {
-          color: "#7A77FF",
-          shadowBlur: 12,
-          shadowColor: "rgba(122,119,255,0.45)",
-        },
+        symbolSize: [20, 20],
         z: 3,
       },
     ],
@@ -263,102 +289,228 @@ function buildLollipopOption(module: ExternalInsightModule): EChartsOption {
 }
 
 function buildRadialProgressOption(module: ExternalInsightModule): EChartsOption {
-  const maxValue = Math.max(...module.metrics.map((metric) => metric.value), 1)
+  const metrics = module.metrics
+  const maxes = [400, 400, 400, 8, 0.5, 100]
+  const normalized = metrics.map((m, i) => {
+    const max = maxes[i] ?? m.value * 1.2
+    return Math.min(100, Math.round((m.value / max) * 100))
+  })
 
   return {
     backgroundColor: "transparent",
     animationDuration: 900,
-    series: module.metrics.map((metric, index) => ({
-      type: "gauge",
-      center: [`${18 + index * 32}%`, "52%"],
-      radius: "28%",
-      min: 0,
-      max: maxValue,
-      startAngle: 210,
-      endAngle: -30,
-      pointer: { show: false },
-      progress: {
-        show: true,
-        width: 14,
-        roundCap: true,
-        itemStyle: {
-          color: CHART_COLORS[index + 1] ?? CHART_COLORS[index],
-        },
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const p = params as { dataIndex: number }
+        const metric = metrics[p.dataIndex]
+        if (!metric) return ""
+        return `<div style="font-weight:600">${metric.label}</div>
+                <div style="font-size:16px;font-weight:700;color:${CHART_COLORS[p.dataIndex % CHART_COLORS.length]};margin-top:4px">
+                  ${formatInsightValue(metric.value, metric.unit)}
+                </div>
+                ${metric.description ? `<div style="font-size:11px;color:#aaa;margin-top:4px;max-width:200px;white-space:normal">${metric.description}</div>` : ""}`
       },
-      axisLine: {
-        lineStyle: {
-          width: 14,
-          color: [[1, "rgba(255,255,255,0.08)"]],
-        },
-      },
-      splitLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: { show: false },
-      anchor: { show: false },
-      title: {
-        offsetCenter: [0, "118%"],
-        color: "rgba(255,255,255,0.72)",
-        fontSize: 11,
-      },
-      detail: {
-        offsetCenter: [0, "56%"],
-        formatter: formatInsightValue(metric.value, metric.unit),
-        color: "#FFFFFF",
-        fontSize: 15,
-        fontWeight: 700,
-      },
-      data: [{ value: metric.value, name: metric.label }],
-    })),
-  }
-}
-
-function buildSignalBarsOption(module: ExternalInsightModule): EChartsOption {
-  const values = module.metrics.map((metric) => metric.value)
-  const maxValue = Math.max(...values, 1)
-
-  return {
-    backgroundColor: "transparent",
-    animationDuration: 900,
-    grid: {
-      top: 12,
-      right: 18,
-      bottom: 8,
-      left: 16,
-      containLabel: true,
     },
-    xAxis: {
-      type: "value",
-      max: 1,
-      splitLine: { show: false },
-      axisLabel: { show: false },
-      axisTick: { show: false },
-      axisLine: { show: false },
+    polar: {
+      radius: "65%",
     },
-    yAxis: {
+    angleAxis: {
       type: "category",
-      data: module.metrics.map((metric) => metric.label),
-      axisTick: { show: false },
+      data: metrics.map((m) => m.label),
+      startAngle: 75,
       axisLine: { show: false },
+      axisTick: { show: false },
       axisLabel: {
         color: "rgba(255,255,255,0.72)",
+        fontSize: 12,
+        interval: 0,
+      },
+    },
+    radiusAxis: {
+      min: 0,
+      max: 100,
+      axisLine: { show: false },
+      axisLabel: { show: false },
+      splitLine: {
+        lineStyle: {
+          color: "rgba(255,255,255,0.08)",
+        },
       },
     },
     series: [
       {
         type: "bar",
-        data: module.metrics.map((metric) => metric.value / maxValue),
-        barWidth: 18,
-        itemStyle: {
-          borderRadius: 999,
-          color: (params: { dataIndex: number }) => CHART_COLORS[params.dataIndex % CHART_COLORS.length],
-        },
+        coordinateSystem: "polar",
+        data: normalized.map((v, i) => ({
+          value: v,
+          itemStyle: {
+            color: CHART_COLORS[i % CHART_COLORS.length],
+            borderRadius: 4,
+          },
+        })),
+        barWidth: "50%",
         label: {
           show: true,
-          position: "right",
+          position: "outside",
+          formatter: (params: unknown) => {
+            const p = params as { dataIndex: number }
+            const metric = metrics[p.dataIndex]
+            if (!metric) return ""
+            return `${metric.value}${metric.unit}`
+          },
           color: "#FFFFFF",
-          formatter: (params: { dataIndex: number }) =>
-            formatInsightValue(module.metrics[params.dataIndex].value, module.metrics[params.dataIndex].unit),
+          fontSize: 12,
+          fontWeight: 600,
         },
+      },
+    ],
+  }
+}
+
+function buildFunnelOption(module: ExternalInsightModule): EChartsOption {
+  // 只取前 3 个治理动作指标放入漏斗（约谈 / 处罚 / 关站），阅读量在卡片中展示
+  const funnelMetrics = module.metrics.slice(0, 3)
+  const funnelColors = ["#FF8A5B", "#FB7185", "#7A77FF"]
+
+  return {
+    backgroundColor: "transparent",
+    animationDuration: 900,
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const p = params as { dataIndex: number; name: string; value: number }
+        const metric = funnelMetrics[p.dataIndex]
+        if (!metric) return ""
+        return `<div style="font-weight:600">${metric.label}</div>
+                <div style="font-size:16px;font-weight:700;color:${funnelColors[p.dataIndex]};margin-top:4px">
+                  ${formatInsightValue(metric.value, metric.unit)}
+                </div>
+                ${metric.description ? `<div style="font-size:11px;color:#aaa;margin-top:4px;max-width:200px;white-space:normal">${metric.description}</div>` : ""}`
+      },
+    },
+    series: [
+      {
+        type: "funnel",
+        sort: "descending",
+        left: "10%",
+        top: 10,
+        bottom: 10,
+        width: "80%",
+        min: 0,
+        max: Math.max(...funnelMetrics.map((m) => m.value), 1),
+        gap: 4,
+        label: {
+          show: true,
+          position: "inside",
+          formatter: "{b}\n{c} 家",
+          color: "#FFFFFF",
+          fontSize: 12,
+          fontWeight: 600,
+        },
+        itemStyle: {
+          borderColor: "#0A0A0F",
+          borderWidth: 3,
+        },
+        emphasis: {
+          label: {
+            fontSize: 14,
+          },
+        },
+        data: funnelMetrics.map((metric, index) => ({
+          value: metric.value,
+          name: metric.label,
+          itemStyle: {
+            color: funnelColors[index],
+          },
+        })),
+      },
+    ],
+  }
+}
+
+function buildEcoRadarOption(module: ExternalInsightModule): EChartsOption {
+  const metrics = module.metrics
+  // 归一化到 0-100，用于雷达图绘制；tooltip 显示原始值
+  // 顺序对应 metrics：开源模型(万+) / 衍生模型(万+) / 开发者(万) / 注册用户(亿+)
+  const maxes = [3, 10, 1000, 8]
+  const normalized = metrics.map((m, i) => {
+    const max = maxes[i] ?? m.value * 1.2
+    return Math.min(100, Math.round((m.value / max) * 100))
+  })
+
+  return {
+    backgroundColor: "transparent",
+    animationDuration: 900,
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: () => {
+        let html = `<div style="font-weight:600;margin-bottom:6px">生态健康度</div>`
+        metrics.forEach((m, idx) => {
+          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:4px">
+            <span style="color:${CHART_COLORS[idx % CHART_COLORS.length]}">${m.label}</span>
+            <span style="font-weight:600">${formatInsightValue(m.value, m.unit)}</span>
+          </div>`
+        })
+        return html
+      },
+    },
+    radar: {
+      radius: "55%",
+      splitNumber: 4,
+      indicator: metrics.map((m) => ({
+        name: `${m.label}\n${m.value}${m.unit}`,
+        max: 100,
+      })),
+      axisName: {
+        color: "rgba(255,255,255,0.82)",
+        fontSize: 12,
+        lineHeight: 18,
+      },
+      splitLine: {
+        lineStyle: {
+          color: "rgba(255,255,255,0.08)",
+        },
+      },
+      splitArea: {
+        areaStyle: {
+          color: ["rgba(0, 209, 255, 0.03)", "rgba(0, 209, 255, 0.01)"],
+        },
+      },
+      axisLine: {
+        lineStyle: {
+          color: "rgba(255,255,255,0.12)",
+        },
+      },
+    },
+    series: [
+      {
+        type: "radar",
+        data: [
+          {
+            value: normalized,
+            name: "生态健康度",
+            areaStyle: {
+              color: "rgba(0, 209, 255, 0.18)",
+            },
+            lineStyle: {
+              color: "#00D1FF",
+              width: 3,
+            },
+            itemStyle: {
+              color: "#00D1FF",
+            },
+          },
+        ],
       },
     ],
   }
@@ -368,12 +520,14 @@ function buildExternalOption(module: ExternalInsightModule): EChartsOption {
   switch (module.visualType) {
     case "arc-progress":
       return buildArcProgressOption(module)
-    case "lollipop-rank":
-      return buildLollipopOption(module)
+    case "pictorial-bar":
+      return buildPictorialBarOption(module)
     case "radial-progress":
       return buildRadialProgressOption(module)
-    case "signal-bars":
-      return buildSignalBarsOption(module)
+    case "funnel":
+      return buildFunnelOption(module)
+    case "radar":
+      return buildEcoRadarOption(module)
     default:
       return createEmptyOption(module.moduleTitle)
   }
@@ -397,6 +551,18 @@ function buildTrendOption(completions?: DashboardTrendSeries, responseTime?: Das
       backgroundColor: "rgba(10, 10, 15, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const arr = Array.isArray(params) ? params : []
+        let html = `<div style="font-weight:600;margin-bottom:4px;">${arr[0]?.axisValue ?? ""}</div>`
+        for (const p of arr) {
+          const marker = p.marker ?? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;"></span>`
+          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:3px;">`
+          html += `<span>${marker}${p.seriesName}</span>`
+          html += `<span style="font-weight:600;">${p.value} ${p.seriesName?.includes("时间") ? "ms" : "件"}</span>`
+          html += `</div>`
+        }
+        return html
+      },
     },
     legend: {
       top: 0,
@@ -486,7 +652,15 @@ function buildRoseOption(items: DashboardDistributionItem[]): EChartsOption {
       backgroundColor: "rgba(10, 10, 15, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       textStyle: { color: "#F5F5F5" },
-      formatter: "{b}<br/>{c} 件",
+      formatter: (params: unknown) => {
+        const p = params as { name: string; value: number; percent: number; color: string }
+        return `<div style="font-weight:600;margin-bottom:4px;">${p.name}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};"></span>
+                  <span>数量：${p.value} 件</span>
+                </div>
+                <div style="margin-top:3px;color:rgba(255,255,255,0.65);">占比：${p.percent.toFixed(1)}%</div>`
+      },
     },
     series: [
       {
@@ -501,6 +675,10 @@ function buildRoseOption(items: DashboardDistributionItem[]): EChartsOption {
         label: {
           color: "rgba(255,255,255,0.76)",
           formatter: "{b}\n{c}",
+        },
+        labelLine: {
+          length: 10,
+          length2: 10,
         },
         data: items.map((item, index) => ({
           name: item.label,
@@ -519,6 +697,8 @@ function buildTreemapOption(items: DashboardDistributionItem[]): EChartsOption {
     return createEmptyOption("暂无状态分布")
   }
 
+  const total = items.reduce((sum, item) => sum + item.value, 0)
+
   return {
     backgroundColor: "transparent",
     tooltip: {
@@ -526,7 +706,16 @@ function buildTreemapOption(items: DashboardDistributionItem[]): EChartsOption {
       backgroundColor: "rgba(10, 10, 15, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       textStyle: { color: "#F5F5F5" },
-      formatter: "{b}<br/>{c} 件",
+      formatter: (params: unknown) => {
+        const p = params as { name: string; value: number; color: string }
+        const share = total > 0 ? ((p.value / total) * 100).toFixed(1) : "0.0"
+        return `<div style="font-weight:600;margin-bottom:4px;">${p.name}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};"></span>
+                  <span>数量：${p.value} 件</span>
+                </div>
+                <div style="margin-top:3px;color:rgba(255,255,255,0.65);">占比：${share}%</div>`
+      },
     },
     series: [
       {
@@ -566,6 +755,23 @@ function buildRadarOption(items: DashboardDistributionItem[]): EChartsOption {
 
   return {
     backgroundColor: "transparent",
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const p = params as { name: string; value: number[] }
+        let html = `<div style="font-weight:600;margin-bottom:6px;">${p.name}</div>`
+        topItems.forEach((item, idx) => {
+          html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:3px;">
+            <span>${item.label}</span>
+            <span style="font-weight:600;">${p.value[idx]} 件</span>
+          </div>`
+        })
+        return html
+      },
+    },
     radar: {
       radius: "66%",
       splitNumber: 4,
@@ -621,6 +827,24 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
     return createEmptyOption("暂无证据流向")
   }
 
+  // 缩短过长节点名称，避免右侧/左侧被截断；tooltip 仍显示原始名称
+  const nameMap: Record<string, string> = {
+    inconclusive: "存疑",
+    "高风险结论": "高风险",
+    "真实结果": "真实",
+    osint_agent: "开源情报",
+    forensics_agent: "取证分析",
+  }
+  const mappedNodes = flowSankey.nodes.map((n) => ({
+    ...n,
+    name: nameMap[n.name] ?? n.name,
+  }))
+  const mappedLinks = flowSankey.links.map((l) => ({
+    ...l,
+    source: nameMap[l.source] ?? l.source,
+    target: nameMap[l.target] ?? l.target,
+  }))
+
   return {
     backgroundColor: "transparent",
     tooltip: {
@@ -628,6 +852,18 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
       backgroundColor: "rgba(10, 10, 15, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const p = params as { dataType?: string; data?: { source?: string; target?: string; name?: string }; value?: number; name?: string }
+        if (p.dataType === "edge") {
+          const source = p.data?.source ?? p.name ?? "?"
+          const target = p.data?.target ?? "?"
+          return `<div style="font-weight:600;margin-bottom:4px;">${source} → ${target}</div>
+                  <div>流转次数：${p.value ?? 0} 次</div>`
+        }
+        const nodeName = p.data?.name ?? p.name ?? ""
+        return `<div style="font-weight:600;margin-bottom:4px;">${nodeName}</div>
+                <div>涉及证据数：${p.value ?? 0} 件</div>`
+      },
     },
     series: [
       {
@@ -635,10 +871,10 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
         emphasis: {
           focus: "adjacency",
         },
-        data: flowSankey.nodes,
-        links: flowSankey.links,
+        data: mappedNodes,
+        links: mappedLinks,
         left: "4%",
-        right: "4%",
+        right: "10%",
         top: 18,
         bottom: 18,
         nodeWidth: 16,
@@ -679,6 +915,65 @@ function SectionHeading({
       <span className="rounded-full border border-white/10 bg-white/6 px-4 py-1.5 text-xs tracking-[0.18em] text-white/62 uppercase">
         {badge}
       </span>
+    </div>
+  )
+}
+
+function MiniBar({ value, max, color, title }: { value: number; max: number; color: string; title?: string }) {
+  const progress = Math.min(value / max, 1)
+
+  return (
+    <div className="mx-auto h-1.5 w-20 overflow-hidden rounded-full bg-white/8" title={title}>
+      <div
+        className="h-full rounded-full"
+        style={{
+          width: `${progress * 100}%`,
+          backgroundColor: color,
+          transition: "width 1.2s ease-out",
+        }}
+      />
+    </div>
+  )
+}
+
+function DigitalCardsChart({ metrics }: { metrics: ExternalInsightModule["metrics"] }) {
+  const displayMetrics = metrics.slice(0, 3)
+  const barColors = ["#FF8A5B", "#7A77FF", "#00D1FF"]
+  const barMaxes = [20, 2, 100] // 对应 16.2亿/20、1.3亿条/2、33.3%/100
+
+  return (
+    <div className="flex h-[280px] items-center justify-around">
+      {displayMetrics.map((metric, index) => (
+        <div key={metric.label} className="flex flex-col items-center gap-3">
+          <p className="text-center text-sm text-white/56">{metric.label}</p>
+          <p className="text-center text-3xl font-bold tracking-tight text-white" style={{ fontFamily: "monospace" }}>
+            {formatInsightValue(metric.value, metric.unit)}
+          </p>
+          <MiniBar
+            value={metric.value}
+            max={barMaxes[index] ?? metric.value * 1.2}
+            color={barColors[index] ?? "#61D4FF"}
+            title={`${metric.label}: ${formatInsightValue(metric.value, metric.unit)}${metric.description ? ` — ${metric.description}` : ""}`}
+          />
+          {metric.description && (
+            <p className="min-h-[36px] max-w-[140px] text-center text-xs leading-4 text-white/40">{metric.description}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MetricCard({ metric }: { metric: ExternalInsightModule["metrics"][0] }) {
+  return (
+    <div className="rounded-[20px] border border-white/8 bg-white/4 p-4 transition-colors hover:bg-white/6">
+      <p className="text-sm leading-6 text-white/56">{metric.label}</p>
+      <p className="mt-2 text-xl font-semibold tracking-tight text-white">
+        {formatInsightValue(metric.value, metric.unit)}
+      </p>
+      {metric.description && (
+        <p className="mt-1.5 text-xs leading-5 text-white/40">{metric.description}</p>
+      )}
     </div>
   )
 }
@@ -726,18 +1021,27 @@ function ExternalInsightCard({ module, index }: { module: ExternalInsightModule;
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-[24px] border border-white/8 bg-black/18 p-4">
-            <DashboardChart option={buildExternalOption(module)} height={280} />
-          </div>
+          {module.visualType === "digital-cards" ? (
+            <div className="rounded-[24px] border border-white/8 bg-black/18 p-4">
+              <DigitalCardsChart metrics={module.metrics} />
+            </div>
+          ) : (
+            <div className="rounded-[24px] border border-white/8 bg-black/18 p-4">
+              <DashboardChart option={buildExternalOption(module)} height={module.visualType === "arc-progress" ? 260 : module.visualType === "radial-progress" ? 340 : 280} />
+              {module.visualType === "arc-progress" && (
+                <div className="-mt-7 text-center">
+                  <p className="text-2xl font-semibold tracking-tight text-white">
+                    {formatInsightValue(module.metrics[0].value, module.metrics[0].unit)}
+                  </p>
+                  <p className="mt-1 text-xs text-white/58">{module.metrics[0].label}</p>
+                </div>
+              )}
+            </div>
+          )}
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className={`grid gap-3 ${module.metrics.length === 4 ? "grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
             {module.metrics.map((metric) => (
-              <div key={`${module.id}-${metric.label}`} className="rounded-[20px] border border-white/8 bg-white/4 p-4">
-                <p className="text-sm leading-6 text-white/56">{metric.label}</p>
-                <p className="mt-3 text-xl font-semibold tracking-tight text-white">
-                  {formatInsightValue(metric.value, metric.unit)}
-                </p>
-              </div>
+              <MetricCard key={`${module.id}-${metric.label}`} metric={metric} />
             ))}
           </div>
         </div>
@@ -759,22 +1063,25 @@ function KpiCard({
 }) {
   const Icon = KPI_META[index].icon
 
+  const helperText = KPI_META[index].id === "totalTasks" ? "系统中累计创建的检测任务总数" : KPI_META[index].id === "highRiskTasks" ? "被判定为高风险的任务数量" : KPI_META[index].id === "averageResponseMs" ? "所有已完成任务的平均处理耗时" : "今日（上海时区）标记为已完成的任务数"
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }}
       transition={{ duration: 0.4, delay: index * 0.05 }}
-      className="rounded-[24px] border border-white/8 bg-white/4 p-5"
+      className="group rounded-[24px] border border-white/8 bg-white/4 p-5 transition-all duration-300 hover:border-white/16 hover:bg-white/7"
+      title={helperText}
     >
       <div className="mb-5 flex items-center justify-between gap-3">
-        <div className={`rounded-2xl border border-white/10 bg-black/18 p-3 ${tone}`}>
+        <div className={`rounded-2xl border border-white/10 bg-black/18 p-3 transition-transform duration-300 group-hover:scale-110 ${tone}`}>
           <Icon className="size-5" />
         </div>
         <span className="text-xs tracking-[0.18em] text-white/38 uppercase">KPI</span>
       </div>
-      <p className="text-sm text-white/58">{label}</p>
-      <p className="mt-3 text-4xl font-semibold tracking-tight text-white">{value}</p>
+      <p className="text-sm text-white/58 transition-colors duration-300 group-hover:text-white/72">{label}</p>
+      <p className="mt-3 text-4xl font-semibold tracking-tight text-white transition-colors duration-300 group-hover:text-[#D4FF3C]">{value}</p>
     </motion.div>
   )
 }
@@ -788,15 +1095,21 @@ function CapabilityMetricList({ metrics }: { metrics: DashboardCapabilityMetric[
         const Icon = icons[index % icons.length]
 
         return (
-          <div key={metric.id} className="rounded-[22px] border border-white/8 bg-white/4 p-4">
+          <div
+            key={metric.id}
+            className="group rounded-[22px] border border-white/8 bg-white/4 p-4 transition-all duration-300 hover:border-white/16 hover:bg-white/7"
+            title={metric.helper}
+          >
             <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="rounded-2xl border border-white/10 bg-black/18 p-3 text-[#D4FF3C]">
+              <div className="rounded-2xl border border-white/10 bg-black/18 p-3 text-[#D4FF3C] transition-transform duration-300 group-hover:scale-110">
                 <Icon className="size-4" />
               </div>
-              <p className="text-3xl font-semibold tracking-tight text-white">{metric.value.toLocaleString("zh-CN")}</p>
+              <p className="text-3xl font-semibold tracking-tight text-white transition-colors duration-300 group-hover:text-[#D4FF3C]">
+                {metric.value.toLocaleString("zh-CN")}
+              </p>
             </div>
-            <p className="text-sm text-white/72">{metric.label}</p>
-            <p className="mt-1 text-xs leading-6 text-white/46">{metric.helper}</p>
+            <p className="text-sm text-white/72 transition-colors duration-300 group-hover:text-white/84">{metric.label}</p>
+            <p className="mt-1 text-xs leading-6 text-white/46 transition-colors duration-300 group-hover:text-white/60">{metric.helper}</p>
           </div>
         )
       })}
