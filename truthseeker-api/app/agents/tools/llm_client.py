@@ -1,8 +1,8 @@
 """LLM client wrapper for TruthSeeker multi-agent deepfake detection system.
 
-Wraps the Kimi/Moonshot API (OpenAI-compatible) using langchain-openai's ChatOpenAI.
+Wraps the selected Kimi API endpoint (OpenAI-compatible) using langchain-openai's ChatOpenAI.
 Each agent-specific function builds a prompt chain and invokes the LLM asynchronously.
-On failure, gracefully degrades to a rule-based fallback string.
+On failure, gracefully degrades to a local rule-based fallback string.
 """
 from __future__ import annotations
 
@@ -18,33 +18,35 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from app.config import settings
+from app.config import resolve_kimi_runtime, settings
 from app.services.audit_log import record_audit_event
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# LLM connection pool – module-level singleton cache keyed by model name
+# LLM connection pool – module-level singleton cache keyed by active endpoint
 # ---------------------------------------------------------------------------
-_llm_cache: dict[str, ChatOpenAI] = {}
+_llm_cache: dict[tuple[str, str, str], ChatOpenAI] = {}
 
 
 def get_llm(model_name: str | None = None) -> ChatOpenAI:
-    """Return a cached ChatOpenAI instance configured for Kimi/Moonshot API."""
-    name = model_name or settings.KIMI_MODEL
-    if name not in _llm_cache:
+    """Return a cached ChatOpenAI instance configured for the selected Kimi endpoint."""
+    runtime = resolve_kimi_runtime()
+    name = model_name or runtime["model"]
+    cache_key = (runtime["provider"], runtime["base_url"], name)
+    if cache_key not in _llm_cache:
         # Kimi K2 系列只支持 temperature=1，其他模型可用 0.3
         temperature = 1.0 if name.startswith("kimi-k2") else 0.3
-        _llm_cache[name] = ChatOpenAI(
+        _llm_cache[cache_key] = ChatOpenAI(
             model=name,
-            base_url=settings.KIMI_BASE_URL,
-            api_key=settings.KIMI_API_KEY,
+            base_url=runtime["base_url"],
+            api_key=runtime["api_key"],
             temperature=temperature,
             max_tokens=2048,
             request_timeout=120.0,
             max_retries=1,
         )
-    return _llm_cache[name]
+    return _llm_cache[cache_key]
 
 
 def build_sample_references(evidence_files: list[dict] | None) -> list[dict]:
@@ -261,25 +263,22 @@ async def _invoke_llm(
         ("human", human_template),
     ])
 
-    # 首选模型
+    runtime = resolve_kimi_runtime()
     llm = get_llm()
     chain = prompt | llm | StrOutputParser()
     try:
         return await chain.ainvoke(variables)
     except Exception as exc:
-        logger.warning("首选模型 %s 调用失败: %s", settings.KIMI_MODEL, exc)
-
-    # fallback 模型
-    fallback_llm = get_llm(settings.KIMI_FALLBACK_MODEL)
-    fallback_chain = prompt | fallback_llm | StrOutputParser()
-    try:
-        return await fallback_chain.ainvoke(variables)
-    except Exception as exc:
-        logger.exception("Fallback 模型 %s 也调用失败: %s", settings.KIMI_FALLBACK_MODEL, exc)
+        logger.exception("Kimi %s 模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
         record_audit_event(
             action="llm.degraded",
             agent="llm_client",
-            metadata={"error": f"{type(exc).__name__}: {exc}", "fallback_model": settings.KIMI_FALLBACK_MODEL},
+            metadata={
+                "error": f"{type(exc).__name__}: {exc}",
+                "provider": runtime["provider"],
+                "model": runtime["model"],
+                "base_url": runtime["base_url"],
+            },
         )
         return f"[降级模式: LLM不可用] {fallback_text}"
 
@@ -303,6 +302,7 @@ async def _invoke_multimodal_llm(
                     ref_copy["signed_url"] = b64_url
             resolved_refs.append(ref_copy)
 
+    runtime = resolve_kimi_runtime()
     llm = get_llm()
     try:
         messages = [
@@ -316,26 +316,31 @@ async def _invoke_multimodal_llm(
         if isinstance(content, list):
             return json.dumps(content, ensure_ascii=False)
     except Exception as exc:
-        logger.warning("多模态模型 %s 调用失败: %s", settings.KIMI_MODEL, exc)
+        logger.warning("Kimi %s 多模态模型 %s 调用失败，改用同模型文本摘要重试: %s", runtime["provider"], runtime["model"], exc)
 
-    fallback_llm = get_llm(settings.KIMI_FALLBACK_MODEL)
     try:
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"{human_text}\n\n样本引用摘要：\n{_sample_references_text(sample_refs)}"),
         ]
-        response = await fallback_llm.ainvoke(messages)
+        response = await llm.ainvoke(messages)
         content = getattr(response, "content", "")
         if isinstance(content, str) and content.strip():
             return content
         if isinstance(content, list):
             return json.dumps(content, ensure_ascii=False)
     except Exception as exc:
-        logger.exception("Fallback 模型 %s 也调用失败: %s", settings.KIMI_FALLBACK_MODEL, exc)
+        logger.exception("Kimi %s 文本摘要重试模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
         record_audit_event(
             action="llm.degraded",
             agent="llm_client",
-            metadata={"error": f"{type(exc).__name__}: {exc}", "fallback_model": settings.KIMI_FALLBACK_MODEL, "multimodal": True},
+            metadata={
+                "error": f"{type(exc).__name__}: {exc}",
+                "provider": runtime["provider"],
+                "model": runtime["model"],
+                "base_url": runtime["base_url"],
+                "multimodal": True,
+            },
         )
     return f"[降级模式: LLM不可用] {fallback_text}"
 

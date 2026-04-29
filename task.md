@@ -245,6 +245,13 @@
 - [x] 检测页历史回放合并 agent_logs、timeline_events、audit_logs；时间轴展示 Challenger 局部轮次
 - [x] 删除检测页 2D Agent 视图，仅保留 3D、时间轴、图谱入口
 
+### 2026-04-29 Agent 自主推理与 Kimi coding plan 适配
+- [x] 开发文档统一为“四个 Agent 先基于 Kimi 2.6 自主推理，再按角色调用外部工具，最后融合两部分结果”
+- [x] 后端 LLM 配置支持 `KIMI_PROVIDER=official|coding` 手动选择官方 API 或 Kimi coding plan
+- [x] 删除 `KIMI_FALLBACK_MODEL=moonshot-v1-128k` 模型级回退配置，LLM 不可用时只进入本地结构化降级
+- [x] `.env.example` 补充官方 API 与 coding plan 的示例配置
+- [x] 检测页右上角改为系统流程展板，按上传输入、创建任务、开始检测、Agent 执行、局部质询轮次、报告生成展示全流程
+
 ---
 
 ## 每日开发检查清单

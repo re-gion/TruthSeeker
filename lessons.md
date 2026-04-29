@@ -22,6 +22,8 @@
 | 2026-04-28 | 后端/OSINT 报告 | Exa 搜索 query 混入内部诊断句，且返回正文被递归 dump 到最终报告，造成报告严重污染 | 搜索 query 优先域名/实体线索并过滤内部诊断；报告只展示标题、URL、短摘要，不输出网页全文或原始工具大对象 |
 | 2026-04-28 | 后端/Challenger 时间线 | 报告按全局 round 分组会掩盖 Challenger 分别质询 Forensics/OSINT/Commander 的阶段轮次 | Challenger 需要输出结构化 `phase/phase_round/confidence/quality_delta`，报告按“Challenger ↔ Agent 第 N 轮”展示 |
 | 2026-04-29 | 报告/时间轴 | LLM 长文本字段如果走通用字典渲染，会把 Markdown 段落压成一行；检测页只回放 agent_logs 会漏掉系统审计事件 | `llm_analysis`、`llm_cross_validation`、`llm_ruling` 要用 Markdown 专用渲染；前端时间轴合并 `agent_logs`、`timeline_events`、`audit_logs` 并按时间排序 |
+| 2026-04-29 | 后端/Kimi 配置 | 把 `moonshot-v1-128k` 当作模型级回退会破坏“四 Agent 原生多模态推理基座一致性” | 只保留 Kimi 2.6；通过 `KIMI_PROVIDER=official|coding` 切换入口，调用失败时进入本地结构化降级而不是换模型 |
+| 2026-04-29 | 文档/测试样本 | 测试样本说明如果写成“Forensics 看图片、OSINT 读文本”会误导后续实现回到模态割裂 | 文档必须强调四个 Agent 都先自主读取可访问样本和上下文，再按角色调用工具并融合输出 |
 
 ---
 

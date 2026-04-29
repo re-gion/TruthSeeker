@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_PATH),
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # Supabase
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
             "VirusTotal_API_KEY",
         ),
     )
+    KIMI_PROVIDER: str = Field(default="official", validation_alias=AliasChoices("KIMI_PROVIDER", "Kimi_Provider"))
     KIMI_API_KEY: str = Field(default="", validation_alias=AliasChoices("KIMI_API_KEY", "Kimi_API_KEY"))
     KIMI_BASE_URL: str = Field(
         default="https://api.moonshot.cn/v1",
@@ -46,9 +48,17 @@ class Settings(BaseSettings):
         default="kimi-k2.6",
         validation_alias=AliasChoices("KIMI_MODEL", "Kimi_Model"),
     )
-    KIMI_FALLBACK_MODEL: str = Field(
-        default="moonshot-v1-128k",
-        validation_alias=AliasChoices("KIMI_FALLBACK_MODEL", "Kimi_Fallback_Model"),
+    KIMI_CODING_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("KIMI_CODING_API_KEY", "Kimi_Coding_API_KEY"),
+    )
+    KIMI_CODING_BASE_URL: str = Field(
+        default="https://api.kimi.com/coding/v1",
+        validation_alias=AliasChoices("KIMI_CODING_BASE_URL", "Kimi_Coding_Base_URL"),
+    )
+    KIMI_CODING_MODEL: str = Field(
+        default="kimi-k2.6",
+        validation_alias=AliasChoices("KIMI_CODING_MODEL", "Kimi_Coding_Model"),
     )
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
@@ -74,6 +84,41 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _normalize_kimi_provider(provider: str) -> str:
+    value = (provider or "official").strip().lower().replace("-", "_")
+    if value in {"coding", "coding_plan", "kimi_coding", "kimi_coding_plan"}:
+        return "coding"
+    return "official"
+
+
+def _normalize_kimi_base_url(base_url: str, provider: str) -> str:
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized:
+        normalized = "https://api.kimi.com/coding/v1" if provider == "coding" else "https://api.moonshot.cn/v1"
+    if provider == "coding" and normalized.endswith("/coding"):
+        normalized = f"{normalized}/v1"
+    return normalized
+
+
+def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
+    """Resolve the active Kimi endpoint from official API or coding-plan settings."""
+    cfg = config or settings
+    provider = _normalize_kimi_provider(cfg.KIMI_PROVIDER)
+    if provider == "coding":
+        return {
+            "provider": "coding",
+            "model": (cfg.KIMI_CODING_MODEL or "kimi-k2.6").strip() or "kimi-k2.6",
+            "base_url": _normalize_kimi_base_url(cfg.KIMI_CODING_BASE_URL, "coding"),
+            "api_key": cfg.KIMI_CODING_API_KEY or cfg.KIMI_API_KEY,
+        }
+    return {
+        "provider": "official",
+        "model": (cfg.KIMI_MODEL or "kimi-k2.6").strip() or "kimi-k2.6",
+        "base_url": _normalize_kimi_base_url(cfg.KIMI_BASE_URL, "official"),
+        "api_key": cfg.KIMI_API_KEY,
+    }
 
 
 # Production safety check: refuse to run with placeholder JWT secret

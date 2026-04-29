@@ -18,7 +18,7 @@ import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnaps
 import type { ProvenanceGraph } from "@/lib/provenance-graph"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import StarBackground from "@/components/ui/StarBackground"
 import { getAuthToken } from "@/lib/auth"
 
@@ -63,41 +63,230 @@ function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
     )
 }
 
-function DebateStats({ currentRound, maxRounds, weights }: { currentRound: number, maxRounds: number, weights: Record<string, number> }) {
+interface WorkflowLog {
+    agent: string
+    type: string
+    content: string
+    timestamp: string
+    round?: number
+    phase?: string
+    phaseRound?: number
+    sourceKind?: string
+    action?: string
+}
+
+interface WorkflowStep {
+    key: string
+    title: string
+    detail: string
+    tone: "ready" | "running" | "complete" | "waiting"
+}
+
+const AGENT_FLOW_LABELS: Record<string, string> = {
+    forensics: "电子取证 Agent",
+    osint: "情报溯源 Agent",
+    challenger: "逻辑质询 Agent",
+    commander: "研判指挥 Agent",
+    system: "系统",
+}
+
+const CHALLENGER_TARGET_LABELS: Record<string, string> = {
+    forensics: "电子取证 Agent",
+    osint: "情报溯源 Agent",
+    commander: "研判指挥 Agent",
+}
+
+function agentFlowLabel(agent?: string) {
+    return AGENT_FLOW_LABELS[agent || "system"] || agent || "系统"
+}
+
+function phaseTargetLabel(phase?: string) {
+    return CHALLENGER_TARGET_LABELS[phase || ""] || agentFlowLabel(phase)
+}
+
+function challengerFlowTitle(phase: string | undefined, round: number) {
+    if (phase === "forensics") return `逻辑质询 Agent vs 电子取证 Agent 第${round}轮`
+    if (phase === "osint") return `逻辑质询 Agent vs 情报溯源 Agent 第${round}轮`
+    if (phase === "commander") return `逻辑质询 Agent vs 研判指挥 Agent 第${round}轮`
+    return `逻辑质询 Agent vs ${phaseTargetLabel(phase)} 第${round}轮`
+}
+
+function summarizeWorkflowLog(log: WorkflowLog): WorkflowStep | null {
+    const action = log.action || log.type
+    if (action === "upload_completed" || action === "upload_input") {
+        return { key: `${log.timestamp}|upload`, title: "上传输入", detail: log.content || "检材文件与检测目标已接收", tone: "complete" }
+    }
+    if (action === "task_created" || action === "create_task") {
+        return { key: `${log.timestamp}|task`, title: "创建任务", detail: log.content || "检测任务已写入队列", tone: "complete" }
+    }
+    if (action === "detect_start") {
+        return { key: `${log.timestamp}|detect_start`, title: "开始检测", detail: log.content || "四 Agent 工作流启动", tone: "running" }
+    }
+    if (action === "detect_completed" || action === "report_generated") {
+        return { key: `${log.timestamp}|report`, title: "报告已生成", detail: log.content || "鉴伪与溯源报告完成", tone: "complete" }
+    }
+    if (log.agent === "challenger") {
+        const round = log.phaseRound || log.round || 1
+        return {
+            key: `${log.timestamp}|challenger|${log.phase || "phase"}|${round}`,
+            title: challengerFlowTitle(log.phase, round),
+            detail: log.content || "交叉验证阶段证据、置信度和残留风险",
+            tone: "running",
+        }
+    }
+    if (log.agent === "forensics") {
+        return {
+            key: `${log.timestamp}|forensics|${action}`,
+            title: action === "node_complete" ? "电子取证 Agent 完成取证" : "电子取证 Agent 开始取证",
+            detail: log.content || "自主读取检材并调用取证工具",
+            tone: action === "node_complete" ? "complete" : "running",
+        }
+    }
+    if (log.agent === "osint") {
+        return {
+            key: `${log.timestamp}|osint|${action}`,
+            title: action === "node_complete" ? "情报溯源 Agent 完成溯源" : "情报溯源 Agent 开始溯源",
+            detail: log.content || "自主提取线索并调用开源情报工具",
+            tone: action === "node_complete" ? "complete" : "running",
+        }
+    }
+    if (log.agent === "commander") {
+        return {
+            key: `${log.timestamp}|commander|${action}`,
+            title: action === "node_complete" ? "研判指挥 Agent 完成裁决" : "研判指挥 Agent 开始裁决",
+            detail: log.content || "融合多 Agent 证据并生成最终研判",
+            tone: action === "node_complete" ? "complete" : "running",
+        }
+    }
+    return null
+}
+
+function buildSystemWorkflow({
+    logs,
+    taskLoaded,
+    fileCount,
+    currentNode,
+    isRunning,
+    isComplete,
+    isWaitingConsultation,
+}: {
+    logs: WorkflowLog[]
+    taskLoaded: boolean
+    fileCount: number
+    currentNode: string | null
+    isRunning: boolean
+    isComplete: boolean
+    isWaitingConsultation: boolean
+}) {
+    const steps: WorkflowStep[] = [
+        {
+            key: "base-upload",
+            title: "上传输入",
+            detail: fileCount > 0 ? `${fileCount} 个检材进入检测上下文` : "等待检材与检测目标",
+            tone: taskLoaded || fileCount > 0 ? "complete" : "ready",
+        },
+        {
+            key: "base-task",
+            title: "创建任务",
+            detail: taskLoaded ? "任务上下文已加载" : "等待任务创建完成",
+            tone: taskLoaded ? "complete" : "ready",
+        },
+    ]
+
+    if (isRunning || logs.length > 0 || isComplete) {
+        steps.push({
+            key: "base-detect",
+            title: "开始检测",
+            detail: "四 Agent 按阶段接力研判",
+            tone: isComplete ? "complete" : "running",
+        })
+    }
+
+    const seen = new Set(steps.map(step => `${step.title}|${step.detail}`))
+    for (const log of logs) {
+        const step = summarizeWorkflowLog(log)
+        if (!step) continue
+        const key = `${step.title}|${step.detail}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        steps.push(step)
+    }
+
+    if (isWaitingConsultation) {
+        steps.push({
+            key: "waiting-consultation",
+            title: "等待专家会诊",
+            detail: "逻辑质询暂停，等待人工意见回填",
+            tone: "waiting",
+        })
+    } else if (currentNode && isRunning) {
+        steps.push({
+            key: `active-${currentNode}`,
+            title: `${agentFlowLabel(currentNode)} 运行中`,
+            detail: "正在更新证据板与时间线",
+            tone: "running",
+        })
+    }
+
+    if (isComplete && !steps.some(step => step.title === "报告已生成")) {
+        steps.push({
+            key: "complete-report",
+            title: "报告已生成",
+            detail: "鉴伪与溯源报告完成",
+            tone: "complete",
+        })
+    }
+
+    return steps.slice(-7)
+}
+
+function SystemFlowBoard({ steps }: { steps: WorkflowStep[] }) {
+    let activeIndex = steps.length - 1
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+        if (steps[index].tone === "running" || steps[index].tone === "waiting") {
+            activeIndex = index
+            break
+        }
+    }
+    const current = steps[activeIndex] || steps[steps.length - 1]
+    const progress = steps.length > 1 ? ((activeIndex + 1) / steps.length) * 100 : 10
+    const recent = steps.slice(Math.max(0, steps.length - 4))
+
     return (
-        <div className="flex items-center gap-4 liquid-glass rounded-lg px-4 py-2 border border-white/10 shadow-sm">
-            <div className="flex flex-col">
-                <span className="text-[10px] text-[#6B7280] uppercase tracking-wider">辩论轮次</span>
-                <div className="flex items-baseline gap-1">
-                    <span className="text-white font-mono font-bold">{currentRound}</span>
-                    <span className="text-[#6B7280] font-mono text-xs">/ {maxRounds}</span>
+        <div className="liquid-glass rounded-lg px-4 py-2 border border-white/10 shadow-sm w-full md:w-[420px] md:max-w-[42vw]">
+            <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <div className="text-[10px] text-[#6B7280] uppercase tracking-wider">系统流程</div>
+                    <div className="truncate text-xs font-medium text-white">{current?.title || "等待流程启动"}</div>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-[#10B981] shrink-0">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981]" />
+                    实时推进
                 </div>
             </div>
-
-            <div className="w-px h-6 bg-white/10" />
-
-            <div className="flex-1 flex flex-col gap-1">
-                <span className="text-[10px] text-[#6B7280] uppercase tracking-wider">当前决策权重分布</span>
-                <div className="h-1.5 w-full bg-white/10 rounded-full flex overflow-hidden">
-                    <motion.div
-                        className="h-full bg-[#6366F1]"
-                        animate={{ width: `${(weights.forensics || 0) * 100}%` }}
-                        transition={{ duration: 0.5 }}
-                        title="电子取证Agent权重"
-                    />
-                    <motion.div
-                        className="h-full bg-[#10B981]"
-                        animate={{ width: `${(weights.osint || 0) * 100}%` }}
-                        transition={{ duration: 0.5 }}
-                        title="溯源情报权重"
-                    />
-                    <motion.div
-                        className="h-full bg-[#F59E0B]"
-                        animate={{ width: `${(weights.challenger || 0) * 100}%` }}
-                        transition={{ duration: 0.5 }}
-                        title="逻辑质询权重"
-                    />
-                </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <motion.div
+                    className="h-full rounded-full bg-gradient-to-r from-[#6366F1] via-[#10B981] to-[#F59E0B]"
+                    animate={{ width: `${Math.min(100, Math.max(8, progress))}%` }}
+                    transition={{ duration: 0.45 }}
+                />
+            </div>
+            <div className="mt-2 grid grid-cols-4 gap-1.5">
+                {recent.map((step) => (
+                    <div
+                        key={step.key}
+                        className={`min-w-0 rounded-md border px-2 py-1 ${
+                            step.tone === "running"
+                                ? "border-[#D4FF12]/30 bg-[#D4FF12]/10 text-[#D4FF12]"
+                                : step.tone === "waiting"
+                                    ? "border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#F59E0B]"
+                                    : "border-white/10 bg-white/[0.03] text-white/60"
+                        }`}
+                        title={`${step.title}: ${step.detail}`}
+                    >
+                        <div className="truncate text-[10px] leading-tight">{step.title}</div>
+                    </div>
+                ))}
             </div>
         </div>
     )
@@ -123,8 +312,8 @@ export function DetectConsole({ taskId }: { taskId: string }) {
 
     const {
         logs, forensicsResult, osintResult, challengerFeedback,
-        agentWeights, finalVerdict, isRunning, isComplete,
-        currentNode, currentRound, maxRounds, isWaitingConsultation,
+        finalVerdict, isRunning, isComplete,
+        currentNode, currentRound, isWaitingConsultation,
         errorMessage, resume
     } = useAgentStream({
         taskId,
@@ -157,6 +346,15 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         sourceKind: log.sourceKind,
         action: log.action,
     }))
+    const workflowSteps = useMemo(() => buildSystemWorkflow({
+        logs: timelineLogs,
+        taskLoaded,
+        fileCount: taskContext.files.length,
+        currentNode,
+        isRunning,
+        isComplete,
+        isWaitingConsultation,
+    }), [currentNode, isComplete, isRunning, isWaitingConsultation, taskContext.files.length, taskLoaded, timelineLogs])
 
     const agentStatus = (key: string, hasResult: boolean) =>
         currentNode === key ? "analyzing" : hasResult ? "complete" : "idle"
@@ -368,12 +566,10 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <PresenceAvatars users={onlineUsers} />
                     </div>
 
-                    {/* Layer 2: 顶部辩论统计 */}
-                    {(currentRound > 1 || Object.keys(agentWeights).length > 0) && (
-                        <div className="hidden md:block w-64">
-                            <DebateStats currentRound={currentRound} maxRounds={maxRounds} weights={agentWeights} />
-                        </div>
-                    )}
+                    {/* Layer 2: 顶部系统流程展板 */}
+                    <div className="hidden md:block">
+                        <SystemFlowBoard steps={workflowSteps} />
+                    </div>
 
                     <div className="flex items-center gap-2">
                         {isRunning && (
@@ -460,11 +656,9 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                 </div>
             )}
 
-            {/* Mobile Stats */}
+            {/* Mobile Workflow */}
             <div className="md:hidden px-4 pb-4">
-                {(currentRound > 1 || Object.keys(agentWeights).length > 0) && (
-                    <DebateStats currentRound={currentRound} maxRounds={maxRounds} weights={agentWeights} />
-                )}
+                <SystemFlowBoard steps={workflowSteps} />
             </div>
 
             {/* Expert Panel Overlay */}

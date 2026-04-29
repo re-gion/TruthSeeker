@@ -134,9 +134,13 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 SUPABASE_JWT_SECRET=...
+KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL=kimi-k2.6
+KIMI_CODING_API_KEY=
+KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
+KIMI_CODING_MODEL=kimi-k2.6
 EXA_API_KEY=
 APP_ENV=development
 ```

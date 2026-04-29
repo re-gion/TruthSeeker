@@ -73,7 +73,13 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
+KIMI_PROVIDER=official
 KIMI_API_KEY=
+KIMI_BASE_URL=https://api.moonshot.cn/v1
+KIMI_MODEL=kimi-k2.6
+KIMI_CODING_API_KEY=
+KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
+KIMI_CODING_MODEL=kimi-k2.6
 VIRUSTOTAL_API_KEY=
 REALITY_DEFENDER_API_KEY=
 ```
@@ -88,10 +94,10 @@ REALITY_DEFENDER_API_KEY=
 
 项目根目录内置测试案例，用于真实端到端检测验证：
 
-- **案例4（图片+文本组合）**
-  - 图片：`案例4-图片-政府通知.jpg`
-  - 文本：`案例4-文本-政府通知.txt`
-  - 用途：验证 Forensics Agent 对图片的自主分析 + OSINT Agent 对文本内容的读取能力
+- **案例3（图片+文本组合）**
+  - 图片：`案例3-图片-政府通知.jpg`
+  - 文本：`案例3-文本-政府通知.txt`
+  - 用途：验证四个 Agent 都应先基于 Kimi 2.6 对可访问样本和上下文自主推理，再按角色调用 Reality Defender、VirusTotal、Exa 等外部工具，并融合两部分结果完成各自任务
 
 ## 任务管理
 

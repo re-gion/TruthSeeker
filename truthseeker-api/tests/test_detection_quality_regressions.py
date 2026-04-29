@@ -110,5 +110,36 @@ class ChallengerTimelineSourceTests(unittest.TestCase):
         self.assertIn("audit_timeline_event", detect)
 
 
+class KimiProviderSourceTests(unittest.TestCase):
+    def test_config_supports_official_and_coding_plan_without_model_fallback(self):
+        config = read_source("app/config.py")
+        llm_client = read_source("app/agents/tools/llm_client.py")
+        env_example = read_source(".env.example")
+
+        self.assertIn("KIMI_PROVIDER", config)
+        self.assertIn("KIMI_CODING_API_KEY", config)
+        self.assertIn("KIMI_CODING_BASE_URL", config)
+        self.assertIn("resolve_kimi_runtime", config)
+        self.assertIn("resolve_kimi_runtime", llm_client)
+        self.assertIn("KIMI_PROVIDER=official", env_example)
+        self.assertIn("KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1", env_example)
+        self.assertNotIn("KIMI_FALLBACK_MODEL", config)
+        self.assertNotIn("KIMI_FALLBACK_MODEL", llm_client)
+        self.assertNotIn("KIMI_FALLBACK_MODEL", env_example)
+        self.assertNotIn("moonshot-v1-128k", config)
+        self.assertNotIn("moonshot-v1-128k", llm_client)
+        self.assertNotIn("moonshot-v1-128k", env_example)
+
+    def test_developer_docs_describe_all_agents_internal_reasoning_first(self):
+        claude = (PROJECT_ROOT.parent / "CLAUDE.md").read_text(encoding="utf-8")
+        tech_stack = (PROJECT_ROOT.parent / "docs/TECH_STACK.md").read_text(encoding="utf-8")
+        app_flow = (PROJECT_ROOT.parent / "docs/APP_FLOW.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("验证 Forensics Agent 对图片的自主分析 + OSINT Agent 对文本内容的读取能力", claude)
+        self.assertIn("四个 Agent 都应先基于 Kimi 2.6 对可访问样本和上下文自主推理", claude)
+        self.assertIn("四个 Agent 共享 Kimi 2.6 原生多模态推理基座", tech_stack)
+        self.assertIn("自主推理先行", app_flow)
+
+
 if __name__ == "__main__":
     unittest.main()

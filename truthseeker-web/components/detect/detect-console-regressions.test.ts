@@ -31,4 +31,17 @@ describe("detect console timeline regressions", () => {
     expect(source).toContain("Forensics R")
     expect(source).not.toContain("R{round}")
   })
+
+  it("uses a system workflow board instead of a debate-round-only header card", () => {
+    const source = readSource("components/detect/DetectConsole.tsx")
+
+    expect(source).toContain("SystemFlowBoard")
+    expect(source).toContain("上传输入")
+    expect(source).toContain("创建任务")
+    expect(source).toContain("开始检测")
+    expect(source).toContain("逻辑质询 Agent vs")
+    expect(source).toContain("电子取证 Agent 第")
+    expect(source).not.toContain("辩论轮次")
+    expect(source).not.toContain("当前决策权重分布")
+  })
 })
