@@ -349,6 +349,7 @@ async def forensics_interpret(
     input_type: str,
     case_prompt: str = "",
     sample_refs: list[dict] | None = None,
+    text_contents: list[dict] | None = None,
 ) -> str:
     """Let the LLM interpret raw forensic detection results into professional analysis."""
     system_prompt = (
@@ -364,11 +365,19 @@ async def forensics_interpret(
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
+    text_section = ""
+    if text_contents:
+        text_section = "\n\n文本检材内容摘要：\n"
+        for i, tc in enumerate(text_contents, 1):
+            name = tc.get("name", f"text-{i}")
+            content = tc.get("content", "")
+            text_section += f"--- {name} ---\n{content}\n\n"
     human_text = (
         f"全局检测目标/案件背景：{case_prompt or '用户未补充额外提示。'}\n\n"
         f"输入类型：{input_type}\n\n"
         f"样本引用摘要：\n{_sample_references_text(sample_refs)}\n\n"
         f"原始检测结果：\n{json.dumps(raw_api_result, ensure_ascii=False, indent=2)}"
+        f"{text_section}"
     )
     return await _invoke_multimodal_llm(
         system_prompt=system_prompt,

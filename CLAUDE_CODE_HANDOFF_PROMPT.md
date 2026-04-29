@@ -1,365 +1,470 @@
 # Claude Code Handoff Prompt
 
-请你作为接手的本地工程代理，继续完成 TruthSeeker 后端逻辑重建的剩余工作。你运行在用户真实终端环境中，没有当前 Codex 会话的网络限制；请优先使用真实 npm/Git/Python/Node 网络能力完成依赖安装、构建、测试和推送。
+你是 Claude Code，请作为接手的本地工程代理，在用户电脑上的真实终端、真实网络和真实浏览器环境中继续完成 TruthSeeker 本轮改造的收尾、验证与必要修复。
 
-## 项目现场
+## 1. 基本现场
 
 - 项目路径：`D:\a311\系统赛\2026系统赛\信安`
-- 操作系统：Windows
-- Shell：PowerShell
-- 当前分支：`main`
-- 远端：`origin https://github.com/re-gion/TruthSeeker.git`
-- 本地实现提交：`f0fdc96 feat: 重建阶段式鉴伪溯源后端`
-- 当前 Codex 已经执行过 `git add -A` 和 `git commit`，但 `git push origin main` 失败，原因是用户当前 Codex/Windows CLI 网络栈无法连接 GitHub。
+- 操作系统与 shell：Windows，PowerShell
+- 当前日期：2026-04-29
+- 项目结构：
+  - `truthseeker-api/`：FastAPI 后端、LangGraph agents、报告生成、SSE 检测流
+  - `truthseeker-web/`：Next.js 前端、检测页、报告页、hooks 与组件测试
+  - `task.md`、`lessons.md`：本轮任务记录与经验记录
+- 用户偏好：
+  - 默认用通俗、清晰、自然的中文汇报。
+  - 最终说明优先回答：做了什么、结果是否可用、做过哪些真实验证、还有什么风险或是否需要用户介入。
+  - 不要把计划、猜测、未验证内容说成已完成或已可用。
+  - 不要覆盖用户无关改动，不要混入无关文件，不要泄露 `.env`、`.env.local`、`.mcp.json` 等敏感配置。
 
-## 用户偏好
+## 2. 本轮用户目标
 
-- 默认用通俗、清晰、自然的中文汇报。
-- 汇报重点是：做了什么、是否可用、做过哪些真实验证、还有什么风险或需要用户介入。
-- 不要把计划、猜测、临时验证或理论可行说成已完成。
-- 不要泄露 `.env`、`.env.local`、`.mcp.json` 等真实密钥。
-- 不要覆盖用户无关改动，不要使用 `git reset --hard` 或类似破坏性操作。
-- 遇到网络失败时，不要用替代实现糊过去；应在真实网络环境下安装和验证原计划依赖。
+用户要求按既定计划改造 TruthSeeker：
 
-## 原始目标
+1. 逻辑质询 Agent 要升级为 Kimi 模型主导，质询逻辑更细；代码只保留硬门槛兜底。
+2. Challenger 保留硬门槛：
+   - `Δ(t) < 0.08`
+   - 阶段置信度 `> 0.8`
+   - 最少 2 轮
+   - 最多 5 轮
+3. 对外统一展示“置信度”，旧字段 `satisfaction` 只作为兼容别名保留。
+4. Forensics / OSINT / Challenger 的 LLM 输出字段要改为可读 Markdown。
+5. Forensics 的 `llm_analysis` 不能只复述外部检测 API，要融合 Kimi 自身对图片、文本、样本摘要等输入的观察和推理。
+6. 报告结构调整：
+   - 第五部分：`五、Challenger 逻辑质询`
+   - 第六部分：`六、质询时间线`
+   - 新增第七部分：`七、全程审计日志`
+   - 原第七部分顺延为：`八、建议与说明`
+   - 报告渲染器要保留 `llm_analysis`、`llm_cross_validation`、`llm_ruling` 等字段中的 Markdown 段落和标题。
+7. 检测页时间轴：
+   - 合并 `agent_logs`、`timeline_events`、`audit_logs`
+   - Challenger 事件显示局部轮次标签，例如 `Forensics R1`、`OSINT R2`、`Commander R1`
+   - 不再显示全局 `R1/R2/R3`
+8. 检测页删除 2D Agent 视图，只保留 3D 主视图、时间轴、图谱。
+9. 保留当前未提交的 `DetectConsole.tsx` 背景动画参数改动，不要回滚。
 
-把 TruthSeeker 旧的“视听鉴伪 + 情报溯源并行协同”升级为“四 Agent 阶段式流程”：
+## 3. Codex 已完成的代码改动
 
-1. `电子取证 Agent <-> Challenger 收敛`
-2. `OSINT 图谱 Agent <-> Challenger 收敛`
-3. `Commander 最终报告 <-> Challenger 收敛`
-4. 输出最终鉴伪与溯源报告，并在 `final_verdict.provenance_graph` 下发审定图谱。
+以下改动已写入工作区，但尚未提交。
 
-关键约束：
+### 后端
 
-- 对外继续保留 `forensics/osint/challenger/commander` 四个协议 key。
-- `forensics` 用户可见语义改为电子取证 Agent。
-- 四个 Agent 都接收用户输入、全局提示词、样本引用和自身系统提示词。
-- Kimi 默认模型改为 `kimi-k2.6`。
-- 电子取证工具必须 all-settled：Reality Defender、VirusTotal 都要结构化返回成功、降级或失败。
-- OSINT Agent 通过 Exa 等后端搜索工具做脱敏搜索，并生成 provenance graph。
-- 图谱采用混合模型：实体关系、W3C PROV 风格溯源链、Claim/Evidence/Challenge。
-- 收敛规则：每阶段最多 3 轮，质量变化阈值 `0.08`。
-- 最终主 verdict 继续使用 `authentic/suspicious/forged/inconclusive`，图谱质量和溯源信息进入子字段。
-- 前端最终必须使用 `@xyflow/react` / React Flow 呈现图谱视图，而不是临时 SVG 替代。
+- `truthseeker-api/app/agents/tools/llm_client.py`
+  - 新增或改造 `challenger_model_review(...)`，让 Kimi 返回结构化质询结果：
+    - `confidence`
+    - `requires_more_evidence`
+    - `target_agent`
+    - `issues`
+    - `residual_risks`
+    - `markdown`
+    - `raw_response`
+  - 保留 `challenger_cross_validate(...)` 作为兼容 wrapper，返回 Markdown 文本。
+  - Forensics prompt 已要求固定 Markdown 结构：
+    - `### 自主检材观察`
+    - `### 外部检测结果解读`
+    - `### 融合判断`
+    - `### 限制与复核建议`
+  - OSINT prompt 已要求固定 Markdown 结构：
+    - `### 自主情报推理`
+    - `### 外部情报结果解读`
+    - `### 来源可信度与图谱质量`
+    - `### 关联风险与复核建议`
+  - Challenger prompt 已要求固定 Markdown 结构：
+    - `### 质询对象与本轮置信度`
+    - `### 主要质询点`
+    - `### 打回/放行建议`
+    - `### 收敛依据`
+  - 已移除旧的“不要使用 Markdown”要求。
 
-## Codex 已完成并提交的内容
+- `truthseeker-api/app/agents/nodes/challenger.py`
+  - Challenger 节点改为调用 `challenger_model_review(...)`。
+  - 合并规则质询点和模型质询点。
+  - 对外主字段改为 `confidence`，同时保留 `"satisfaction": confidence` 兼容旧前端/旧报告。
+  - 增加 `model_confidence`、`model_requires_more_evidence`、`model_target_agent`。
+  - 决策逻辑包含：模型打回建议、局部阶段最少 2 轮、最多 5 轮、稳定性判断。
+  - 时间线事件中加入 `phase`、`phase_round`、`confidence`、模型建议等字段，摘要使用“置信度”。
 
-本地提交：`f0fdc96 feat: 重建阶段式鉴伪溯源后端`
+- `truthseeker-api/app/agents/edges/conditions.py`
+  - `evaluate_phase_convergence(...)` 改为使用 `confidence`。
+  - 收敛条件为：置信度变化低于阈值、`confidence > 0.8`、`round_count >= 2`。
+  - 最大轮次为兜底强制结束。
+  - 路由时使用 `target_agent` 将质询打回对应 Agent。
 
-主要改动：
+- `truthseeker-api/app/api/v1/consultation.py`
+  - 历史接口 `get_agent_history` 返回中新增 `audit_logs`。
 
-- 文档重写和同步：
-  - `README.md`
-  - `docs/APP_FLOW.md`
-  - `docs/BACKEND_STRUCTURE.md`
-  - `docs/TECH_STACK.md`
-  - `docs/PRD.md`
-  - `docs/FRONTEND_GUIDELINES.md`
-  - `docs/IMPLEMENTATION_PLAN.md`
-  - `truthseeker-api/README.md`
-  - `task.md`
-  - `lessons.md`
-  - 白皮书和相关旧计划文档
-- 后端状态与路由：
-  - `truthseeker-api/app/agents/state.py`
-  - `truthseeker-api/app/agents/edges/conditions.py`
-  - `truthseeker-api/app/agents/graph.py`
-  - `truthseeker-api/app/api/v1/detect.py`
-  - `truthseeker-api/app/services/analysis_persistence.py`
-- 多模态 LLM 适配：
-  - `truthseeker-api/app/config.py`
-  - `truthseeker-api/app/agents/tools/llm_client.py`
-- 电子取证 Agent：
-  - `truthseeker-api/app/agents/nodes/forensics.py`
-  - 媒体文件进入 Reality Defender。
-  - 文件哈希和文本 IOC 进入 VirusTotal。
-  - 工具结果 all-settled，失败和降级不会伪装成成功。
-- OSINT 图谱 Agent：
-  - `truthseeker-api/app/agents/nodes/osint.py`
-  - `truthseeker-api/app/agents/tools/osint_search.py`
-  - `truthseeker-api/app/agents/tools/provenance_graph.py`
-- Challenger 和 Commander：
-  - `truthseeker-api/app/agents/nodes/challenger.py`
-  - `truthseeker-api/app/agents/nodes/commander.py`
-- 前端检测台：
-  - `truthseeker-web/components/detect/DetectConsole.tsx`
-  - `truthseeker-web/components/detect/ProvenanceGraphView.tsx`
-  - `truthseeker-web/lib/provenance-graph.ts`
-  - `truthseeker-web/lib/provenance-graph.test.ts`
-  - 相关 Agent 展示、报告、上传和文案文件
+- `truthseeker-api/app/api/v1/detect.py`
+  - `DetectRequest.max_rounds` 默认值从 3 改为 5。
+  - 新增 `audit_timeline_event(...)`。
+  - SSE 运行中会同步插入审计类 `timeline_update` 事件，包括：
+    - `detect_start`
+    - `consultation_resume`
+    - `node_complete`
+    - `detect_completed`
+    - `detect_failed`
 
-注意：`ProvenanceGraphView.tsx` 当前是临时 SVG 数据链路验证组件，不是最终 React Flow 实现。不要把它当作完成项。
+- `truthseeker-api/app/services/report_generator.py`
+  - 报告生成时读取 `audit_logs`。
+  - 报告章节标题已调整为用户要求的第五、六、七、八部分。
+  - `_render_markdown_field(...)` 对 `llm_analysis`、`llm_cross_validation`、`llm_ruling` 保留 Markdown 块，不再压成单行。
+  - 新增或改造全程审计日志构建逻辑，合并：
+    - `agent_logs`
+    - `analysis_states.evidence_board.timeline_events`
+    - `audit_logs`
+  - Challenger 时间线展示“置信度/质量分”，不再使用“满意度”。
 
-## Codex 已运行的关键验证
+### 前端
 
-已通过：
+- `truthseeker-web/hooks/useAgentStream.ts`
+  - `AgentHistoryResponse` 增加 `audit_logs`。
+  - `AgentLogEntry` 增加 `phase`、`phaseRound`、`sourceKind`、`action`。
+  - 历史回放合并 `audit_logs`、持久化 `agent_logs`、持久化 `timeline_events`，并按时间排序。
+  - SSE 运行中的 `timeline_update` 也进入同一条时间线合并逻辑。
+  - 历史加载不再只限 expert 角色；有 auth token 时会带 token。
+  - 默认 `maxRounds` 从 3 改为 5。
+
+- `truthseeker-web/components/detect/EvidenceTimeline.tsx`
+  - 改为按时间顺序展示合并日志。
+  - Challenger 事件显示局部轮次标签，例如 `Forensics R1`、`OSINT R2`、`Commander R1`。
+  - 增加系统/审计事件样式与标签。
+  - 移除旧的按全局轮次分组文案。
+
+- `truthseeker-web/components/detect/DetectConsole.tsx`
+  - 删除 `"2d"` view mode、2D/3D 切换按钮和 2D 网格分支。
+  - 保留 3D、时间轴、图谱三个入口。
+  - `timelineLogs` 传入 `phase`、`phaseRound`、`sourceKind`、`action`。
+  - `autoStart` 避免对已完成或等待会诊的任务重复启动。
+  - 注意：该文件原本已有未提交的背景动画参数改动，Codex 按用户要求保留，没有回滚。
+
+- `truthseeker-web/lib/report.ts`
+  - Challenger 快照读取 `confidence`，再 fallback 到 `quality_score`。
+
+### 测试与文档
+
+- `truthseeker-api/tests/test_detection_quality_regressions.py`
+  - 更新源代码级回归测试，覆盖 Markdown prompt、报告标题、Challenger 置信度与 max rounds 等要求。
+
+- `truthseeker-web/hooks/useAgentStream.test.ts`
+  - 更新历史回放测试，覆盖 `audit_logs` 合并到时间线。
+
+- `truthseeker-web/components/detect/detect-console-regressions.test.ts`
+  - 新增前端静态回归测试，确认 2D 入口和 `viewMode === "2d"` 不再出现。
+
+- `task.md`
+  - 增加 2026-04-29 本轮任务记录。
+
+- `lessons.md`
+  - 更新日期到 2026-04-29。
+  - 增加关于 LLM Markdown 字段与全程审计时间线的经验记录。
+
+## 4. 当前工作区状态
+
+请先在项目根目录重新运行：
 
 ```powershell
-cd D:\a311\系统赛\2026系统赛\信安
+git status --short
+git diff --stat
+```
+
+Codex 最后看到的状态如下：
+
+```text
+ M CLAUDE_CODE_HANDOFF_PROMPT.md
+ M lessons.md
+ M task.md
+ M truthseeker-api/app/agents/edges/conditions.py
+ M truthseeker-api/app/agents/nodes/challenger.py
+ M truthseeker-api/app/agents/tools/llm_client.py
+ M truthseeker-api/app/api/v1/consultation.py
+ M truthseeker-api/app/api/v1/detect.py
+ M truthseeker-api/app/services/report_generator.py
+ M truthseeker-api/tests/test_detection_quality_regressions.py
+ M truthseeker-web/components/detect/DetectConsole.tsx
+ M truthseeker-web/components/detect/EvidenceTimeline.tsx
+ M truthseeker-web/hooks/useAgentStream.test.ts
+ M truthseeker-web/hooks/useAgentStream.ts
+ M truthseeker-web/lib/report.ts
+?? truthseeker-web/components/detect/detect-console-regressions.test.ts
+```
+
+`git diff --stat` 摘要：
+
+```text
+15 files changed, 1250 insertions(+), 575 deletions(-)
+```
+
+其中包含本交接文件自身的更新；另有 1 个新增未跟踪测试文件：`truthseeker-web/components/detect/detect-console-regressions.test.ts`。
+
+## 5. Codex 已完成并验证通过的事项
+
+以下是真实运行过且通过的验证：
+
+```powershell
+cd truthseeker-api
+python -m compileall app
+```
+
+结果：退出码 0。
+
+```powershell
+cd truthseeker-api
+python -m unittest tests.test_detection_quality_regressions
+```
+
+结果：10 个测试通过，`OK`。
+
+```powershell
+cd truthseeker-web
+node .\node_modules\typescript\bin\tsc --noEmit --pretty false --diagnostics
+```
+
+结果：退出码 0。
+
+```powershell
+cd truthseeker-web
+node .\node_modules\vitest\vitest.mjs run hooks/useAgentStream.test.ts components/detect/detect-console-regressions.test.ts
+```
+
+结果：2 个测试文件、3 个测试通过。
+
+```powershell
 git diff --check
 ```
 
-结果：通过，只有 Windows LF/CRLF 提示。
+结果：退出码 0。只有 Windows 下 LF 将转换为 CRLF 的提示，没有 whitespace error。
+
+Codex 还做过静态搜索，以下关键旧文案或旧逻辑在目标文件中未命中：
+
+- `2D 正交`
+- `viewMode !==`
+- `满意度`
+- `证据时间线（按质询阶段）`
+- `Challenger 交叉验证`
+- `不要使用 Markdown`
+
+## 6. 已尝试但失败或未完成的验证
+
+### 后端 pytest 未运行成功
+
+尝试运行：
 
 ```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-python -m unittest tests.test_rebuilt_workflow_contracts -v
+cd truthseeker-api
+python -m pytest tests/test_detection_quality_regressions.py -q
 ```
 
-结果：通过，2 个测试通过。
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npx vitest run lib/provenance-graph.test.ts --reporter verbose --no-color
-```
-
-结果：在沙箱外通过，1 个测试通过。沙箱内曾因 `esbuild spawn EPERM` 失败。
-
-此前还完成过：
-
-- `python -m compileall app` 通过。
-- `npx tsc --noEmit --pretty false` 通过。
-- `npx eslint . --format stylish --no-color` 通过，只有既有 `<img>` warning。
-- `npx next build --webpack` 通过。
-
-但请在你的环境重新跑完整验证后再宣称最终完成。
-
-## Codex 失败或未完成事项
-
-### P0：推送本地提交
-
-Codex 已本地提交 `f0fdc96`，但推送失败。
-
-失败命令与结果：
-
-```powershell
-git push origin main
-```
-
-结果：
+失败原因：
 
 ```text
-fatal: unable to access 'https://github.com/re-gion/TruthSeeker.git/': Failed to connect to 127.0.0.1 port 7897 after 0 ms: Couldn't connect to server
+C:\Python313\python.exe: No module named pytest
 ```
 
-再次尝试临时取消 Git 代理：
+也尝试过：
 
 ```powershell
-git -c http.proxy= -c https.proxy= push origin main
+.\.venv_new\Scripts\python.exe -m pytest tests/test_detection_quality_regressions.py -q
 ```
 
-结果：
+同样没有可用 `pytest`。因此目前只通过了 `unittest` 入口，未通过 pytest 入口或完整后端测试集。
+
+### Next dev server / 浏览器预览未完成
+
+尝试运行：
+
+```powershell
+cd truthseeker-web
+node .\node_modules\next\dist\bin\next dev --port 3000
+```
+
+失败：
 
 ```text
-fatal: unable to access 'https://github.com/re-gion/TruthSeeker.git/': getaddrinfo() thread failed to start
+Error: listen UNKNOWN: unknown error 0.0.0.0:3000
 ```
 
-你的第一步应该检查：
+再次尝试：
+
+```powershell
+node .\node_modules\next\dist\bin\next dev --hostname 127.0.0.1 --port 3001
+```
+
+失败：
+
+```text
+Error: listen UNKNOWN: unknown error 127.0.0.1:3001
+```
+
+`Invoke-WebRequest` 访问 localhost 也出现过：
+
+```text
+无法加载或初始化请求的服务提供程序。 (127.0.0.1:3000)
+```
+
+这更像是 Codex Windows 终端/socket 环境问题，不是 TypeScript 编译失败。请在用户真实终端里重新启动 dev server 并做浏览器验证。
+
+### 未完成的真实端到端验证
+
+Codex 没有完成以下验证：
+
+- 没有用真实 Supabase 数据跑一次完整检测 SSE。
+- 没有确认历史接口真实返回的 `audit_logs` 能被前端页面刷新后完整回放。
+- 没有打开浏览器确认检测页只有 3D、时间轴、图谱三个入口。
+- 没有生成真实报告文件并肉眼确认 Forensics / OSINT / Challenger 的 Markdown 字段排版。
+- 没有创建 commit、push 或 PR。
+
+## 7. Claude Code 接下来优先做什么
+
+请按优先级继续，不要一上来重写已经完成的实现。
+
+### P0：复核工作区并补齐验证
+
+1. 先确认工作区状态：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安
-git status --short --branch
-git log --oneline -3
-git push origin main
+git status --short
+git diff --stat
 ```
 
-如果远端已有新提交，不要强推；先 `git fetch origin`，查看差异，再按正常协作流程 rebase 或 merge。
-
-### P0：安装 `@xyflow/react` 并替换临时 SVG 图谱
-
-Codex 在沙箱外真实重试过安装，但当前机器网络失败：
+2. 快速查看关键 diff，不要回滚用户无关改动：
 
 ```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm install @xyflow/react --registry=https://registry.npmjs.org/
+git diff -- truthseeker-api/app/agents/tools/llm_client.py
+git diff -- truthseeker-api/app/agents/nodes/challenger.py
+git diff -- truthseeker-api/app/services/report_generator.py
+git diff -- truthseeker-web/hooks/useAgentStream.ts
+git diff -- truthseeker-web/components/detect/DetectConsole.tsx
+git diff -- truthseeker-web/components/detect/EvidenceTimeline.tsx
 ```
 
-失败：
-
-```text
-npm error code EAI_FAIL
-npm error request to https://registry.npmjs.org/@xyflow%2freact failed, reason: getaddrinfo EAI_FAIL registry.npmjs.org
-```
-
-默认 registry 也失败：
-
-```powershell
-npm install @xyflow/react
-```
-
-失败：
-
-```text
-npm error request to https://registry.npmmirror.com/@xyflow%2freact failed, reason: getaddrinfo EAI_FAIL registry.npmmirror.com
-```
-
-显式代理也失败：
-
-```powershell
-$env:HTTP_PROXY='http://127.0.0.1:7897'
-$env:HTTPS_PROXY='http://127.0.0.1:7897'
-npm install @xyflow/react --registry=https://registry.npmjs.org/
-```
-
-失败：
-
-```text
-connect UNKNOWN 127.0.0.1:7897 - Local
-```
-
-你没有这个网络限制，所以请按原计划执行：
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm install @xyflow/react
-```
-
-安装成功后：
-
-1. 确认 `truthseeker-web/package.json` 和 `truthseeker-web/package-lock.json` 正常更新。
-2. 在全局样式中引入 React Flow CSS，例如 `truthseeker-web/app/globals.css`：
-
-```css
-@import "@xyflow/react/dist/style.css";
-```
-
-3. 把 `truthseeker-web/components/detect/ProvenanceGraphView.tsx` 从临时 SVG 实现替换为 `@xyflow/react` 实现，保留现有功能：
-   - 最终完成后才展示审定版本。
-   - 节点筛选。
-   - 边类型筛选。
-   - 节点详情。
-   - 引用面板。
-   - 图谱质量和置信标识。
-   - `model_inferred` 边或节点必须有明显标识，不能伪装成外部事实。
-4. 复用或调整 `truthseeker-web/lib/provenance-graph.ts` 的 `toReactFlowGraph()`，不要重复写一套不一致的数据转换。
-5. 不要手改 `package.json` 假装安装完成。
-
-建议的 React Flow 验证目标：
-
-- 图谱为空时显示空态。
-- `isComplete=false` 时不展示未审定图谱。
-- 完整图谱能渲染节点和边。
-- 筛选不会破坏布局或节点详情。
-- 引用面板能展示 citation URL 和摘要。
-- 移动端或窄屏不应出现文本重叠。
-
-### P1：重新验证 Kimi 2.6 多模态调用
-
-Codex 已改造 `llm_client.py` 支持 signed URL/sample refs/content parts，但未在真实 Kimi 2.6 API 环境下验证。
-
-请检查实际 Moonshot/Kimi API 文档和项目当前 SDK/HTTP 调用格式，确认：
-
-- `kimi-k2.6` 模型名是否正确。
-- 多模态 content parts 格式是否符合实际 API。
-- signed URL 输入是否可以被模型读取。
-- 失败时是否有结构化降级，不会让 Agent 误判为真实分析成功。
-
-相关文件：
-
-- `truthseeker-api/app/config.py`
-- `truthseeker-api/app/agents/tools/llm_client.py`
-- `truthseeker-api/app/agents/nodes/forensics.py`
-- `truthseeker-api/app/agents/nodes/osint.py`
-- `truthseeker-api/app/agents/nodes/challenger.py`
-- `truthseeker-api/app/agents/nodes/commander.py`
-
-### P1：真实外部工具最小连通性验证
-
-不要把真实外部网络服务作为单测依赖，但需要做最小连通性验证：
-
-- Reality Defender：`REALITY_DEFENDER_API_KEY`
-- VirusTotal：`VIRUSTOTAL_API_KEY`
-- Exa：`EXA_API_KEY`
-- Kimi/Moonshot：项目实际使用的 Kimi API key/env
-
-要求：
-
-- 没有密钥时应结构化 degraded/failed。
-- 超时、限流、网络失败都应结构化返回。
-- 工具失败不能被写成“检测干净”或“外部情报证实不存在风险”。
-
-### P1：完整本地验证
-
-后端建议执行：
+3. 在真实 Python 环境中补齐 pytest：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-python -m compileall app
-python -m unittest tests.test_rebuilt_workflow_contracts -v
-python -m pytest tests
+python -m pip install -r requirements.txt
+python -m pytest tests/test_detection_quality_regressions.py -q
 ```
 
-如果 `python -m pytest tests` 在 Windows/Python 3.13 下出现 `WinError 10106`，先区分环境 socket/process 问题和代码问题，不要直接判定测试失败是业务逻辑导致。
+如果项目有指定 venv，请优先使用项目 venv。不要把依赖安装失败直接判定为代码问题，先确认网络和 Python 解释器。
 
-前端建议执行：
+4. 复跑已经通过的轻量检查：
+
+```powershell
+python -m compileall app
+python -m unittest tests.test_detection_quality_regressions
+```
+
+5. 前端复跑：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm run lint
-npm run typecheck
-npm run test:unit
-npm run build
+node .\node_modules\typescript\bin\tsc --noEmit --pretty false --diagnostics
+node .\node_modules\vitest\vitest.mjs run hooks/useAgentStream.test.ts components/detect/detect-console-regressions.test.ts
 ```
 
-Codex 当前环境里普通 `next build` 曾遇到 Windows `WinError 10106` / Turbopack 相关问题，但 `npx next build --webpack` 通过。你应该在你的环境先跑正常 `npm run build`；只有确认是环境问题时，再用 webpack 作为诊断对照。
+### P0：启动真实浏览器验证
 
-### P1：浏览器验证
-
-安装 React Flow 并构建通过后，启动前端：
+在用户真实终端中尝试：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
 npm run dev
 ```
 
-然后用浏览器验证检测台：
-
-- Agent 流程文案显示电子取证、逻辑质询、情报溯源、研判指挥。
-- SSE 旧事件仍可消费。
-- `final_verdict.provenance_graph` 完成后图谱视图才出现。
-- 图谱节点、边、引用和质量标识展示正常。
-- 窄屏下布局不重叠。
-
-如果能启动后端 mock 或完整 API，更好地跑一次端到端检测流程。
-
-## 当前代码中需要重点复核的风险点
-
-1. `TruthSeekerState` 新增字段是否所有恢复路径都有默认值。
-2. `challenger_route` 阶段推进是否不会在 `consultation_resumed`、max round、低质量变化等分支出现死循环。
-3. `forensics_node` 的智能重跑策略是否只重跑失败、降级、被 Challenger 命中的工具或新发现 IOC。
-4. VT 无 `scan_available` / 无 hash 的结果必须是 degraded/failed，不得标为 success。
-5. OSINT 搜索只发送脱敏线索，不能把用户完整隐私文本直接发给 Exa。
-6. provenance graph 中 `model_inferred` 必须保留到前端和最终报告。
-7. `final_verdict.provenance_graph` 必须通过 SSE 和历史恢复链路保留。
-8. React Flow 实现不能新增必须消费的新 SSE 事件。
-9. 文档中 FedPaRS 只能写成 compatible 运行时架构，不得声称未实现的训练/推理底座已经完成。
-
-## 建议的执行顺序
-
-1. 查看 `git status --short --branch` 和 `git log --oneline -3`，确认本地提交和工作区。
-2. 先把本地提交推送到远端：`git push origin main`。
-3. 安装 `@xyflow/react`。
-4. 替换 `ProvenanceGraphView.tsx` 为 React Flow 实现并引入官方 CSS。
-5. 跑前端 lint/typecheck/unit/build。
-6. 跑后端 compileall/unittest/pytest。
-7. 用真实或 mock 环境跑一次完整三阶段流程。
-8. 根据实际实现结果回填 `task.md`、`lessons.md`、`docs/TECH_STACK.md`、`docs/IMPLEMENTATION_PLAN.md`。
-9. 如果有新增改动，使用 Angular 规范中文提交，例如：
+如果端口冲突，换端口；如果 `npm run dev` 不可用，再用：
 
 ```powershell
-git add -A
-git commit -m "feat: 完成 React Flow 溯源图谱"
-git push origin main
+node .\node_modules\next\dist\bin\next dev --hostname 127.0.0.1 --port 3000
 ```
 
-## 最终交付要求
+浏览器验证目标：
 
-完成后请用中文简洁汇报：
+- 检测页不再出现 `2D 正交` 或 2D/3D 切换按钮。
+- 检测页保留 3D、时间轴、图谱三个入口。
+- 时间轴能展示审计/系统事件。
+- Challenger 局部轮次显示为 `Forensics R1`、`OSINT R2`、`Commander R1` 这类标签，而不是全局 `R1/R2/R3`。
+- 页面刷新后，历史回放仍能看到合并后的审计时间线。
 
-1. 完成了什么。
-2. 当前结果是否可直接使用。
-3. 真实运行过哪些验证，逐条列出命令和结果。
-4. 仍有哪些限制、风险或需要用户提供的密钥/网络/环境。
+### P0：报告与 SSE 真实链路验证
 
-不要只说“已完成”；必须用验证结果支撑结论。
+如果用户环境有可用 Supabase、后端服务和测试任务，请做一次真实链路：
+
+1. 启动后端：
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
+python -m uvicorn app.main:app --reload
+```
+
+2. 使用已有或新建测试任务跑一次检测。
+3. 确认 SSE 中有关键 `timeline_update` 事件：
+   - `detect_start`
+   - `node_complete`
+   - `detect_completed` 或 `detect_failed`
+4. 调用历史接口，确认响应含 `audit_logs`。
+5. 生成或下载报告，确认：
+   - `五、Challenger 逻辑质询`
+   - `六、质询时间线`
+   - `七、全程审计日志`
+   - `八、建议与说明`
+   - Forensics / OSINT / Challenger LLM 字段保留 Markdown 小标题和段落。
+
+### P1：重点代码复核点
+
+请重点复核这些潜在风险：
+
+- `conditions.py` 中 `target_agent` 路由是否能正确处理 `forensics`、`osint`、`commander`，不会因为模型返回异常 target 而跳错节点。
+- Challenger 对 `phase_round < 2` 的约束是否满足“局部阶段至少 2 轮”，而不是全局轮次。
+- `report_generator.py` 中 Markdown 字段截断或 metadata 摘要是否会破坏可读性。
+- `useAgentStream.ts` 中历史加载与自动启动逻辑是否会让主持人在刷新某些未完成任务时误触发重复检测。Codex 已加了 completed / waiting_consultation guard，但仍建议真实页面复核。
+- `DetectConsole.tsx` 原有背景动画参数改动是用户要求保留的，不要当作无关改动回滚。
+
+### P2：如发现小问题，直接修复并重跑最小验证
+
+如果发现小的类型、文案、排序、标签或测试问题，直接修复，并重跑对应最小验证。
+
+如果发现需要改数据库 schema、真实案例库、向量库、部署配置，先暂停并向用户说明，因为本轮明确不要求实现这些。
+
+## 8. 需要避免的事项
+
+- 不要覆盖或回滚用户未提交的无关改动。
+- 不要把 `DetectConsole.tsx` 中已有背景动画参数改动回滚。
+- 不要提交 `.env`、`.env.local`、`.mcp.json` 或任何密钥。
+- 不要把 Codex Windows socket / sandbox / CLI 网络失败直接说成项目代码问题。
+- 不要在没有真实运行浏览器、SSE、报告生成前，宣称端到端已验证。
+- 不要把 `satisfaction` 重新作为对外显示字段；它只能是兼容别名。
+- 不要恢复检测页 2D Agent 视图。
+- 不要新增真实案例库、向量库或部署改造，除非用户重新要求。
+
+## 9. 预期交付物
+
+你完成接手后，请给用户中文汇报：
+
+1. 实际继续做了什么。
+2. 当前结果是否可用：
+   - 已可直接使用
+   - 基本可用但有少量限制
+   - 尚未完成，暂不能直接使用
+3. 真实执行过的验证命令和结果。
+4. 没有验证或失败的内容、原因和剩余风险。
+5. 如用户要求提交，再按 Angular 规范提交，提交信息必须包含 type 和中文 subject，例如：
+
+```text
+feat: 优化逻辑质询与审计时间线
+```
+
+提交前只暂存本轮相关文件，不要混入无关文件。
+
+## 10. 快速检查清单
+
+接手后请按这个清单收尾：
+
+- [ ] 重新确认 `git status --short`。
+- [ ] 复核关键 diff，确认没有误删 3D/时间轴/图谱入口。
+- [ ] 后端 pytest 环境补齐后运行相关测试。
+- [ ] 前端 typecheck 和 vitest 通过。
+- [ ] 真实终端中能启动前端 dev server。
+- [ ] 浏览器确认检测页删除 2D 视图。
+- [ ] 浏览器或接口确认时间轴合并 `audit_logs`。
+- [ ] 报告生成验证 Markdown 字段和新章节标题。
+- [ ] 最终中文汇报只声明真实验证过的结果。

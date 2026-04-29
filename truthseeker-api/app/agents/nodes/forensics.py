@@ -230,9 +230,15 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             ))
 
     text_urls: list[str] = []
+    text_contents: list[dict[str, Any]] = []
     for item in text_files:
         try:
-            text_urls.extend(_extract_urls_from_text(await _read_text_sample(item)))
+            content = await _read_text_sample(item)
+            text_urls.extend(_extract_urls_from_text(content))
+            text_contents.append({
+                "name": str(item.get("name") or "text"),
+                "content": content[:4000] if content else "",
+            })
         except Exception as exc:
             target = str(item.get("name") or "text")
             settled_results.append({
@@ -330,10 +336,11 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "is_suspicious_ioc": is_suspicious_ioc,
         "sample_refs": sample_refs,
         "degraded": degraded,
+        "text_samples": text_contents,
     }
 
     log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
-    llm_analysis = await forensics_interpret(raw_forensics, input_type, case_prompt, sample_refs)
+    llm_analysis = await forensics_interpret(raw_forensics, input_type, case_prompt, sample_refs, text_contents=text_contents)
     log("finding", f"电子取证报告生成完成，工具结果 {len(settled_results)} 条")
 
     forensics_score = confidence
