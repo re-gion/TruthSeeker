@@ -15,6 +15,8 @@ from app.agents.tools.llm_client import build_sample_references, forensics_inter
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
 from app.config import settings
 from app.services.audit_log import record_audit_event
+from app.services.consultation_workflow import build_timeline_event
+from app.services.text_validation import decode_text_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +38,14 @@ def _extract_urls_from_text(text: str) -> list[str]:
     return list(dict.fromkeys(pattern.findall(text or "")))
 
 
-async def _read_text_sample(file_info: dict[str, Any]) -> str:
+async def _read_text_sample(file_info: dict[str, Any]) -> dict[str, str]:
     url = file_info.get("file_url") or file_info.get("storage_path")
     if not isinstance(url, str) or not url or url.startswith("mock://"):
-        return ""
+        return {"text": "", "encoding": "", "charset": ""}
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, follow_redirects=True)
         resp.raise_for_status()
-        return resp.text[:TEXT_MAX_CHARS]
+        return decode_text_bytes(resp.content, max_chars=TEXT_MAX_CHARS)
 
 
 async def _settle_tool(
@@ -156,15 +158,11 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     3. 等待工具 all-settled 后，再交给 Kimi 多模态上下文生成取证报告。
     """
     task_id = state["task_id"]
-    input_type = state.get("input_type", "mixed")
+    input_type = state.get("input_type", "text")
     case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
     phase_rounds = dict(state.get("phase_rounds") or {"forensics": 1, "osint": 1, "commander": 1})
     phase_round = int(phase_rounds.get("forensics", 1))
-    challenger_feedback = state.get("challenger_feedback") or {}
-    force_rerun = challenger_feedback.get("target_agent") in {"forensics", None} and bool(
-        challenger_feedback.get("requires_more_evidence")
-    )
 
     logs: list[AgentLog] = []
     timeline_events: list[dict] = []
@@ -199,7 +197,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     tool_tasks: list[Awaitable[dict[str, Any]]] = []
 
     def maybe_reuse(tool: str, target: str) -> bool:
-        if phase_round <= 1 or force_rerun:
+        if phase_round <= 1:
             return False
         previous = previous_successes.get((tool, target))
         if previous:
@@ -233,11 +231,14 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     text_contents: list[dict[str, Any]] = []
     for item in text_files:
         try:
-            content = await _read_text_sample(item)
+            decoded = await _read_text_sample(item)
+            content = decoded.get("text", "")
             text_urls.extend(_extract_urls_from_text(content))
             text_contents.append({
                 "name": str(item.get("name") or "text"),
                 "content": content[:4000] if content else "",
+                "detected_encoding": decoded.get("encoding"),
+                "charset": decoded.get("charset"),
             })
         except Exception as exc:
             target = str(item.get("name") or "text")
@@ -349,7 +350,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "deepfake_probability": deepfake_prob,
         "confidence": confidence,
         "forensics_score": forensics_score,
-        "model_used": "reality_defender+virustotal+kimi-k2.6",
+        "model_used": "reality_defender+virustotal+kimi-k2.5",
         "model_scores": rd_success_results[:5],
         "degraded_model_scores": [item for item in rd_results if item.get("degraded")][:5],
         "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_success_results),
@@ -389,12 +390,15 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     confidence_history = list(state.get("confidence_history", []))
     confidence_history.append({"round": round_num, "scores": {"forensics": forensics_score}})
 
-    timeline_events.append({
-        "round": round_num,
-        "agent": "forensics",
-        "event_type": "analysis_complete",
-        "summary": f"电子取证完成: 伪造概率 {deepfake_prob:.1%}, 置信度 {confidence:.1%}",
-    })
+    timeline_events.append(build_timeline_event(
+        round_number=round_num,
+        agent="forensics",
+        event_type="analysis_complete",
+        source_kind="agent",
+        from_phase="forensics",
+        target_agent="challenger",
+        content=f"电子取证完成: 伪造概率 {deepfake_prob:.1%}, 置信度 {confidence:.1%}",
+    ))
     record_audit_event(
         action="forensics.complete",
         task_id=task_id,

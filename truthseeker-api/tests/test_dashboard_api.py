@@ -214,6 +214,7 @@ class DashboardApiTests(TestCase):
                 "trend_series",
                 "threat_mix",
                 "status_breakdown",
+                "verdict_breakdown",
                 "evidence_mix",
                 "flow_sankey",
                 "capability_metrics",

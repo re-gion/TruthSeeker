@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # LLM connection pool – module-level singleton cache keyed by active endpoint
 # ---------------------------------------------------------------------------
-_llm_cache: dict[tuple[str, str, str], ChatOpenAI] = {}
+_llm_cache: dict[tuple[str, str, str, str], ChatOpenAI] = {}
 
 
 def get_llm(model_name: str | None = None) -> ChatOpenAI:
     """Return a cached ChatOpenAI instance configured for the selected Kimi endpoint."""
     runtime = resolve_kimi_runtime()
     name = model_name or runtime["model"]
-    cache_key = (runtime["provider"], runtime["base_url"], name)
+    cache_key = (runtime["provider"], runtime["base_url"], name, runtime["api_key"])
     if cache_key not in _llm_cache:
-        # Kimi K2 系列只支持 temperature=1，其他模型可用 0.3
-        temperature = 1.0 if name.startswith("kimi-k2") else 0.3
+        # Kimi K2.5 在关闭 thinking 后固定 temperature=0.6。
+        temperature = 0.6 if name.startswith("kimi-k2.5") else 0.3
         _llm_cache[cache_key] = ChatOpenAI(
             model=name,
             base_url=runtime["base_url"],
@@ -45,6 +45,7 @@ def get_llm(model_name: str | None = None) -> ChatOpenAI:
             max_tokens=2048,
             request_timeout=120.0,
             max_retries=1,
+            extra_body={"thinking": {"type": "disabled"}} if name.startswith("kimi-k2.5") else None,
         )
     return _llm_cache[cache_key]
 
@@ -190,6 +191,8 @@ def _default_challenger_markdown(
 
 
 _MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+_IMAGE_FETCH_TIMEOUT = 60.0  # Supabase signed URL 下载较慢，给足时间
+_IMAGE_FETCH_MAX_RETRIES = 2
 
 
 async def _fetch_image_base64(url: str) -> str | None:
@@ -197,32 +200,37 @@ async def _fetch_image_base64(url: str) -> str | None:
 
     Returns None on failure or if image exceeds size limit.
     """
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            data = resp.content
-            if len(data) > _MAX_INLINE_IMAGE_BYTES:
-                logger.warning(
-                    "图片大小 %.2f MB 超过 %d MB 上限，跳过 base64 内联",
-                    len(data) / 1024 / 1024,
-                    _MAX_INLINE_IMAGE_BYTES // 1024 // 1024,
-                )
-                return None
-            content_type = resp.headers.get("content-type", "")
-            if not content_type.startswith("image/"):
-                ext = url.split("?")[0].split(".")[-1].lower()
-                content_type = {
-                    "png": "image/png",
-                    "gif": "image/gif",
-                    "webp": "image/webp",
-                    "bmp": "image/bmp",
-                }.get(ext, "image/jpeg")
-            b64 = base64.b64encode(data).decode("utf-8")
-            return f"data:{content_type};base64,{b64}"
-    except Exception as exc:
-        logger.warning("下载图片转 base64 失败 (%s): %s", type(exc).__name__, exc)
-        return None
+    last_error = None
+    for attempt in range(1 + _IMAGE_FETCH_MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=_IMAGE_FETCH_TIMEOUT) as client:
+                resp = await client.get(url, follow_redirects=True)
+                resp.raise_for_status()
+                data = resp.content
+                if len(data) > _MAX_INLINE_IMAGE_BYTES:
+                    logger.warning(
+                        "图片大小 %.2f MB 超过 %d MB 上限，跳过 base64 内联",
+                        len(data) / 1024 / 1024,
+                        _MAX_INLINE_IMAGE_BYTES // 1024 // 1024,
+                    )
+                    return None
+                content_type = resp.headers.get("content-type", "")
+                if not content_type.startswith("image/"):
+                    ext = url.split("?")[0].split(".")[-1].lower()
+                    content_type = {
+                        "png": "image/png",
+                        "gif": "image/gif",
+                        "webp": "image/webp",
+                        "bmp": "image/bmp",
+                    }.get(ext, "image/jpeg")
+                b64 = base64.b64encode(data).decode("utf-8")
+                return f"data:{content_type};base64,{b64}"
+        except Exception as exc:
+            last_error = exc
+            if attempt < _IMAGE_FETCH_MAX_RETRIES:
+                logger.debug("下载图片转 base64 第 %d 次重试 (%s): %s", attempt + 1, type(exc).__name__, exc)
+    logger.warning("下载图片转 base64 失败（共 %d 次尝试）(%s): %s", 1 + _IMAGE_FETCH_MAX_RETRIES, type(last_error).__name__, last_error)
+    return None
 
 
 def _build_multimodal_parts(text: str, sample_refs: list[dict] | None) -> list[dict]:
@@ -233,12 +241,18 @@ def _build_multimodal_parts(text: str, sample_refs: list[dict] | None) -> list[d
         modality = ref.get("modality")
         name = ref.get("name") or ref.get("id") or "evidence"
         if not isinstance(url, str) or not url:
+            if modality in ("image", "image_unavailable"):
+                parts.append({"type": "text", "text": f"图片样本引用: {name}（图片下载失败，无法直接分析图像内容）"})
             continue
         if modality == "image":
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": url},
-            })
+            # 只传 base64 data URI，不传外部 URL（Kimi 不支持外部图片 URL）
+            if url.startswith("data:"):
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                })
+            else:
+                parts.append({"type": "text", "text": f"图片样本引用: {name}（图片需 base64 内联，当前 URL 不可用）"})
         else:
             parts.append({
                 "type": "text",
@@ -269,18 +283,28 @@ async def _invoke_llm(
     try:
         return await chain.ainvoke(variables)
     except Exception as exc:
-        logger.exception("Kimi %s 模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
+        error_str = f"{type(exc).__name__}: {exc}"
+        is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
+        if is_rate_limit:
+            logger.warning(
+                "Kimi %s 模型 %s 触发速率限制(TPD): %s",
+                runtime["provider"], runtime["model"], exc,
+            )
+        else:
+            logger.exception("Kimi %s 模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
         record_audit_event(
             action="llm.degraded",
             agent="llm_client",
             metadata={
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": error_str,
                 "provider": runtime["provider"],
                 "model": runtime["model"],
                 "base_url": runtime["base_url"],
+                "rate_limited": is_rate_limit,
             },
         )
-        return f"[降级模式: LLM不可用] {fallback_text}"
+        hint = "（TPD 速率限制已超限，请等待重置或更换账号）" if is_rate_limit else ""
+        return f"[降级模式: LLM不可用{hint}] {fallback_text}"
 
 
 async def _invoke_multimodal_llm(
@@ -292,31 +316,44 @@ async def _invoke_multimodal_llm(
     """Invoke Kimi with multimodal content parts, then degrade to text-only prompt."""
     # 将图片引用转为 base64 data URI，避免模型无法访问 signed URL
     resolved_refs: list[dict] | None = None
+    has_any_image = False
+    has_any_base64 = False
     if sample_refs:
         resolved_refs = []
         for ref in sample_refs:
             ref_copy = dict(ref)
             if ref_copy.get("modality") == "image" and ref_copy.get("signed_url"):
+                has_any_image = True
                 b64_url = await _fetch_image_base64(ref_copy["signed_url"])
                 if b64_url:
                     ref_copy["signed_url"] = b64_url
+                    has_any_base64 = True
+                else:
+                    ref_copy["modality"] = "image_unavailable"
             resolved_refs.append(ref_copy)
 
     runtime = resolve_kimi_runtime()
     llm = get_llm()
-    try:
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=_build_multimodal_parts(human_text, resolved_refs)),
-        ]
-        response = await llm.ainvoke(messages)
-        content = getattr(response, "content", "")
-        if isinstance(content, str) and content.strip():
-            return content
-        if isinstance(content, list):
-            return json.dumps(content, ensure_ascii=False)
-    except Exception as exc:
-        logger.warning("Kimi %s 多模态模型 %s 调用失败，改用同模型文本摘要重试: %s", runtime["provider"], runtime["model"], exc)
+
+    # 有图片但全部 base64 转换失败时，跳过多模态调用直接走文本
+    if has_any_image and not has_any_base64:
+        logger.warning(
+            "所有图片 base64 转换失败，跳过多模态调用，直接使用文本模式"
+        )
+    else:
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=_build_multimodal_parts(human_text, resolved_refs)),
+            ]
+            response = await llm.ainvoke(messages)
+            content = getattr(response, "content", "")
+            if isinstance(content, str) and content.strip():
+                return content
+            if isinstance(content, list):
+                return json.dumps(content, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning("Kimi %s 多模态模型 %s 调用失败，改用同模型文本摘要重试: %s", runtime["provider"], runtime["model"], exc)
 
     try:
         messages = [
@@ -330,19 +367,25 @@ async def _invoke_multimodal_llm(
         if isinstance(content, list):
             return json.dumps(content, ensure_ascii=False)
     except Exception as exc:
-        logger.exception("Kimi %s 文本摘要重试模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
+        error_str = f"{type(exc).__name__}: {exc}"
+        # 检测速率限制
+        is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
+        log_level = logger.warning if is_rate_limit else logger.exception
+        log_level("Kimi %s 文本摘要重试模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
         record_audit_event(
             action="llm.degraded",
             agent="llm_client",
             metadata={
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": error_str,
                 "provider": runtime["provider"],
                 "model": runtime["model"],
                 "base_url": runtime["base_url"],
                 "multimodal": True,
+                "rate_limited": is_rate_limit,
             },
         )
-    return f"[降级模式: LLM不可用] {fallback_text}"
+    hint = "（TPD 速率限制已超限，请等待重置或更换账号）" if is_rate_limit else ""
+    return f"[降级模式: LLM不可用{hint}] {fallback_text}"
 
 
 # ---------------------------------------------------------------------------

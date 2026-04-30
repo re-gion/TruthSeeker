@@ -21,6 +21,7 @@ from app.services.analysis_persistence import (
     normalize_final_verdict,
 )
 from app.services.audit_log import record_audit_event
+from app.services.consultation_workflow import latest_human_consultation_messages
 from app.services.evidence_files import (
     UploadedEvidenceFile,
     build_input_files,
@@ -46,7 +47,7 @@ class DetectRequest(BaseModel):
     """API 请求验证模型（非 LangGraph State）。"""
 
     task_id: Optional[str] = None
-    input_type: Literal["video", "audio", "image", "text", "mixed"] = "video"
+    input_type: str = "video"
     file_url: Optional[str] = None
     file_urls: Optional[dict[str, Any]] = None
     files: list[dict[str, Any]] = Field(default_factory=list)
@@ -93,6 +94,8 @@ def audit_timeline_event(
         "type": "audit",
         "event_type": "audit",
         "source_kind": "audit",
+        "from_phase": agent or "system",
+        "target_agent": agent or "system",
         "action": action,
         "content": content,
         "summary": content,
@@ -140,6 +143,8 @@ def _task_storage_files(files: list[UploadedEvidenceFile]) -> list[dict[str, Any
             "size_bytes": item.get("size_bytes"),
             "modality": item.get("modality"),
             "storage_path": item.get("storage_path"),
+            "detected_encoding": item.get("detected_encoding") or item.get("charset"),
+            "charset": item.get("charset") or item.get("detected_encoding"),
         }
         for item in files
     ]
@@ -183,9 +188,9 @@ def _resolve_evidence_files(request: DetectRequest, task: dict[str, Any] | None)
             files = normalize_uploaded_files([
                 {
                     "name": "legacy-upload",
-                    "mime_type": f"{request.input_type}/unknown" if request.input_type != "text" else "text/plain",
+                    "mime_type": f"{request.input_type.split('_')[0]}/unknown" if request.input_type.split('_')[0] != "text" else "text/plain",
                     "size_bytes": 0,
-                    "modality": request.input_type if request.input_type != "mixed" else "video",
+                    "modality": request.input_type.split('_')[0],
                     "storage_path": request.file_url,
                     "file_url": request.file_url,
                 }
@@ -270,8 +275,11 @@ def _create_consultation_session(
 
 
 def _resume_payload_from_consultations(task_id: str, user_id: str) -> dict[str, Any]:
-    expert_messages = _fetch_consultation_messages(task_id)
     sessions = _fetch_consultation_sessions(task_id)
+    expert_messages = latest_human_consultation_messages(
+        _fetch_consultation_messages(task_id),
+        sessions,
+    )
     latest = sessions[-1] if sessions else None
     action = "resume"
     confirmed_summary = None
@@ -402,8 +410,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             )
             from app.agents.nodes.commander import commander_node
 
-            expert_messages = _fetch_consultation_messages(task_id)
             sessions = _fetch_consultation_sessions(task_id)
+            expert_messages = latest_human_consultation_messages(
+                _fetch_consultation_messages(task_id),
+                sessions,
+            )
             latest_session = sessions[-1] if sessions else None
             confirmed_summary = None
             if isinstance(latest_session, dict):

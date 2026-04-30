@@ -76,10 +76,10 @@ SUPABASE_JWT_SECRET=
 KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_MODEL=kimi-k2.6
+KIMI_MODEL=kimi-k2.5
 KIMI_CODING_API_KEY=
 KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
-KIMI_CODING_MODEL=kimi-k2.6
+KIMI_CODING_MODEL=kimi-k2.5
 VIRUSTOTAL_API_KEY=
 REALITY_DEFENDER_API_KEY=
 ```
@@ -97,7 +97,7 @@ REALITY_DEFENDER_API_KEY=
 - **案例3（图片+文本组合）**
   - 图片：`案例3-图片-政府通知.jpg`
   - 文本：`案例3-文本-政府通知.txt`
-  - 用途：验证四个 Agent 都应先基于 Kimi 2.6 对可访问样本和上下文自主推理，再按角色调用 Reality Defender、VirusTotal、Exa 等外部工具，并融合两部分结果完成各自任务
+  - 用途：验证四个 Agent 都应先基于 Kimi 2.5 对可访问样本和上下文自主推理，再按角色调用 Reality Defender、VirusTotal、Exa 等外部工具，并融合两部分结果完成各自任务
 
 ## 任务管理
 

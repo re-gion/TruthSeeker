@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 
 from app.services.analysis_persistence import normalize_final_verdict
+from app.services.consultation_workflow import filter_human_consultation_messages
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -496,6 +497,7 @@ def _build_consultation_sections(sessions: list, messages: list, result: dict) -
             item for item in messages
             if isinstance(item, dict) and item.get("session_id") == session.get("id")
         ]
+        related_messages = filter_human_consultation_messages(related_messages)
         if related_messages and not quotes:
             lines.append("- **关键意见摘录**:")
             for item in related_messages[:5]:

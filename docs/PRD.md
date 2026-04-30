@@ -108,7 +108,7 @@ Commander 以主持人身份整理争议点、证据缺口和待确认问题
 | **音频伪造检测** | Reality Defender（与视频共用） |语音克隆检测、频谱异常分析 |
 | **恶意URL识别** | VirusTotal API |域名信誉查询、威胁情报关联 |
 | **开源情报查询** | Exa API | 脱敏联网搜索、公开情报来源检索 |
-| **多模态大模型** | Kimi/Moonshot (kimi-k2.6) |四 Agent 共享的多模态基本认知、跨模态推理和报告生成 |
+| **多模态大模型** | Kimi/Moonshot (kimi-k2.5, thinking disabled) |四 Agent 共享的多模态基本认知、跨模态推理和报告生成 |
 
 ---
 

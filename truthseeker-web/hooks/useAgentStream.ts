@@ -70,6 +70,10 @@ export interface ConsultationContext {
     blockers: string[]
     helpNeeded?: string
     sampleLinks: ConsultationLink[]
+    expertTasks?: Array<{
+        question: string
+        expectedOutput?: string
+    }>
 }
 
 export interface ConsultationState {
@@ -270,7 +274,7 @@ function mergeTimelineEntries(current: AgentLogEntry[], incoming: AgentLogEntry[
     return sortTimelineEntries(merged)
 }
 
-function readLogEntry(value: unknown): AgentLogEntry | null {
+function readLogEntry(value: unknown, fallbackTimestamp?: string): AgentLogEntry | null {
     if (!isObject(value)) return null
 
     const agent = typeof value.agent === "string" ? value.agent : typeof value.node === "string" ? value.node : "system"
@@ -279,15 +283,17 @@ function readLogEntry(value: unknown): AgentLogEntry | null {
             ? value.content
             : typeof value.message === "string"
                 ? value.message
-                : typeof value.text === "string"
-                    ? value.text
-                    : ""
+                : typeof value.summary === "string"
+                    ? value.summary
+                    : typeof value.text === "string"
+                        ? value.text
+                        : ""
 
     return {
         agent,
         type: readString(value.type) ?? readString(value.event_type) ?? "timeline_update",
         content,
-        timestamp: typeof value.timestamp === "string" ? value.timestamp : new Date().toISOString(),
+        timestamp: readString(value.timestamp) ?? readString(value.created_at) ?? fallbackTimestamp ?? new Date().toISOString(),
         round: typeof value.round === "number" ? value.round : undefined,
         phase: readString(value.phase),
         phaseRound: readNumber(value.phase_round) ?? readNumber(value.phaseRound),
@@ -317,12 +323,12 @@ function readTimelineEventsFromState(value: unknown): AgentLogEntry[] {
     const board = readRecord(value.evidence_board)
     const events = Array.isArray(board?.timeline_events) ? board.timeline_events : []
     const entries: AgentLogEntry[] = []
+    const fallbackTimestamp = readString(value.created_at)
     for (const event of events) {
-        const entry = readLogEntry(event)
+        const entry = readLogEntry(event, fallbackTimestamp)
         if (!entry) continue
         entries.push({
             ...entry,
-            timestamp: entry.timestamp || readString(value.created_at) || new Date().toISOString(),
             sourceKind: "timeline",
         })
     }
@@ -373,6 +379,21 @@ function readConsultationContext(payload: Record<string, unknown> | null): Parti
         ?? readRecord(payload?.consultation)
         ?? payload
     const sampleSource = context?.sample_links ?? context?.sampleLinks ?? context?.samples ?? context?.evidence_links ?? context?.links
+    const taskSource = context?.expert_tasks ?? context?.expertTasks ?? context?.tasks
+    const expertTasks = Array.isArray(taskSource)
+        ? taskSource.flatMap((item) => {
+            if (typeof item === "string" && item.trim()) {
+                return [{ question: item.trim() }]
+            }
+            if (!isObject(item)) return []
+            const question = pickString(item.question, item.problem, item.title, item.prompt, item.description)
+            if (!question) return []
+            return [{
+                question,
+                expectedOutput: pickString(item.expected_output, item.expectedOutput, item.output, item.expectation),
+            }]
+        })
+        : []
 
     return {
         background: pickString(context?.background, context?.case_background, context?.background_notes, context?.caseBackground),
@@ -383,6 +404,7 @@ function readConsultationContext(payload: Record<string, unknown> | null): Parti
             ?? readStringArray(context?.help_needed).join("；")
             ?? undefined,
         sampleLinks: readConsultationLinks(sampleSource),
+        expertTasks,
     }
 }
 
@@ -514,7 +536,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
     }
 
     return {
-        logs: sortTimelineEntries([...auditLogs, ...persistedLogs, ...timelineLogs]),
+        logs: mergeTimelineEntries([], [...auditLogs, ...persistedLogs, ...timelineLogs]),
         forensicsResult,
         osintResult,
         challengerFeedback,

@@ -77,7 +77,7 @@ export function AgentShowcase() {
                         transition={{ delay: 0.2 }}
                         className="text-center text-muted-foreground text-lg max-w-6xl mx-auto leading-relaxed whitespace-nowrap"
                     >
-                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家"疑案会诊"的群智决策。
+                        构建多路分发、异步处理的智能化流水线。超越单一模型的判断，实现模拟人类专家&ldquo;疑案会诊&rdquo;的群智决策。
                     </motion.p>
                 </div>
 

@@ -15,6 +15,8 @@ from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
 from app.agents.tools.threat_intel import analyze_urls
 from app.services.audit_log import record_audit_event
+from app.services.consultation_workflow import build_timeline_event
+from app.services.text_validation import decode_text_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,10 @@ TEXT_MAX_CHARS = 10000
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _tool_key(result: dict[str, Any]) -> tuple[str, str]:
+    return str(result.get("tool", "")), str(result.get("target", ""))
 
 
 def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
@@ -39,14 +45,14 @@ def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
     return merged
 
 
-async def _read_text_sample(file_info: dict[str, Any]) -> str:
+async def _read_text_sample(file_info: dict[str, Any]) -> dict[str, str]:
     url = file_info.get("file_url") or file_info.get("storage_path")
     if not isinstance(url, str) or not url or url.startswith("mock://"):
-        return ""
+        return {"text": "", "encoding": "", "charset": ""}
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, follow_redirects=True)
         resp.raise_for_status()
-        return resp.text[:TEXT_MAX_CHARS]
+        return decode_text_bytes(resp.content, max_chars=TEXT_MAX_CHARS)
 
 
 async def _settle_tool(
@@ -133,6 +139,17 @@ def _model_claims_from_text(text_result: dict[str, Any] | None, threat_indicator
     return claims
 
 
+def _previous_successes(state: TruthSeekerState) -> dict[tuple[str, str], dict[str, Any]]:
+    previous = (state.get("tool_results") or {}).get("osint")
+    if not previous:
+        previous = (state.get("osint_result") or {}).get("tool_results") or []
+    return {
+        _tool_key(item): item
+        for item in previous
+        if isinstance(item, dict) and item.get("status") == "success"
+    }
+
+
 async def osint_node(state: TruthSeekerState) -> dict:
     """
     情报溯源图谱 Agent：
@@ -141,10 +158,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
     3. 生成可视化情报溯源图谱并提交给 Challenger 审查。
     """
     task_id = state["task_id"]
-    input_type = state.get("input_type", "mixed")
+    input_type = state.get("input_type", "text")
     case_prompt = state.get("case_prompt", "")
     round_num = state.get("current_round", 1)
     phase_rounds = dict(state.get("phase_rounds") or {"forensics": 1, "osint": 1, "commander": 1})
+    phase_round = int(phase_rounds.get("osint", 1))
 
     logs: list[AgentLog] = []
 
@@ -174,28 +192,49 @@ async def osint_node(state: TruthSeekerState) -> dict:
     )
 
     text_contents: list[str] = []
+    text_samples: list[dict[str, Any]] = []
     urls_to_check = extract_urls_from_text(case_prompt)
     text_analysis_result: dict[str, Any] | None = None
     tool_results: list[dict[str, Any]] = []
+    previous_successes = _previous_successes(state)
+
+    def maybe_reuse(tool: str, target: str) -> bool:
+        if phase_round <= 1:
+            return False
+        previous = previous_successes.get((tool, target))
+        if previous:
+            tool_results.append({**previous, "reused": True})
+            return True
+        return False
 
     for item in text_files:
         try:
-            content = await _read_text_sample(item)
+            decoded = await _read_text_sample(item)
+            content = decoded.get("text", "")
             if content:
                 text_contents.append(content)
+                text_samples.append({
+                    "name": str(item.get("name") or "text"),
+                    "content": content[:4000],
+                    "detected_encoding": decoded.get("encoding"),
+                    "charset": decoded.get("charset"),
+                })
                 urls_to_check.extend(extract_urls_from_text(content))
         except Exception as exc:
             log("action", f"文本检材读取失败: {item.get('name', 'unknown')} ({type(exc).__name__})")
 
     if text_contents:
         combined = "\n\n".join(text_contents)[:TEXT_MAX_CHARS]
-        text_tool = await _settle_tool(
-            tool="text_claim_extract",
-            target="uploaded_text",
-            coro=analyze_text(combined),
-            timeout=120.0,
-        )
-        tool_results.append(text_tool)
+        if maybe_reuse("text_claim_extract", "uploaded_text"):
+            text_tool = tool_results[-1]
+        else:
+            text_tool = await _settle_tool(
+                tool="text_claim_extract",
+                target="uploaded_text",
+                coro=analyze_text(combined),
+                timeout=120.0,
+            )
+            tool_results.append(text_tool)
         text_analysis_result = text_tool.get("result") if isinstance(text_tool.get("result"), dict) else None
 
     urls_to_check = list(dict.fromkeys(urls_to_check))
@@ -207,6 +246,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             timeout=45.0,
         )
         for url in urls_to_check[:5]
+        if not maybe_reuse("virustotal_osint_ioc", url)
     ]
     if vt_tasks:
         log("action", f"正在查询 {len(vt_tasks)} 个 URL/域名 IOC 的 VirusTotal 情报")
@@ -240,13 +280,17 @@ async def osint_node(state: TruthSeekerState) -> dict:
         file_names=file_names,
     )
     log("action", f"生成 {len(queries)} 条脱敏 OSINT 查询，调用 Exa 搜索")
-    exa_tool = await _settle_tool(
-        tool="exa_search",
-        target="; ".join(queries)[:180] or "no_query",
-        coro=search_osint(queries),
-        timeout=60.0,
-    )
-    tool_results.append(exa_tool)
+    exa_target = "; ".join(queries)[:180] or "no_query"
+    if maybe_reuse("exa_search", exa_target):
+        exa_tool = tool_results[-1]
+    else:
+        exa_tool = await _settle_tool(
+            tool="exa_search",
+            target=exa_target,
+            coro=search_osint(queries),
+            timeout=60.0,
+        )
+        tool_results.append(exa_tool)
     search_results = (exa_tool.get("result") or {}).get("results") or []
 
     exa_signal = 0.12 if search_results else 0.0
@@ -291,6 +335,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "search_results": search_results,
         "search_queries": queries,
         "text_analysis": text_analysis_result,
+        "text_samples": text_samples,
         "model_claims": model_claims,
         "tool_results": tool_results,
         "tool_summary": {
@@ -298,6 +343,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             "success": sum(1 for item in tool_results if item.get("status") == "success"),
             "degraded": sum(1 for item in tool_results if item.get("status") == "degraded"),
             "failed": sum(1 for item in tool_results if item.get("status") == "failed"),
+            "reused": sum(1 for item in tool_results if item.get("reused")),
         },
         "degraded": degraded,
         "timestamp": _now(),
@@ -358,10 +404,13 @@ async def osint_node(state: TruthSeekerState) -> dict:
         },
         "tool_results": {"osint": tool_results},
         "logs": logs,
-        "timeline_events": [{
-            "round": round_num,
-            "agent": "osint",
-            "event_type": "provenance_graph",
-            "summary": f"图谱生成完成: {len(provenance_graph['nodes'])} 节点 / {len(provenance_graph['edges'])} 边",
-        }],
+        "timeline_events": [build_timeline_event(
+            round_number=round_num,
+            agent="osint",
+            event_type="provenance_graph",
+            source_kind="agent",
+            from_phase="osint",
+            target_agent="challenger",
+            content=f"图谱生成完成: {len(provenance_graph['nodes'])} 节点 / {len(provenance_graph['edges'])} 边",
+        )],
     }

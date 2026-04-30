@@ -236,7 +236,23 @@ def test_used_consultation_invite_can_still_read_messages(monkeypatch):
 def test_consultation_invite_is_scoped_to_its_session(monkeypatch):
     from app.api.v1 import consultation as consultation_module
 
+    monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+
     db = {
+        "consultation_sessions": [
+            {
+                "id": "session-1",
+                "task_id": "task-10",
+                "status": "active",
+                "created_at": "2026-04-21T00:00:00+00:00",
+            },
+            {
+                "id": "session-2",
+                "task_id": "task-10",
+                "status": "summary_confirmed",
+                "created_at": "2026-04-21T01:00:00+00:00",
+            },
+        ],
         "consultation_invites": [
             {
                 "id": "invite-1",

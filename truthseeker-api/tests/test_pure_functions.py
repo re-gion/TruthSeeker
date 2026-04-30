@@ -34,6 +34,7 @@ from app.agents.tools.threat_intel import _default_metadata_result
 from app.agents.edges.conditions import should_converge, challenger_route
 from app.services.report_integrity import build_report_hash, _sanitize, SENSITIVE_KEYS, HASH_FIELDS
 from app.services.text_validation import (
+    decode_text_bytes,
     validate_text_plain_file,
     _has_safe_text_extension,
     _is_mostly_printable,
@@ -314,6 +315,15 @@ class TextValidationTests(unittest.TestCase):
             self.assertTrue(validate_text_plain_file(path, "empty.txt"))
         finally:
             os.unlink(path)
+
+    def test_decode_text_bytes_detects_utf8_sig_and_gb18030(self):
+        utf8 = decode_text_bytes("标题\nHello".encode("utf-8-sig"))
+        gb = decode_text_bytes("中文线索".encode("gb18030"))
+
+        self.assertEqual(utf8["text"], "标题\nHello")
+        self.assertEqual(utf8["encoding"], "utf-8-sig")
+        self.assertEqual(gb["text"], "中文线索")
+        self.assertEqual(gb["encoding"], "gb18030")
 
 
 class AuthConfigTests(unittest.TestCase):

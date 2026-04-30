@@ -75,6 +75,81 @@ describe("mapAgentHistoryToStreamState", () => {
     expect(mapped.isComplete).toBe(true)
     expect(mapped.isWaitingConsultation).toBe(false)
   })
+
+  it("uses timeline event summary as content and falls back to the persisted state timestamp", () => {
+    const mapped = mapAgentHistoryToStreamState({
+      task: { status: "running" },
+      analysis_states: [
+        {
+          created_at: "2026-04-21T08:00:00.000Z",
+          round_number: 2,
+          evidence_board: {
+            timeline_events: [
+              {
+                agent: "challenger",
+                event_type: "phase_review",
+                phase: "osint",
+                phase_round: 2,
+                summary: "第二轮溯源质询需要补证",
+              },
+            ],
+          },
+        },
+      ],
+    })
+
+    expect(mapped.logs).toHaveLength(1)
+    expect(mapped.logs[0]).toMatchObject({
+      agent: "challenger",
+      content: "第二轮溯源质询需要补证",
+      timestamp: "2026-04-21T08:00:00.000Z",
+      sourceKind: "timeline",
+    })
+  })
+
+  it("deduplicates the same event when restored from audit, agent, and timeline rows", () => {
+    const mapped = mapAgentHistoryToStreamState({
+      task: { status: "running" },
+      audit_logs: [
+        {
+          action: "task_created",
+          agent: "system",
+          created_at: "2026-04-21T08:00:00.000Z",
+        },
+      ],
+      agent_logs: [
+        {
+          agent_name: "system",
+          log_type: "audit",
+          content: "task_created",
+          timestamp: "2026-04-21T08:00:00.000Z",
+        },
+      ],
+      analysis_states: [
+        {
+          created_at: "2026-04-21T08:00:00.000Z",
+          evidence_board: {
+            timeline_events: [
+              {
+                agent: "system",
+                type: "audit",
+                content: "task_created",
+                timestamp: "2026-04-21T08:00:00.000Z",
+              },
+            ],
+          },
+        },
+      ],
+    })
+
+    expect(mapped.logs).toHaveLength(1)
+    expect(mapped.logs[0]).toMatchObject({
+      agent: "system",
+      type: "audit",
+      content: "task_created",
+      timestamp: "2026-04-21T08:00:00.000Z",
+    })
+  })
 })
 
 describe("consultation event helpers", () => {

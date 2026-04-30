@@ -90,6 +90,7 @@ export interface DashboardViewModel {
   trendSeries: DashboardTrendSeries[]
   threatMix: DashboardDistributionItem[]
   statusBreakdown: DashboardDistributionItem[]
+  verdictBreakdown: DashboardDistributionItem[]
   evidenceMix: DashboardDistributionItem[]
   flowSankey: {
     nodes: DashboardSankeyNode[]
@@ -109,6 +110,7 @@ export interface DashboardApiResponse {
   trend_series?: unknown
   threat_mix?: unknown
   status_breakdown?: unknown
+  verdict_breakdown?: unknown
   evidence_mix?: unknown
   flow_sankey?: {
     nodes?: unknown
@@ -425,6 +427,7 @@ export function createFallbackDashboardViewModel(
     trendSeries: [],
     threatMix: [],
     statusBreakdown: [],
+    verdictBreakdown: [],
     evidenceMix: [],
     flowSankey: {
       nodes: [],
@@ -462,6 +465,7 @@ export function normalizeDashboardResponse(
     trendSeries: normalizeTrendSeries(payload.trend_series),
     threatMix: normalizeDistributionItems(payload.threat_mix),
     statusBreakdown: normalizeDistributionItems(payload.status_breakdown),
+    verdictBreakdown: normalizeDistributionItems(payload.verdict_breakdown),
     evidenceMix: normalizeDistributionItems(payload.evidence_mix),
     flowSankey: normalizeSankey(payload.flow_sankey),
     capabilityMetrics: normalizeCapabilityMetrics(payload.capability_metrics),

@@ -23,12 +23,16 @@ describe("detect console timeline regressions", () => {
     expect(source).toContain("ProvenanceGraphView")
   })
 
-  it("renders challenger timeline rounds as local phase rounds instead of global R labels", () => {
+  it("renders challenger round separators instead of per-card flow labels", () => {
     const source = readSource("components/detect/EvidenceTimeline.tsx")
 
     expect(source).toContain("phaseRound")
-    expect(source).toContain("formatRoundLabel")
-    expect(source).toContain("Forensics R")
+    expect(source).toContain("buildRoundSeparators")
+    expect(source).toContain("challengerRound")
+    expect(source).toContain("`R${round}`")
+    expect(source).not.toContain("formatRoundLabel")
+    expect(source).not.toContain("Forensics R")
+    expect(source).not.toContain("流程 ${entry.round}")
     expect(source).not.toContain("R{round}")
   })
 
@@ -61,8 +65,17 @@ describe("detect console timeline regressions", () => {
     expect(panelSource).toContain("确认摘要并交给 Commander")
     expect(panelSource).toContain("message_type")
     expect(panelSource).toContain("anchor_agent")
-    expect(panelSource).toContain("suggested_action")
+    expect(panelSource).not.toContain("suggested_action")
+    expect(panelSource).not.toContain("阶段 / phase")
     expect(panelSource).toContain("会诊上下文")
+    expect(panelSource).toContain("expertTasks")
     expect(consoleSource).toContain("consultationState={consultationState}")
+  })
+
+  it("turns off starfield rotation only in the timeline view", () => {
+    const source = readSource("components/detect/DetectConsole.tsx")
+
+    expect(source).toContain('const backgroundRotationSpeed = viewMode === "timeline" ? 0 : 0.05')
+    expect(source).toContain("rotationSpeed={backgroundRotationSpeed}")
   })
 })

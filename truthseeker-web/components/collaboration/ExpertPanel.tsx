@@ -1,27 +1,20 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
 import { createClient } from "@/lib/supabase/client"
 import { getAuthToken } from "@/lib/auth"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import { canModerateConsultation, ConsultationState } from "@/hooks/useAgentStream"
+import {
+    mergeConsultationComments,
+    normalizeConsultationMessage,
+    type ConsultationComment,
+    type PanelRole,
+} from "@/lib/consultation-messages"
 import Image from "next/image"
 
-type PanelRole = UserRole | "commander"
-
-export interface ExpertComment {
-    id: string
-    authorId: string
-    role: PanelRole
-    text: string
-    timestamp: string
-    messageType?: string
-    anchorAgent?: string
-    phase?: string
-    confidence?: number
-    suggestedAction?: string
-}
+export type ExpertComment = ConsultationComment
 
 interface RoleConfig {
     label: string
@@ -77,24 +70,10 @@ const ROLE_CONFIG: Record<PanelRole, RoleConfig> = {
     },
 }
 
-const MESSAGE_TYPE_OPTIONS = [
-    { value: "analysis", label: "分析意见" },
-    { value: "question", label: "追问" },
-    { value: "evidence", label: "证据补充" },
-    { value: "risk", label: "风险提示" },
-    { value: "summary", label: "摘要建议" },
-]
-
-const ANCHOR_OPTIONS = [
-    { value: "commander", label: "Commander" },
-    { value: "forensics", label: "电子取证" },
-    { value: "osint", label: "情报溯源" },
-    { value: "challenger", label: "逻辑质询" },
-]
-
-function formatPercent(value?: number) {
-    if (typeof value !== "number" || !Number.isFinite(value)) return null
-    return `${Math.round(value * 100)}%`
+const DEFAULT_MESSAGE_METADATA = {
+    messageType: "analysis",
+    anchorAgent: "commander",
+    confidence: 0.7,
 }
 
 function formatTime(timestamp: string) {
@@ -133,6 +112,42 @@ function summaryDraftFromSession(session: Record<string, unknown> | undefined) {
     return readString(summary.generated_summary) ?? readString(summary.user_confirmed_summary)
 }
 
+interface ExpertTask {
+    question: string
+    expectedOutput?: string
+}
+
+function readExpertTasks(context: ConsultationState["context"] | undefined): ExpertTask[] {
+    if (!context || typeof context !== "object") return []
+    if (Array.isArray(context.expertTasks)) return context.expertTasks
+    const record = context as unknown as Record<string, unknown>
+    const source = record.expert_tasks ?? record.expertTasks ?? record.tasks
+    if (!Array.isArray(source)) return []
+
+    return source
+        .map((item): ExpertTask | null => {
+            if (typeof item === "string" && item.trim()) {
+                return { question: item.trim() }
+            }
+            if (!item || typeof item !== "object") return null
+            const task = item as Record<string, unknown>
+            const question = readString(task.question)
+                ?? readString(task.problem)
+                ?? readString(task.title)
+                ?? readString(task.prompt)
+                ?? readString(task.description)
+            if (!question) return null
+            return {
+                question,
+                expectedOutput: readString(task.expected_output)
+                    ?? readString(task.expectedOutput)
+                    ?? readString(task.output)
+                    ?? readString(task.expectation),
+            }
+        })
+        .filter((item): item is ExpertTask => item !== null)
+}
+
 export function ExpertPanel({
     taskId,
     inviteToken,
@@ -148,11 +163,7 @@ export function ExpertPanel({
 }) {
     const [comments, setComments] = useState<ExpertComment[]>([])
     const [inputValue, setInputValue] = useState("")
-    const [messageType, setMessageType] = useState("analysis")
-    const [anchorAgent, setAnchorAgent] = useState("commander")
-    const [phase, setPhase] = useState("")
-    const [confidence, setConfidence] = useState("0.70")
-    const [suggestedAction, setSuggestedAction] = useState("")
+    const [contextExpanded, setContextExpanded] = useState(false)
     const [editableSummary, setEditableSummary] = useState("")
     const [statusOverride, setStatusOverride] = useState<ConsultationState["status"] | null>(null)
     const [moderationPending, setModerationPending] = useState(false)
@@ -160,14 +171,13 @@ export function ExpertPanel({
     const scrollRef = useRef<HTMLDivElement>(null)
     const canModerate = canModerateConsultation(currentRole)
     const effectiveStatus = statusOverride ?? consultationState?.status
+    const supabase = useMemo(() => {
+        if (typeof window === "undefined") return null
+        return createClient()
+    }, [])
     const broadcastChannel = useMemo(() => {
-        if (typeof window === "undefined") {
-            return null
-        }
-
-        const supabase = createClient()
-        return supabase.channel(`task:${taskId}`)
-    }, [taskId])
+        return supabase?.channel(`task:${taskId}`) ?? null
+    }, [supabase, taskId])
 
     // 自动滚动到底部
     useEffect(() => {
@@ -186,73 +196,71 @@ export function ExpertPanel({
         setStatusOverride(null)
     }, [consultationState?.lastEventType, consultationState?.status])
 
+    const loadMessages = useCallback(async () => {
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+        try {
+            const authToken = await getAuthToken()
+            const url = new URL(`${apiBase}/api/v1/consultation/${taskId}/messages`)
+            if (inviteToken) url.searchParams.set("invite_token", inviteToken)
+            const headers: Record<string, string> = {}
+            if (authToken) headers.Authorization = `Bearer ${authToken}`
+            const response = await fetch(url.toString(), { headers })
+            if (!response.ok) return
+            const data = await response.json()
+            if (!Array.isArray(data.messages)) return
+
+            const history = (data.messages as unknown[])
+                .filter((item: unknown): item is Record<string, unknown> => typeof item === "object" && item !== null)
+                .map((item: Record<string, unknown>) => normalizeConsultationMessage(item))
+            setComments(prev => mergeConsultationComments(prev, history))
+        } catch {
+            // 历史消息加载失败不影响实时会诊输入。
+        }
+    }, [inviteToken, taskId])
+
     useEffect(() => {
         const channel = broadcastChannel
         if (!channel) return
 
-        channel.on('broadcast', { event: 'expert_comment' }, (payload: { payload?: unknown }) => {
-            const comment = payload.payload as ExpertComment | undefined
-            if (!comment || sentIdsRef.current.has(comment.id)) return
-            setComments(prev => [...prev, comment])
-        })
+        channel
+            .on("broadcast", { event: "expert_comment" }, (payload: { payload?: unknown }) => {
+                if (!payload.payload || typeof payload.payload !== "object") return
+                const comment = normalizeConsultationMessage(payload.payload as Record<string, unknown>)
+                if (sentIdsRef.current.has(comment.id)) return
+                setComments(prev => mergeConsultationComments(prev, [comment]))
+            })
+            .on(
+                "postgres_changes",
+                { event: "INSERT", schema: "public", table: "consultation_messages", filter: `task_id=eq.${taskId}` },
+                (payload: { new?: unknown }) => {
+                    if (!payload.new || typeof payload.new !== "object") return
+                    const comment = normalizeConsultationMessage(payload.new as Record<string, unknown>)
+                    setComments(prev => mergeConsultationComments(prev, [comment]))
+                },
+            )
+            .on(
+                "postgres_changes",
+                { event: "UPDATE", schema: "public", table: "consultation_messages", filter: `task_id=eq.${taskId}` },
+                (payload: { new?: unknown }) => {
+                    if (!payload.new || typeof payload.new !== "object") return
+                    const comment = normalizeConsultationMessage(payload.new as Record<string, unknown>)
+                    setComments(prev => mergeConsultationComments(prev, [comment]))
+                },
+            )
+
+        void loadMessages()
+
+        const pollTimer = window.setInterval(() => {
+            void loadMessages()
+        }, 2500)
 
         void channel.subscribe()
 
         return () => {
+            window.clearInterval(pollTimer)
             void channel.unsubscribe()
         }
-    }, [broadcastChannel])
-
-    useEffect(() => {
-        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
-        let cancelled = false
-
-        async function loadMessages() {
-            try {
-                const authToken = await getAuthToken()
-                const url = new URL(`${apiBase}/api/v1/consultation/${taskId}/messages`)
-                if (inviteToken) url.searchParams.set("invite_token", inviteToken)
-                const headers: Record<string, string> = {}
-                if (authToken) headers.Authorization = `Bearer ${authToken}`
-                const response = await fetch(url.toString(), { headers })
-                if (!response.ok) return
-                const data = await response.json()
-                if (cancelled || !Array.isArray(data.messages)) return
-
-                const history = data.messages.map((item: Record<string, unknown>) => {
-                    const rawRole = item.role
-                    const role: PanelRole =
-                        rawRole === "user" || rawRole === "host"
-                            ? "host"
-                            : rawRole === "commander"
-                                ? "commander"
-                                : rawRole === "viewer" || rawRole === "expert"
-                                    ? rawRole
-                                    : "expert"
-                    return {
-                        id: typeof item.id === "string" ? item.id : Math.random().toString(36).substring(7),
-                        authorId: typeof item.expert_name === "string" ? item.expert_name : "expert",
-                        role,
-                        text: typeof item.message === "string" ? item.message : "",
-                        timestamp: typeof item.created_at === "string" ? item.created_at : new Date().toISOString(),
-                        messageType: typeof item.message_type === "string" ? item.message_type : undefined,
-                        anchorAgent: typeof item.anchor_agent === "string" ? item.anchor_agent : undefined,
-                        phase: typeof item.anchor_phase === "string" ? item.anchor_phase : typeof item.phase === "string" ? item.phase : undefined,
-                        confidence: typeof item.confidence === "number" ? item.confidence : undefined,
-                        suggestedAction: typeof item.suggested_action === "string" ? item.suggested_action : undefined,
-                    }
-                })
-                setComments(history)
-            } catch {
-                // 历史消息加载失败不影响实时会诊输入。
-            }
-        }
-
-        void loadMessages()
-        return () => {
-            cancelled = true
-        }
-    }, [inviteToken, taskId])
+    }, [broadcastChannel, loadMessages, taskId])
 
     const canSendMessage = currentRole !== "viewer"
 
@@ -271,11 +279,12 @@ export function ExpertPanel({
                 expert_name: comment.authorId,
                 invite_token: inviteToken ?? undefined,
                 session_id: getSessionId(consultationState),
-                message_type: comment.messageType,
-                anchor_agent: comment.anchorAgent,
-                anchor_phase: comment.phase,
-                confidence: comment.confidence,
-                suggested_action: comment.suggestedAction,
+                message_type: DEFAULT_MESSAGE_METADATA.messageType,
+                anchor_agent: DEFAULT_MESSAGE_METADATA.anchorAgent,
+                confidence: DEFAULT_MESSAGE_METADATA.confidence,
+                metadata: {
+                    client_message_id: comment.clientMessageId,
+                },
             }),
         })
     }
@@ -292,23 +301,23 @@ export function ExpertPanel({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!canSendMessage || !inputValue.trim() || !broadcastChannel) return
-        const parsedConfidence = Number.parseFloat(confidence)
+        const clientMessageId = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(7)
 
         const newComment: ExpertComment = {
-            id: Math.random().toString(36).substring(7),
+            id: `temp-${clientMessageId}`,
+            clientMessageId,
             authorId: getTempUserId(),
             role: currentRole,
             text: inputValue.trim(),
             timestamp: new Date().toISOString(),
-            messageType,
-            anchorAgent,
-            phase: phase.trim() || undefined,
-            confidence: Number.isFinite(parsedConfidence) ? Math.min(1, Math.max(0, parsedConfidence)) : undefined,
-            suggestedAction: suggestedAction.trim() || undefined,
+            messageType: DEFAULT_MESSAGE_METADATA.messageType,
+            anchorAgent: DEFAULT_MESSAGE_METADATA.anchorAgent,
+            confidence: DEFAULT_MESSAGE_METADATA.confidence,
+            optimistic: true,
         }
 
         sentIdsRef.current.add(newComment.id)
-        setComments(prev => [...prev, newComment])
+        setComments(prev => mergeConsultationComments(prev, [newComment]))
 
         // Realtime broadcast for other clients
         void broadcastChannel.send({
@@ -317,8 +326,22 @@ export function ExpertPanel({
             payload: newComment
         })
 
-        // Inject into backend agent state via consultation API
-        sendConsultationMessage(newComment).catch(err => console.error("Failed to inject expert message:", err))
+        // Inject into backend agent state via consultation API, then reconcile with the persisted row.
+        sendConsultationMessage(newComment)
+            .then(async response => {
+                if (!response.ok) return
+                const data = await response.json().catch(() => null) as { message_id?: unknown } | null
+                const messageId = typeof data?.message_id === "string" ? data.message_id : null
+                if (messageId) {
+                    setComments(prev => mergeConsultationComments(prev, [{
+                        ...newComment,
+                        id: messageId,
+                        optimistic: false,
+                    }]))
+                }
+                void loadMessages()
+            })
+            .catch(err => console.error("Failed to inject expert message:", err))
 
         setInputValue("")
     }
@@ -403,10 +426,12 @@ export function ExpertPanel({
     }
 
     const context = consultationState?.context
+    const expertTasks = readExpertTasks(context)
     const showApprovalActions = canModerate && effectiveStatus === "approval_required"
     const canEndConsultation = canModerate && effectiveStatus === "started"
     const canConfirmSummary = canModerate && effectiveStatus === "summary_pending"
     const hasContext = Boolean(
+        expertTasks.length > 0 ||
         context?.background ||
         context?.progress ||
         context?.helpNeeded ||
@@ -432,33 +457,72 @@ export function ExpertPanel({
             </div>
 
             {(hasContext || consultationState?.reason) && (
-                <div className="border-b border-white/10 bg-[#060B12]/80 p-3 space-y-2">
+                <div className="border-b border-white/10 bg-[#060B12]/80 p-3 space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-semibold text-[#D4FF12]">会诊上下文</span>
-                        <span className="text-[10px] text-white/40">主持：Commander</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-semibold text-[#D4FF12]">会诊上下文</span>
+                            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/55">
+                                {expertTasks.length} 项专家任务
+                            </span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setContextExpanded(value => !value)}
+                            className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/55 hover:border-[#D4FF12]/40 hover:text-[#D4FF12]"
+                        >
+                            {contextExpanded ? "收起" : "展开"}
+                        </button>
                     </div>
-                    {consultationState?.reason && (
-                        <p className="text-[11px] leading-relaxed text-[#FCD34D]">{consultationState.reason}</p>
+                    {!contextExpanded && (
+                        <div className="space-y-1">
+                            {consultationState?.reason && (
+                                <p className="text-[11px] leading-relaxed text-[#FCD34D]">{consultationState.reason}</p>
+                            )}
+                            <p className="line-clamp-2 text-[11px] leading-relaxed text-white/55">
+                                {context?.progress ?? context?.helpNeeded ?? context?.background ?? context?.blockers?.[0] ?? "等待 Commander 补充会诊上下文。"}
+                            </p>
+                        </div>
                     )}
-                    <div className="grid grid-cols-1 gap-1.5 text-[11px] text-white/60">
-                        {context?.background && <div><span className="text-white/35">背景：</span>{context.background}</div>}
-                        {context?.progress && <div><span className="text-white/35">进展：</span>{context.progress}</div>}
-                        {(context?.blockers.length ?? 0) > 0 && <div><span className="text-white/35">阻塞：</span>{context?.blockers.join("；")}</div>}
-                        {context?.helpNeeded && <div><span className="text-white/35">需要帮助：</span>{context.helpNeeded}</div>}
-                    </div>
-                    {(context?.sampleLinks.length ?? 0) > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                            {context?.sampleLinks.map((link) => (
-                                <a
-                                    key={`${link.label}-${link.url}`}
-                                    href={link.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="rounded-full border border-[#06B6D4]/25 bg-[#06B6D4]/10 px-2 py-0.5 text-[10px] text-[#67E8F9] hover:bg-[#06B6D4]/20"
-                                >
-                                    {link.label}
-                                </a>
-                            ))}
+                    {contextExpanded && (
+                        <div className="space-y-2">
+                            {consultationState?.reason && (
+                                <p className="text-[11px] leading-relaxed text-[#FCD34D]">{consultationState.reason}</p>
+                            )}
+                            {expertTasks.length > 0 && (
+                                <div className="space-y-1.5">
+                                    {expertTasks.map((task, index) => (
+                                        <div key={`${task.question}-${index}`} className="rounded-lg border border-[#D4FF12]/15 bg-[#D4FF12]/5 px-2.5 py-2">
+                                            <div className="text-[11px] font-medium text-white">{task.question}</div>
+                                            {task.expectedOutput && (
+                                                <div className="mt-1 text-[10px] leading-relaxed text-white/45">
+                                                    期望输出：{task.expectedOutput}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="grid grid-cols-1 gap-1.5 text-[11px] text-white/60">
+                                {context?.background && <div><span className="text-white/35">背景：</span>{context.background}</div>}
+                                {context?.progress && <div><span className="text-white/35">进展：</span>{context.progress}</div>}
+                                {(context?.blockers.length ?? 0) > 0 && <div><span className="text-white/35">阻塞：</span>{context?.blockers.join("；")}</div>}
+                                {context?.helpNeeded && <div><span className="text-white/35">需要帮助：</span>{context.helpNeeded}</div>}
+                            </div>
+                            {(context?.sampleLinks.length ?? 0) > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {context?.sampleLinks.map((link) => (
+                                        <a
+                                            key={`${link.label}-${link.url}`}
+                                            href={link.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="rounded-full border border-[#06B6D4]/25 bg-[#06B6D4]/10 px-2 py-0.5 text-[10px] text-[#67E8F9] hover:bg-[#06B6D4]/20"
+                                        >
+                                            {link.label}
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -508,15 +572,6 @@ export function ExpertPanel({
                                     {/* 气泡 */}
                                     <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed border ${cfg.bubbleBg} ${cfg.bubbleBorder} ${cfg.bubbleText} ${isMe ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
                                         {comment.text}
-                                        {(comment.messageType || comment.anchorAgent || comment.phase || comment.confidence !== undefined || comment.suggestedAction) && (
-                                            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-white/10 pt-2 text-[9px]">
-                                                {comment.messageType && <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/55">{comment.messageType}</span>}
-                                                {comment.anchorAgent && <span className="rounded bg-[#06B6D4]/10 px-1.5 py-0.5 text-[#67E8F9]">{comment.anchorAgent}</span>}
-                                                {comment.phase && <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/55">{comment.phase}</span>}
-                                                {formatPercent(comment.confidence) && <span className="rounded bg-[#D4FF12]/10 px-1.5 py-0.5 text-[#D4FF12]">{formatPercent(comment.confidence)}</span>}
-                                                {comment.suggestedAction && <span className="rounded bg-[#F59E0B]/10 px-1.5 py-0.5 text-[#FCD34D]">{comment.suggestedAction}</span>}
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
                             </motion.div>
@@ -604,50 +659,6 @@ export function ExpertPanel({
                             专家可提交意见，不能结束会诊或确认摘要。
                         </div>
                     )}
-                    <div className="grid grid-cols-2 gap-2">
-                        <select
-                            value={messageType}
-                            onChange={(e) => setMessageType(e.target.value)}
-                            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-indigo-500"
-                        >
-                            {MESSAGE_TYPE_OPTIONS.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                        </select>
-                        <select
-                            value={anchorAgent}
-                            onChange={(e) => setAnchorAgent(e.target.value)}
-                            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] text-white focus:outline-none focus:border-indigo-500"
-                        >
-                            {ANCHOR_OPTIONS.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                        </select>
-                        <input
-                            type="text"
-                            value={phase}
-                            onChange={(e) => setPhase(e.target.value)}
-                            placeholder="阶段 / phase"
-                            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500"
-                        />
-                        <input
-                            type="number"
-                            min="0"
-                            max="1"
-                            step="0.05"
-                            value={confidence}
-                            onChange={(e) => setConfidence(e.target.value)}
-                            placeholder="confidence"
-                            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500"
-                        />
-                    </div>
-                    <input
-                        type="text"
-                        value={suggestedAction}
-                        onChange={(e) => setSuggestedAction(e.target.value)}
-                        placeholder="suggested_action，例如 resume_analysis / request_more_evidence"
-                        className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500"
-                    />
                     <div className="flex gap-2 items-center">
                         <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
                             <Image

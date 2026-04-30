@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.services.audit_log import record_audit_event
 from app.services.evidence_files import infer_modality
-from app.services.text_validation import validate_text_plain_file
+from app.services.text_validation import decode_text_bytes, validate_text_plain_file
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,15 @@ async def upload_file(
                 status_code=400,
             )
 
+        text_encoding: dict[str, str] = {}
+        if real_mime == "text/plain":
+            with open(tmp_path, "rb") as text_file:
+                decoded = decode_text_bytes(text_file.read(), max_chars=1)
+            text_encoding = {
+                "detected_encoding": decoded["encoding"],
+                "charset": decoded["charset"],
+            }
+
         # 4. 上传到 Supabase Storage
         from storage3.types import FileOptions
 
@@ -203,6 +212,7 @@ async def upload_file(
                 "size_bytes": total,
                 "modality": modality,
                 "storage_path": storage_path,
+                **text_encoding,
             },
         )
 
@@ -214,6 +224,7 @@ async def upload_file(
             "modality": modality,
             "file_url": file_url,
             "storage_path": storage_path,
+            **text_encoding,
         }
 
     except Exception as e:

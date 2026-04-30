@@ -30,6 +30,26 @@ def _is_mostly_printable(text: str) -> bool:
     return (control_count / max(len(text), 1)) <= TEXT_MAX_CONTROL_RATIO
 
 
+def decode_text_bytes(data: bytes, *, max_chars: int | None = None) -> dict[str, str]:
+    """Decode uploaded text evidence with the supported encodings.
+
+    Returns UTF-8-ready text plus the detected source encoding name.
+    """
+    last_error: UnicodeDecodeError | None = None
+    for encoding in TEXT_ENCODINGS:
+        try:
+            text = data.decode(encoding)
+            if max_chars is not None:
+                text = text[:max_chars]
+            return {"text": text, "encoding": encoding, "charset": encoding}
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return {"text": "", "encoding": TEXT_ENCODINGS[0], "charset": TEXT_ENCODINGS[0]}
+
+
 def validate_text_plain_file(path: str, filename: str) -> bool:
     """Reject binary files disguised as text/plain."""
     if not _has_safe_text_extension(filename):
@@ -42,11 +62,8 @@ def validate_text_plain_file(path: str, filename: str) -> bool:
     if b"\x00" in sample:
         return False
 
-    for encoding in TEXT_ENCODINGS:
-        try:
-            text = sample.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-        return _is_mostly_printable(text)
-
-    return False
+    try:
+        decoded = decode_text_bytes(sample)
+    except UnicodeDecodeError:
+        return False
+    return _is_mostly_printable(decoded["text"])

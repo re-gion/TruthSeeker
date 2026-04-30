@@ -115,6 +115,7 @@ class KimiProviderSourceTests(unittest.TestCase):
         config = read_source("app/config.py")
         llm_client = read_source("app/agents/tools/llm_client.py")
         env_example = read_source(".env.example")
+        readme = read_source("README.md")
 
         self.assertIn("KIMI_PROVIDER", config)
         self.assertIn("KIMI_CODING_API_KEY", config)
@@ -122,7 +123,21 @@ class KimiProviderSourceTests(unittest.TestCase):
         self.assertIn("resolve_kimi_runtime", config)
         self.assertIn("resolve_kimi_runtime", llm_client)
         self.assertIn("KIMI_PROVIDER=official", env_example)
+        self.assertIn("KIMI_BASE_URL=https://api.moonshot.cn/v1", env_example)
+        self.assertIn("KIMI_BASE_URL=https://api.moonshot.cn/v1", readme)
+        self.assertIn("api.moonshot.cn/v1", config)
+        self.assertNotIn("api.moonshot.ai", config)
         self.assertIn("KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1", env_example)
+        self.assertIn('extra_body={"thinking": {"type": "disabled"}}', llm_client)
+        self.assertIn('temperature = 0.6 if name.startswith("kimi-k2.5") else 0.3', llm_client)
+        self.assertIn("KIMI_MODEL=kimi-k2.5", env_example)
+        self.assertIn("KIMI_CODING_MODEL=kimi-k2.5", env_example)
+        self.assertIn("KIMI_MODEL=kimi-k2.5", readme)
+        self.assertIn("KIMI_CODING_MODEL=kimi-k2.5", readme)
+        self.assertNotIn("kimi-k2.6", config)
+        self.assertNotIn("kimi-k2.6", llm_client)
+        self.assertNotIn("kimi-k2.6", env_example)
+        self.assertNotIn("kimi-k2.6", readme)
         self.assertNotIn("KIMI_FALLBACK_MODEL", config)
         self.assertNotIn("KIMI_FALLBACK_MODEL", llm_client)
         self.assertNotIn("KIMI_FALLBACK_MODEL", env_example)
@@ -130,14 +145,32 @@ class KimiProviderSourceTests(unittest.TestCase):
         self.assertNotIn("moonshot-v1-128k", llm_client)
         self.assertNotIn("moonshot-v1-128k", env_example)
 
+    def test_successful_external_tools_are_reused_across_review_rounds(self):
+        forensics = read_source("app/agents/nodes/forensics.py")
+        osint = read_source("app/agents/nodes/osint.py")
+
+        self.assertIn("def _previous_successes", forensics)
+        self.assertIn("def maybe_reuse", forensics)
+        self.assertNotIn("or force_rerun", forensics)
+        self.assertIn('"reused": True', forensics)
+
+        self.assertIn("def _previous_successes", osint)
+        self.assertIn("def maybe_reuse", osint)
+        self.assertIn('maybe_reuse("text_claim_extract", "uploaded_text")', osint)
+        self.assertIn('maybe_reuse("virustotal_osint_ioc", url)', osint)
+        self.assertIn('maybe_reuse("exa_search"', osint)
+        self.assertIn('"reused": True', osint)
+
     def test_developer_docs_describe_all_agents_internal_reasoning_first(self):
         claude = (PROJECT_ROOT.parent / "CLAUDE.md").read_text(encoding="utf-8")
         tech_stack = (PROJECT_ROOT.parent / "docs/TECH_STACK.md").read_text(encoding="utf-8")
         app_flow = (PROJECT_ROOT.parent / "docs/APP_FLOW.md").read_text(encoding="utf-8")
 
         self.assertNotIn("验证 Forensics Agent 对图片的自主分析 + OSINT Agent 对文本内容的读取能力", claude)
-        self.assertIn("四个 Agent 都应先基于 Kimi 2.6 对可访问样本和上下文自主推理", claude)
-        self.assertIn("四个 Agent 共享 Kimi 2.6 原生多模态推理基座", tech_stack)
+        self.assertIn("四个 Agent 都应先基于 Kimi 2.5 对可访问样本和上下文自主推理", claude)
+        self.assertIn("四个 Agent 共享 Kimi 2.5 原生多模态推理基座", tech_stack)
+        self.assertNotIn("Kimi 2.6", claude)
+        self.assertNotIn("Kimi 2.6", tech_stack)
         self.assertIn("自主推理先行", app_flow)
 
 

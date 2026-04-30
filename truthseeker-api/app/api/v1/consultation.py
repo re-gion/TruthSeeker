@@ -8,7 +8,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.audit_log import record_audit_event
-from app.services.consultation_workflow import build_moderator_summary, utc_now_iso
+from app.services.consultation_workflow import (
+    build_moderator_summary,
+    utc_now_iso,
+)
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -359,7 +362,7 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
         action="consultation_closed",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
-        metadata={"session_id": session_id, "message_count": len(messages)},
+        metadata={"session_id": session_id, "message_count": summary_payload.get("human_message_count", 0)},
     )
     return {"status": "ok", "session": updated}
 
@@ -392,7 +395,7 @@ async def confirm_consultation_summary(
         action="consultation_summary_confirmed",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
-        metadata={"session_id": session_id, "message_count": len(messages)},
+        metadata={"session_id": session_id, "message_count": summary_payload.get("human_message_count", 0)},
     )
     return {"status": "ok", "session": updated}
 
@@ -436,11 +439,14 @@ async def get_consultation_messages(task_id: str, request: Request, invite_token
             raise HTTPException(status_code=404, detail="任务不存在")
         _assert_task_owner(task_resp.data[0], request)
 
+    latest = _session_for_invite_or_latest(task_id, invite)
     query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
     if invite and invite.get("session_id"):
         query = query.eq("session_id", invite.get("session_id"))
+    elif latest and latest.get("id"):
+        query = query.eq("session_id", latest.get("id"))
     resp = query.order("created_at", desc=False).execute()
-    return {"messages": resp.data}
+    return {"messages": resp.data or []}
 
 
 @router.get("/{task_id}/agent-history")
@@ -517,9 +523,12 @@ async def get_unread_messages(
             raise HTTPException(status_code=404, detail="任务不存在")
         _assert_task_owner(task_resp.data[0], request)
 
+    latest = _session_for_invite_or_latest(task_id, invite)
     query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
     if invite and invite.get("session_id"):
         query = query.eq("session_id", invite.get("session_id"))
+    elif latest and latest.get("id"):
+        query = query.eq("session_id", latest.get("id"))
     if after:
         query = query.gt("created_at", after)
     resp = query.order("created_at", desc=False).execute()

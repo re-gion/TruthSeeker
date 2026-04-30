@@ -10,8 +10,11 @@ from app.agents.edges.conditions import evaluate_phase_convergence
 from app.agents.tools.llm_client import build_sample_references, challenger_model_review
 from app.services.audit_log import record_audit_event
 from app.services.consultation_workflow import (
+    build_timeline_event,
     build_consultation_context,
     evaluate_consultation_trigger,
+    filter_human_consultation_messages,
+    latest_human_consultation_messages,
 )
 from app.utils.supabase_client import supabase
 
@@ -227,13 +230,18 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     )
 
     try:
+        db_sessions = _fetch_consultation_sessions(task_id)
+        if db_sessions:
+            consultation_sessions = db_sessions
         known_ids = {m.get("id") for m in expert_messages if isinstance(m, dict) and m.get("id")}
         resp = await asyncio.to_thread(
             lambda: supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
         )
-        new_messages = [m for m in (resp.data or []) if m.get("id") not in known_ids]
+        latest_messages = latest_human_consultation_messages(resp.data or [], consultation_sessions)
+        new_messages = [m for m in latest_messages if m.get("id") not in known_ids]
         if new_messages:
             expert_messages.extend(new_messages)
+            expert_messages = filter_human_consultation_messages(expert_messages)
             log("thinking", f"纳入 {len(new_messages)} 条新增专家意见")
     except Exception as exc:
         log("action", f"读取专家意见失败，继续自动质询: {type(exc).__name__}")
@@ -425,6 +433,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             resumed_messages = consultation_resume_payload.get("expert_messages")
             if isinstance(resumed_messages, list):
                 expert_messages.extend(m for m in resumed_messages if isinstance(m, dict))
+                expert_messages = filter_human_consultation_messages(expert_messages)
             resumed_sessions = consultation_resume_payload.get("consultation_sessions")
             if isinstance(resumed_sessions, list):
                 consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
@@ -520,23 +529,26 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "challenger_feedback": feedback,
         "challenges": challenges,
         "logs": logs,
-        "timeline_events": [{
-            "round": round_num,
-            "agent": "challenger",
-            "event_type": "phase_review",
-            "phase": phase,
-            "phase_round": phase_round,
-            "quality_score": quality_score,
-            "confidence": confidence,
-            "satisfaction": confidence,
-            "quality_delta": delta,
-            "requires_more_evidence": requires_more_evidence,
-            "model_requires_more_evidence": model_requires_more_evidence,
-            "model_target_agent": model_target_agent,
-            "maxed_rounds": maxed,
-            "consultation_event_type": consultation_trigger.get("event_type") if consultation_required else None,
-            "summary": f"Challenger 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}",
-        }],
+        "timeline_events": [build_timeline_event(
+            round_number=round_num,
+            agent="challenger",
+            event_type="phase_review",
+            source_kind="agent",
+            from_phase=phase,
+            target_agent=target_agent or model_target_agent or phase,
+            content=f"Challenger 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}",
+            phase=phase,
+            phase_round=phase_round,
+            quality_score=quality_score,
+            confidence=confidence,
+            satisfaction=confidence,
+            quality_delta=delta,
+            requires_more_evidence=requires_more_evidence,
+            model_requires_more_evidence=model_requires_more_evidence,
+            model_target_agent=model_target_agent,
+            maxed_rounds=maxed,
+            consultation_event_type=consultation_trigger.get("event_type") if consultation_required else None,
+        )],
         "expert_messages": expert_messages,
         "current_round": round_num + (1 if requires_more_evidence else 0),
     }

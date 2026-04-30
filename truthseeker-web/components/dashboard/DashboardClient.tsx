@@ -356,6 +356,7 @@ function buildRadialProgressOption(module: ExternalInsightModule): EChartsOption
         label: {
           show: true,
           position: "outside",
+          distance: 8,
           formatter: (params: unknown) => {
             const p = params as { dataIndex: number }
             const metric = metrics[p.dataIndex]
@@ -363,8 +364,10 @@ function buildRadialProgressOption(module: ExternalInsightModule): EChartsOption
             return `${metric.value}${metric.unit}`
           },
           color: "#FFFFFF",
-          fontSize: 12,
-          fontWeight: 600,
+          fontSize: 13,
+          fontWeight: 700,
+          textShadowColor: "rgba(0,0,0,0.6)",
+          textShadowBlur: 4,
         },
       },
     ],
@@ -672,13 +675,17 @@ function buildRoseOption(items: DashboardDistributionItem[]): EChartsOption {
           borderColor: "#0A0A0F",
           borderWidth: 2,
         },
+        minAngle: 4,
         label: {
           color: "rgba(255,255,255,0.76)",
-          formatter: "{b}\n{c}",
+          formatter: "{b}\n{c} 件",
+          align: "center",
+          lineHeight: 18,
         },
         labelLine: {
-          length: 10,
-          length2: 10,
+          length: 16,
+          length2: 20,
+          smooth: 0.2,
         },
         data: items.map((item, index) => ({
           name: item.label,
@@ -687,6 +694,102 @@ function buildRoseOption(items: DashboardDistributionItem[]): EChartsOption {
             color: CHART_COLORS[index % CHART_COLORS.length],
           },
         })),
+      },
+    ],
+  }
+}
+
+function _getVerdictColor(label: string): string {
+  if (label.includes("真实")) return "#22C55E"
+  if (label.includes("疑似")) return "#F59E0B"
+  if (label.includes("伪造") || label.includes("高风险")) return "#FB7185"
+  if (label.includes("存疑")) return "#7A77FF"
+  return "#61D4FF"
+}
+
+function buildVerdictBarOption(items: DashboardDistributionItem[]): EChartsOption {
+  if (!items.length) {
+    return createEmptyOption("暂无检测结论")
+  }
+
+  const data = items.map((item) => ({
+    value: item.value,
+    name: item.label,
+    itemStyle: {
+      color: _getVerdictColor(item.label),
+      borderRadius: [0, 8, 8, 0],
+      shadowBlur: 12,
+      shadowColor: _getVerdictColor(item.label) + "44",
+    },
+  }))
+
+  return {
+    backgroundColor: "transparent",
+    animationDuration: 900,
+    grid: {
+      top: 12,
+      right: 56,
+      bottom: 12,
+      left: 12,
+      containLabel: true,
+    },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      backgroundColor: "rgba(10, 10, 15, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      textStyle: { color: "#F5F5F5" },
+      formatter: (params: unknown) => {
+        const arr = Array.isArray(params) ? params : []
+        const p = arr[0] as { name: string; value: number; color: string }
+        if (!p) return ""
+        return `<div style="font-weight:600;margin-bottom:4px;">${p.name}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};"></span>
+                  <span>数量：${p.value} 件</span>
+                </div>`
+      },
+    },
+    xAxis: {
+      type: "value",
+      splitLine: {
+        lineStyle: {
+          color: "rgba(255,255,255,0.08)",
+        },
+      },
+      axisLabel: {
+        color: "rgba(255,255,255,0.45)",
+      },
+    },
+    yAxis: {
+      type: "category",
+      data: items.map((item) => item.label),
+      inverse: true,
+      axisTick: { show: false },
+      axisLine: { show: false },
+      axisLabel: {
+        color: "rgba(255,255,255,0.74)",
+        fontSize: 13,
+      },
+    },
+    series: [
+      {
+        type: "bar",
+        data,
+        barWidth: 18,
+        label: {
+          show: true,
+          position: "right",
+          color: "#FFFFFF",
+          fontSize: 13,
+          fontWeight: 600,
+          formatter: "{c} 件",
+        },
+        showBackground: true,
+        backgroundStyle: {
+          color: "rgba(255,255,255,0.04)",
+          borderRadius: [0, 8, 8, 0],
+        },
       },
     ],
   }
@@ -776,11 +879,13 @@ function buildRadarOption(items: DashboardDistributionItem[]): EChartsOption {
       radius: "66%",
       splitNumber: 4,
       indicator: topItems.map((item) => ({
-        name: item.label,
+        name: `${item.label}\n${item.value} 件`,
         max: Math.max(maxValue, item.value),
       })),
       axisName: {
         color: "rgba(255,255,255,0.74)",
+        fontSize: 12,
+        lineHeight: 18,
       },
       splitLine: {
         lineStyle: {
@@ -822,6 +927,22 @@ function buildRadarOption(items: DashboardDistributionItem[]): EChartsOption {
   }
 }
 
+function _getSankeyNodeColor(name: string): string {
+  // 左侧输入类型
+  if (name.includes("图像")) return "#61D4FF"
+  if (name.includes("文本")) return "#22C55E"
+  if (name.includes("视频")) return "#FF8A5B"
+  if (name.includes("音频")) return "#D4FF3C"
+  // 中间证据来源
+  if (name.includes("开源情报")) return "#A78BFA"
+  if (name.includes("取证分析")) return "#FB7185"
+  // 右侧结论
+  if (name.includes("高风险")) return "#EF4444"
+  if (name.includes("真实")) return "#22C55E"
+  if (name.includes("存疑")) return "#F59E0B"
+  return "#7A77FF"
+}
+
 function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChartsOption {
   if (!flowSankey.nodes.length || !flowSankey.links.length) {
     return createEmptyOption("暂无证据流向")
@@ -838,11 +959,18 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
   const mappedNodes = flowSankey.nodes.map((n) => ({
     ...n,
     name: nameMap[n.name] ?? n.name,
+    itemStyle: {
+      color: _getSankeyNodeColor(nameMap[n.name] ?? n.name),
+    },
   }))
   const mappedLinks = flowSankey.links.map((l) => ({
     ...l,
     source: nameMap[l.source] ?? l.source,
     target: nameMap[l.target] ?? l.target,
+    lineStyle: {
+      color: "source",
+      opacity: 0.35,
+    },
   }))
 
   return {
@@ -856,7 +984,7 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
         const p = params as { dataType?: string; data?: { source?: string; target?: string; name?: string }; value?: number; name?: string }
         if (p.dataType === "edge") {
           const source = p.data?.source ?? p.name ?? "?"
-          const target = p.data?.target ?? "?"
+          const target = p.data?.target ?? p.name ?? "?"
           return `<div style="font-weight:600;margin-bottom:4px;">${source} → ${target}</div>
                   <div>流转次数：${p.value ?? 0} 次</div>`
         }
@@ -881,13 +1009,8 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
         nodeGap: 20,
         draggable: false,
         lineStyle: {
-          color: "gradient",
           curveness: 0.5,
-          opacity: 0.42,
-        },
-        itemStyle: {
-          borderWidth: 0,
-          color: "#7A77FF",
+          opacity: 0.35,
         },
         label: {
           color: "rgba(255,255,255,0.78)",
@@ -1246,11 +1369,11 @@ export function DashboardClient({ viewModel }: DashboardClientProps) {
               <div className="rounded-[30px] border border-white/8 bg-white/4 p-6 xl:col-span-4">
                 <div className="mb-5 flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-mono text-xs tracking-[0.22em] text-white/42 uppercase">Status</p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">任务状态</h3>
+                    <p className="font-mono text-xs tracking-[0.22em] text-white/42 uppercase">Verdict</p>
+                    <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">检测结论分布</h3>
                   </div>
                 </div>
-                <DashboardChart option={buildTreemapOption(viewModel.statusBreakdown)} height={300} />
+                <DashboardChart option={buildVerdictBarOption(viewModel.verdictBreakdown)} height={300} />
               </div>
 
               <div className="rounded-[30px] border border-white/8 bg-white/4 p-6 xl:col-span-4">

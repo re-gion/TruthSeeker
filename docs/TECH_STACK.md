@@ -79,10 +79,10 @@ EXA_BASE_URL=https://api.exa.ai
 KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_MODEL=kimi-k2.6
+KIMI_MODEL=kimi-k2.5
 KIMI_CODING_API_KEY=
 KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
-KIMI_CODING_MODEL=kimi-k2.6
+KIMI_CODING_MODEL=kimi-k2.5
 # 以下当前未被代码直接使用，保留用于未来 LLM 提供商切换
 OPENAI_API_KEY=
 QWEN_API_KEY=
@@ -104,6 +104,6 @@ CONVERGENCE_THRESHOLD=0.08
 
 ## 备注
 
-- 四个 Agent 共享 Kimi 2.6 原生多模态推理基座，运行时可通过 `KIMI_PROVIDER=official|coding` 在官方 API 与 Kimi coding plan 之间切换；两种方式都只配置 Kimi 2.6，不再配置 `moonshot-v1-128k` 模型回退。
-- 当前运行时是 Kimi 2.6 自主推理 + 外部检测 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
+- 四个 Agent 共享 Kimi 2.5 原生多模态推理基座，调用时禁用 thinking；运行时可通过 `KIMI_PROVIDER=official|coding` 在官方 API 与 Kimi coding plan 之间切换；两种方式都只配置 Kimi 2.5，不再配置 `moonshot-v1-128k` 模型回退。
+- 当前运行时是 Kimi 2.5 自主推理 + 外部检测 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
 - 不要把真实密钥提交到仓库，只保留示例文件和本地 `.env` / `.env.local`。

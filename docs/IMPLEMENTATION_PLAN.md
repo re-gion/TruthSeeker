@@ -11,7 +11,7 @@
 1. 先同步产品、后端、前端、技术栈、白皮书和任务文档。
 2. 扩展 `TruthSeekerState`，引入 `analysis_phase`、`phase_rounds`、`phase_quality_history` 和 `provenance_graph`。
 3. 重写 LangGraph 路由为阶段式收敛：`forensics -> challenger -> osint -> challenger -> commander -> challenger -> END`。
-4. 将 Kimi 默认模型切换为 `kimi-k2.6`，补充多模态 signed URL 输入适配。
+4. 将 Kimi 默认模型切换为 `kimi-k2.5`，禁用 thinking，并补充多模态 signed URL 输入适配。
 5. 电子取证 Agent 采用工具 all-settled：Reality Defender、VirusTotal 必须全部返回结构化结果。
 6. OSINT Agent 接入 Exa API，只发送脱敏线索，并生成混合 provenance graph。
 7. 前端检测台新增图谱视图，读取 `final_verdict.provenance_graph`；已安装 `@xyflow/react` ^12.10.2 并完成 React Flow 交互画布替换，支持拖拽、缩放、节点详情面板与 model_inferred 标记。
@@ -137,10 +137,10 @@ SUPABASE_JWT_SECRET=...
 KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_MODEL=kimi-k2.6
+KIMI_MODEL=kimi-k2.5
 KIMI_CODING_API_KEY=
 KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
-KIMI_CODING_MODEL=kimi-k2.6
+KIMI_CODING_MODEL=kimi-k2.5
 EXA_API_KEY=
 APP_ENV=development
 ```

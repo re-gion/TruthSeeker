@@ -74,8 +74,8 @@ function formatSize(bytes: number): string {
 }
 
 function deriveInputType(files: UploadedEvidenceFile[]) {
-    const modalities = new Set(files.map((file) => file.modality))
-    return modalities.size === 1 ? Array.from(modalities)[0] : "mixed"
+    const modalities = Array.from(new Set(files.map((file) => file.modality))).sort()
+    return modalities.length === 1 ? modalities[0] : modalities.join("_")
 }
 
 async function getAuthToken(): Promise<string | null> {

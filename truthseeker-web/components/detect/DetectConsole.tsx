@@ -282,7 +282,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const [showExpertPanel, setShowExpertPanel] = useState(false)
     const [viewMode, setViewMode] = useState<"3d" | "timeline" | "graph">("3d")
     const [taskContext, setTaskContext] = useState<TaskContext>({
-        inputType: "mixed",
+        inputType: "text",
         priorityFocus: searchParams.get("focus") || "balanced",
         casePrompt: "",
         files: [],
@@ -343,6 +343,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const backgroundDensity = viewMode === "timeline" ? 3.0 : 1.0
     const backgroundStarSpeed = viewMode === "timeline" ? 0.0015 : 0.15
     const backgroundAnimationSpeed = viewMode === "timeline" ? 0.0035 : 0.35
+    const backgroundRotationSpeed = viewMode === "timeline" ? 0 : 0.05
 
     useEffect(() => {
         if (role === "expert") {
@@ -373,7 +374,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         : []
 
                 setTaskContext({
-                    inputType: task.input_type || "mixed",
+                    inputType: task.input_type || "text",
                     priorityFocus: task.priority_focus || searchParams.get("focus") || "balanced",
                     casePrompt: metadata.case_prompt || task.description || "",
                     files,
@@ -430,7 +431,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     saturation={0}
                     hueShift={140}
                     twinkleIntensity={0.3}
-                    rotationSpeed={0.05}
+                    rotationSpeed={backgroundRotationSpeed}
                     repulsionStrength={2}
                     autoCenterRepulsion={0}
                     starSpeed={backgroundStarSpeed}

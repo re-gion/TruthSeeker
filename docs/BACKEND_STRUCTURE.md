@@ -6,7 +6,7 @@
 
 TruthSeeker 当前运行时是 **FedPaRS-compatible 多智能体研判架构**：
 
-- Kimi 2.6 作为四个 Agent 共享的原生多模态推理基座。
+- Kimi 2.5 作为四个 Agent 共享的原生多模态推理基座，并禁用 thinking。
 - Reality Defender、VirusTotal、Exa 等外部工具提供专业取证、威胁情报和联网搜索能力。
 - LangGraph 负责阶段式 Agent 编排和收敛路由。
 - Supabase 保存任务、分析快照、日志、报告、会诊和审计记录。
@@ -108,9 +108,9 @@ flowchart TD
 
 ## 5. 工具与 LLM
 
-Kimi 2.6：
+Kimi 2.5：
 
-- 默认 `KIMI_MODEL=kimi-k2.6`。
+- 默认 `KIMI_MODEL=kimi-k2.5`，调用时禁用 thinking。
 - 多模态输入通过短期 signed URL 引用传递。
 - 日志、报告和持久化不保存 signed URL 明文。
 

@@ -22,7 +22,7 @@
 - [x] 文本框改为全局检测提示词，不再允许仅凭提示词创建检测任务。
 - [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> Challenger。
 - [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
-- [x] Kimi 2.6 作为四 Agent 共享多模态推理基座，工具结果 all-settled 后再进入 Agent 推理。
+- [x] Kimi 2.5 作为四 Agent 共享多模态推理基座，禁用 thinking，工具结果 all-settled 后再进入 Agent 推理。
 - [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
 - [x] 安装 `@xyflow/react` ^12.10.2 并将图谱视图替换为 React Flow 交互渲染（支持拖拽、缩放、节点详情面板）。
 - [x] 任务创建保存 `case_prompt`、文件清单、模态和 storage path。
@@ -254,11 +254,12 @@
 - [x] 删除检测页 2D Agent 视图，仅保留 3D、时间轴、图谱入口
 
 ### 2026-04-29 Agent 自主推理与 Kimi coding plan 适配
-- [x] 开发文档统一为“四个 Agent 先基于 Kimi 2.6 自主推理，再按角色调用外部工具，最后融合两部分结果”
+- [x] 开发文档统一为“四个 Agent 先基于 Kimi 2.5 自主推理，再按角色调用外部工具，最后融合两部分结果”
 - [x] 后端 LLM 配置支持 `KIMI_PROVIDER=official|coding` 手动选择官方 API 或 Kimi coding plan
 - [x] 删除 `KIMI_FALLBACK_MODEL=moonshot-v1-128k` 模型级回退配置，LLM 不可用时只进入本地结构化降级
 - [x] `.env.example` 补充官方 API 与 coding plan 的示例配置
 - [x] 检测页右上角改为系统流程展板，按上传输入、创建任务、开始检测、Agent 执行、局部质询轮次、报告生成展示全流程
+- [x] 修复官方 Kimi API 地址归一、K2.5 thinking/temperature 参数风险，以及多轮质询重复调用成功外部工具导致的误降级
 
 ---
 

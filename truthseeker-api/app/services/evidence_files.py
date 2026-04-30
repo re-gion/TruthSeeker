@@ -84,10 +84,10 @@ def require_evidence_files(files: list[UploadedEvidenceFile]) -> bool:
 
 
 def derive_input_type(files: list[UploadedEvidenceFile]) -> str:
-    modalities = {item["modality"] for item in files}
+    modalities = sorted({item["modality"] for item in files})
     if len(modalities) == 1:
-        return next(iter(modalities))
-    return "mixed"
+        return modalities[0]
+    return "_".join(modalities)
 
 
 def build_agent_file_views(files: list[UploadedEvidenceFile]) -> dict[str, Any]:

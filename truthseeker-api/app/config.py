@@ -1,11 +1,26 @@
 """Application configuration using pydantic-settings"""
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 确保无论从哪个工作目录启动，都能加载到 truthseeker-api/.env
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
+
+def _read_kimi_env() -> dict[str, str]:
+    """每次调用时重新读取 .env 中的 Kimi 相关配置，实现热加载。"""
+    raw = dotenv_values(str(_ENV_PATH))
+    result: dict[str, str] = {}
+    for key in (
+        "KIMI_PROVIDER", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_MODEL",
+        "KIMI_CODING_API_KEY", "KIMI_CODING_BASE_URL", "KIMI_CODING_MODEL",
+    ):
+        value = raw.get(key)
+        if value is not None:
+            result[key] = value
+    return result
 
 
 class Settings(BaseSettings):
@@ -45,7 +60,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_BASE_URL", "Kimi_Base_URL"),
     )
     KIMI_MODEL: str = Field(
-        default="kimi-k2.6",
+        default="kimi-k2.5",
         validation_alias=AliasChoices("KIMI_MODEL", "Kimi_Model"),
     )
     KIMI_CODING_API_KEY: str = Field(
@@ -57,7 +72,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_CODING_BASE_URL", "Kimi_Coding_Base_URL"),
     )
     KIMI_CODING_MODEL: str = Field(
-        default="kimi-k2.6",
+        default="kimi-k2.5",
         validation_alias=AliasChoices("KIMI_CODING_MODEL", "Kimi_Coding_Model"),
     )
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
@@ -106,21 +121,32 @@ def _normalize_kimi_base_url(base_url: str, provider: str) -> str:
 
 
 def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
-    """Resolve the active Kimi endpoint from official API or coding-plan settings."""
+    """Resolve the active Kimi endpoint, hot-reloading from .env on every call."""
     cfg = config or settings
-    provider = _normalize_kimi_provider(cfg.KIMI_PROVIDER)
+    env = _read_kimi_env()  # 每次都从 .env 文件重新读取，实现 Key 热切换
+
+    provider_raw = env.get("KIMI_PROVIDER") or cfg.KIMI_PROVIDER
+    provider = _normalize_kimi_provider(provider_raw)
+
+    official_key = env.get("KIMI_API_KEY") or cfg.KIMI_API_KEY
+    official_model = (env.get("KIMI_MODEL") or cfg.KIMI_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
+    official_base = _normalize_kimi_base_url(env.get("KIMI_BASE_URL") or cfg.KIMI_BASE_URL, "official")
+
     if provider == "coding":
+        coding_key = env.get("KIMI_CODING_API_KEY") or cfg.KIMI_CODING_API_KEY or official_key
+        coding_model = (env.get("KIMI_CODING_MODEL") or cfg.KIMI_CODING_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
+        coding_base = _normalize_kimi_base_url(env.get("KIMI_CODING_BASE_URL") or cfg.KIMI_CODING_BASE_URL, "coding")
         return {
             "provider": "coding",
-            "model": (cfg.KIMI_CODING_MODEL or "kimi-k2.6").strip() or "kimi-k2.6",
-            "base_url": _normalize_kimi_base_url(cfg.KIMI_CODING_BASE_URL, "coding"),
-            "api_key": cfg.KIMI_CODING_API_KEY or cfg.KIMI_API_KEY,
+            "model": coding_model,
+            "base_url": coding_base,
+            "api_key": coding_key,
         }
     return {
         "provider": "official",
-        "model": (cfg.KIMI_MODEL or "kimi-k2.6").strip() or "kimi-k2.6",
-        "base_url": _normalize_kimi_base_url(cfg.KIMI_BASE_URL, "official"),
-        "api_key": cfg.KIMI_API_KEY,
+        "model": official_model,
+        "base_url": official_base,
+        "api_key": official_key,
     }
 
 

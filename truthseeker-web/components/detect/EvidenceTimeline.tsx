@@ -43,6 +43,8 @@ const LOG_TYPE_STYLES: Record<string, { border: string; bg: string }> = {
   challenge: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
   conclusion:{ border: "border-white/20",  bg: "bg-white/[0.05]" },
   audit:     { border: "border-slate-400/25", bg: "bg-slate-400/[0.05]" },
+  evidence_supplement: { border: "border-[#D4FF12]/35", bg: "bg-[#D4FF12]/[0.05]" },
+  cross_phase_evidence_supplement: { border: "border-[#D4FF12]/35", bg: "bg-[#D4FF12]/[0.05]" },
   phase_review: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
   consultation_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
   consultation_approval_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
@@ -53,24 +55,34 @@ const LOG_TYPE_STYLES: Record<string, { border: string; bg: string }> = {
   consultation_resumed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
 }
 
-const PHASE_ROUND_PREFIX: Record<string, string> = {
-  forensics: "Forensics R",
-  osint: "OSINT R",
-  commander: "Commander R",
-}
-
 function timeValue(entry: TimelineEntry) {
   const parsed = Date.parse(entry.timestamp)
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function formatRoundLabel(entry: TimelineEntry) {
-  if (entry.agent === "challenger" && entry.phase && entry.phaseRound) {
-    return `${PHASE_ROUND_PREFIX[entry.phase] ?? `${entry.phase} R`}${entry.phaseRound}`
-  }
-  if (entry.sourceKind === "audit" || entry.type === "audit") return "审计"
-  if (entry.sourceKind === "timeline") return "阶段"
-  return entry.round ? `流程 ${entry.round}` : "流程"
+function challengerRound(entry: TimelineEntry) {
+  if (entry.agent !== "challenger") return undefined
+  if (entry.type !== "challenge" && entry.type !== "phase_review") return undefined
+  return entry.phaseRound ?? entry.round
+}
+
+function isSupplementEntry(entry: TimelineEntry) {
+  const marker = `${entry.type} ${entry.action ?? ""}`.toLowerCase()
+  return marker.includes("supplement") || marker.includes("cross_phase") || entry.content.includes("补证")
+}
+
+function buildRoundSeparators(entries: TimelineEntry[]) {
+  const separators = new Map<number, string>()
+  const seen = new Set<string>()
+  entries.forEach((entry, index) => {
+    const round = challengerRound(entry)
+    if (!round || round <= 1) return
+    const key = `${entry.phase ?? "global"}:${round}`
+    if (seen.has(key)) return
+    seen.add(key)
+    separators.set(index, `R${round}`)
+  })
+  return separators
 }
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +91,7 @@ function formatRoundLabel(entry: TimelineEntry) {
 
 export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
   const orderedLogs = [...logs].sort((a, b) => timeValue(a) - timeValue(b))
+  const roundSeparators = buildRoundSeparators(orderedLogs)
 
   return (
     <div className="relative px-4 py-6 max-w-3xl mx-auto">
@@ -91,7 +104,8 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
         const isChallenge = entry.type === "challenge" || entry.type === "phase_review"
         const isConsultation = entry.type.startsWith("consultation_")
         const isAudit = entry.type === "audit" || entry.sourceKind === "audit"
-        const roundLabel = formatRoundLabel(entry)
+        const isSupplement = isSupplementEntry(entry)
+        const roundSeparator = roundSeparators.get(index)
 
         return (
           <motion.div
@@ -101,6 +115,11 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
             transition={{ delay: Math.min(index * 0.03, 0.3), duration: 0.3 }}
             className={`relative pl-12 pb-3 ${isChallenge ? "py-1" : ""}`}
           >
+            {roundSeparator && (
+              <div className="absolute left-0 top-0 -translate-y-1/2 rounded-full border border-[#F59E0B]/40 bg-black/60 px-2 py-0.5 text-[10px] font-mono text-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.18)]">
+                {roundSeparator}
+              </div>
+            )}
             <div
               className="absolute left-[22px] top-[10px] w-[11px] h-[11px] rounded-full border-2"
               style={{
@@ -122,21 +141,23 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
                     second: "2-digit",
                   })}
                 </span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/45 font-mono ml-auto">
-                  {roundLabel}
-                </span>
                 {isChallenge && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#F59E0B]/20 text-[#F59E0B] font-medium">
+                  <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-[#F59E0B]/20 text-[#F59E0B] font-medium">
                     质询
                   </span>
                 )}
+                {isSupplement && (
+                  <span className={`${isChallenge ? "" : "ml-auto"} text-[9px] px-1.5 py-0.5 rounded bg-[#D4FF12]/15 text-[#D4FF12] font-medium`}>
+                    跨阶段补证
+                  </span>
+                )}
                 {isConsultation && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#06B6D4]/15 text-[#67E8F9] font-medium">
+                  <span className={`${isChallenge || isSupplement ? "" : "ml-auto"} text-[9px] px-1.5 py-0.5 rounded bg-[#06B6D4]/15 text-[#67E8F9] font-medium`}>
                     会诊
                   </span>
                 )}
                 {isAudit && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-400/15 text-slate-300 font-medium">
+                  <span className={`${isChallenge || isSupplement || isConsultation ? "" : "ml-auto"} text-[9px] px-1.5 py-0.5 rounded bg-slate-400/15 text-slate-300 font-medium`}>
                     审计
                   </span>
                 )}

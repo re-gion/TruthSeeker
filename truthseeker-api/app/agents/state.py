@@ -30,7 +30,7 @@ class TruthSeekerState(TypedDict):
     task_id: str
     user_id: str
     input_files: dict           # {modality: storage_path}
-    input_type: str             # 'video' | 'audio' | 'image' | 'text' | 'mixed'
+    input_type: str             # 单一类型如 'video'，或组合类型如 'image_text'（按字母排序下划线连接）
     priority_focus: str         # 'visual' | 'audio' | 'text' | 'balanced'
     case_prompt: str            # 用户输入的全局检测目标/案件背景/重点风险
     evidence_files: list[dict]  # 标准化 UploadedEvidenceFile 列表

@@ -1,6 +1,8 @@
 from app.services.consultation_workflow import (
     build_moderator_summary,
+    build_consultation_context,
     evaluate_consultation_trigger,
+    latest_human_consultation_messages,
 )
 
 
@@ -91,3 +93,70 @@ def test_moderator_summary_uses_confirmed_user_text_when_present():
     assert summary["confirmed_summary"] == "用户确认：来源账号是破局关键。"
     assert summary["message_count"] == 2
     assert summary["key_quotes"][0]["role"] == "expert"
+
+
+def test_consultation_context_deduplicates_high_issues_and_builds_expert_tasks():
+    trigger = {
+        "reason": "forensics 连续低置信",
+        "target_agent": "forensics",
+        "recent_challenges": [
+            {
+                "issues": [
+                    {"type": "tool_failed", "severity": "high", "description": "工具失败", "agent": "forensics"},
+                    {"type": "tool_failed", "severity": "high", "description": "工具失败", "agent": "forensics"},
+                    {"type": "thin_graph", "severity": "medium", "description": "图谱偏薄", "agent": "osint"},
+                ]
+            }
+        ],
+    }
+
+    context = build_consultation_context(
+        task_id="task-1",
+        case_prompt="核验样本",
+        evidence_files=[],
+        forensics_result={"confidence": 0.42},
+        osint_result={"confidence": 0.61},
+        challenger_feedback={"confidence": 0.38},
+        trigger=trigger,
+    )
+
+    assert context["help_needed"] == ["工具失败"]
+    assert len(context["expert_tasks"]) == 1
+    assert context["expert_tasks"][0]["target_agent"] == "forensics"
+    assert "工具失败" in context["expert_tasks"][0]["question"]
+
+
+def test_moderator_summary_filters_system_messages_and_deduplicates_human_quotes():
+    messages = [
+        {"id": "m1", "role": "expert", "message": "需要补充原始发布时间？", "created_at": "2026-04-29T01:00:00+00:00"},
+        {"id": "m1", "role": "expert", "message": "需要补充原始发布时间？", "created_at": "2026-04-29T01:00:00+00:00"},
+        {"role": "commander", "message": "系统摘要，不应进入人工统计", "message_type": "summary"},
+        {"role": "system", "message": "自动提示"},
+        {"role": "user", "message": "我确认先查账号归属。", "created_at": "2026-04-29T01:01:00+00:00"},
+    ]
+
+    summary = build_moderator_summary(messages=messages)
+
+    assert summary["human_message_count"] == 2
+    assert summary["used_message_count"] == 2
+    assert summary["message_count"] == 2
+    assert [quote["role"] for quote in summary["key_quotes"]] == ["expert", "user"]
+    assert "system" not in summary["generated_summary"].lower()
+    assert summary["unresolved_questions"] == ["需要补充原始发布时间？"]
+
+
+def test_latest_human_consultation_messages_filters_by_latest_session_and_deduplicates():
+    sessions = [
+        {"id": "old", "created_at": "2026-04-29T00:00:00+00:00"},
+        {"id": "latest", "created_at": "2026-04-29T02:00:00+00:00"},
+    ]
+    messages = [
+        {"id": "old-m", "session_id": "old", "role": "expert", "message": "旧会诊意见"},
+        {"id": "new-m", "session_id": "latest", "role": "expert", "message": "最新专家意见"},
+        {"id": "new-m", "session_id": "latest", "role": "expert", "message": "最新专家意见"},
+        {"session_id": "latest", "role": "commander", "message": "主持人摘要", "message_type": "summary"},
+    ]
+
+    filtered = latest_human_consultation_messages(messages, sessions)
+
+    assert filtered == [{"id": "new-m", "session_id": "latest", "role": "expert", "message": "最新专家意见"}]

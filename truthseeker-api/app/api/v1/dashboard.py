@@ -60,6 +60,37 @@ INPUT_TYPE_LABELS = {
     "text": "文本内容",
 }
 
+
+def _display_input_type(input_type: Any) -> str:
+    raw = _read_string(input_type)
+    if not raw:
+        return "未分类"
+    # 保留下划线，仅标准化空格与横杠
+    normalized = raw.lower().replace(" ", "").replace("-", "")
+    # 单一类型直接查表
+    if normalized in INPUT_TYPE_LABELS:
+        return INPUT_TYPE_LABELS[normalized]
+    # 组合类型（如 image_text）拆分为 modality 列表，去掉"内容"后缀后拼接
+    parts = normalized.split("_")
+    mapped = [INPUT_TYPE_LABELS.get(p) for p in parts if p in INPUT_TYPE_LABELS]
+    if mapped:
+        return "+".join([m.replace("内容", "") for m in mapped])
+    return raw or "未分类"
+
+VERDICT_LABELS = {
+    "authentic": "真实结论",
+    "real": "真实结论",
+    "benign": "真实结论",
+    "true": "真实结论",
+    "forged": "伪造结论",
+    "fake": "伪造结论",
+    "deepfake": "伪造结论",
+    "synthetic": "伪造结论",
+    "manipulated": "伪造结论",
+    "suspicious": "疑似结论",
+    "inconclusive": "存疑结论",
+}
+
 EVIDENCE_CATEGORY_LABELS = {
     "visual": "视觉证据",
     "image": "视觉证据",
@@ -183,9 +214,10 @@ def _display_status(status: Any) -> str:
     return STATUS_LABELS.get(normalized) or _read_string(status) or "未分类"
 
 
-def _display_input_type(input_type: Any) -> str:
-    normalized = _normalize_token(input_type)
-    return INPUT_TYPE_LABELS.get(normalized) or "未分类"
+
+def _display_verdict(verdict: Any) -> str:
+    normalized = _normalize_token(verdict)
+    return VERDICT_LABELS.get(normalized) or _read_string(verdict) or "未分类"
 
 
 def _extract_result_candidate(value: Any, keys: list[str]) -> str:
@@ -560,6 +592,7 @@ async def get_dashboard_overview(request: Request):
         "trend_series": _build_trend_series(tasks, generated_at_iso),
         "threat_mix": _build_distribution_items([snapshot["threat_label"] for snapshot in threat_snapshots]),
         "status_breakdown": _build_distribution_items([_display_status(task.get("status")) for task in tasks]),
+        "verdict_breakdown": _build_distribution_items([_display_verdict(report.get("verdict")) for report in reports]),
         "evidence_mix": _build_evidence_mix(reports),
         "flow_sankey": _build_flow_sankey(tasks, reports),
         "capability_metrics": _build_capability_metrics(reports, consultation_invites, consultation_sessions),

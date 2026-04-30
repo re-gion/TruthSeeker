@@ -5,6 +5,7 @@ from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.llm_client import build_sample_references, commander_ruling
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.services.audit_log import record_audit_event
+from app.services.consultation_workflow import build_timeline_event, filter_human_consultation_messages
 
 
 async def commander_node(state: TruthSeekerState) -> dict:
@@ -21,7 +22,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     osint = state.get("osint_result") or {}
     challenger = state.get("challenger_feedback") or {}
     evidence_board = state.get("evidence_board", [])
-    expert_messages = state.get("expert_messages", [])
+    expert_messages = filter_human_consultation_messages(state.get("expert_messages", []))
     confirmed_consultation_summary = state.get("confirmed_consultation_summary")
     case_prompt = state.get("case_prompt", "")
     sample_refs = build_sample_references(state.get("evidence_files") or [])
@@ -220,12 +221,15 @@ async def commander_node(state: TruthSeekerState) -> dict:
     log("conclusion", f"📋 裁决报告已存档，任务 {task_id} 分析完成")
 
     # 时间轴关键事件
-    timeline_events.append({
-        "round": round_num,
-        "agent": "commander",
-        "event_type": "verdict",
-        "summary": f"最终裁决: {verdict_cn} (置信度 {overall_confidence:.1%})",
-    })
+    timeline_events.append(build_timeline_event(
+        round_number=round_num,
+        agent="commander",
+        event_type="verdict",
+        source_kind="agent",
+        from_phase="commander",
+        target_agent="system",
+        content=f"最终裁决: {verdict_cn} (置信度 {overall_confidence:.1%})",
+    ))
 
     return {
         "final_verdict": final_verdict,

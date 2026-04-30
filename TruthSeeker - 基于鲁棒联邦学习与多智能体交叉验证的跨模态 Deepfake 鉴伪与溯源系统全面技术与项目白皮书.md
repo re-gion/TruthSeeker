@@ -1,14 +1,14 @@
 # TruthSeeker - 基于鲁棒联邦学习与多智能体交叉验证的跨模态 Deepfake 鉴伪与溯源系统全面技术与项目白皮书
 
-> 2026-04-28 运行时口径更新：当前工程实现采用 FedPaRS-compatible 架构。FedPaRS 是底层检测器和联邦学习研究方向；当前仓库运行时由 Kimi 2.6 多模态推理基座、Reality Defender、VirusTotal、Exa、LangGraph 与 Supabase 组成。除非后续接入真实 FedPaRS 模型训练/推理服务，文档中的 FedPaRS 不应被理解为当前代码已经完成端到端训练底座。
+> 2026-04-29 运行时口径更新：当前工程实现采用 FedPaRS-compatible 架构。FedPaRS 是底层检测器和联邦学习研究方向；当前仓库运行时由禁用 thinking 的 Kimi 2.5 多模态推理基座、Reality Defender、VirusTotal、Exa、LangGraph 与 Supabase 组成。除非后续接入真实 FedPaRS 模型训练/推理服务，文档中的 FedPaRS 不应被理解为当前代码已经完成端到端训练底座。
 
 ## 当前四 Agent 运行时
 
 TruthSeeker 的运行时从“视听鉴伪与情报溯源并行”升级为阶段式多智能体研判：
 
-1. 电子取证 Agent：对外仍使用 `forensics` 协议 key，接收全模态输入和 Kimi 2.6 多模态上下文，等待 Reality Defender、VirusTotal 等工具全部返回结构化结果后生成取证报告。
+1. 电子取证 Agent：对外仍使用 `forensics` 协议 key，接收全模态输入和 Kimi 2.5 多模态上下文，等待 Reality Defender、VirusTotal 等工具全部返回结构化结果后生成取证报告。
 2. 逻辑质询 Agent：审查取证报告、溯源图谱和最终报告，按每阶段最多 3 轮、质量阈值 0.08 控制收敛。
-3. 情报溯源 Agent：使用 Exa API 做脱敏联网搜索，结合 VirusTotal 追加查询和 Kimi 2.6 关系抽取生成 provenance graph。
+3. 情报溯源 Agent：使用 Exa API 做脱敏联网搜索，结合 VirusTotal 追加查询和 Kimi 2.5 关系抽取生成 provenance graph。
 4. 研判指挥 Agent：整合全局证据板、质询记录、取证报告、溯源图谱和用户输入，生成最终鉴伪与溯源报告。
 
 最终图谱写入 `final_verdict.provenance_graph`，并在检测台图谱视图中展示。主裁决仍沿用 `authentic/suspicious/forged/inconclusive`，溯源和威胁判断作为子结论进入报告。
@@ -104,7 +104,7 @@ TruthSeeker 摒弃了落后的“单模型流水线”检测，并基于底层 F
 ### 4.1 四大“特工”职责设定
 
 1. **🎬 电子取证Agent  (Forensics Agent)**
-   - **行为特征**：充当“物证鉴定中心”。对同一案件中的视频、音频、图像和文本检材建立统一上下文，等待 Reality Defender、VirusTotal 等工具矩阵 all-settled 后，由 Kimi 2.6 多模态推理生成“取证鉴伪”报告。该 Agent 对外仍使用 `forensics` 协议 key。
+   - **行为特征**：充当“物证鉴定中心”。对同一案件中的视频、音频、图像和文本检材建立统一上下文，等待 Reality Defender、VirusTotal 等工具矩阵 all-settled 后，由 Kimi 2.5 多模态推理生成“取证鉴伪”报告。该 Agent 对外仍使用 `forensics` 协议 key。
 2. **🔍 情报溯源Agent  (OSINT Agent)**
    - **行为特征**：充当“背景调查员”。在电子取证和质询收敛后，使用脱敏线索调用 Exa 搜索、VirusTotal 与 Kimi 声明抽取，生成实体关系、W3C PROV 风格溯源链、Claim/Evidence/Challenge 混合图谱。
 3. **⚖️ 逻辑质询Agent (Challenger Agent - 核心破局点)**
