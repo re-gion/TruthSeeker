@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "motion/react"
 import { resetPassword } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
 import Image from "next/image"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import { ThemeToggle } from "@/components/landing/ThemeToggle"
 
 export default function ForgotPasswordPage() {
@@ -66,13 +67,7 @@ export default function ForgotPasswordPage() {
                     transition={{ delay: 0.15, duration: 0.5 }}
                 >
                     <div className="w-10 h-10 flex items-center justify-center">
-                        <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-lg">
-                            <path d="M 45 25 C 10 30 15 70 45 80" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <circle cx="48" cy="18" r="8" fill="#6366F1" />
-                            <path d="M 40 38 L 85 38" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 60 38 L 65 75" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 65 80 C 85 75 90 55 85 45" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                        </svg>
+                        <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <motion.span
                         className="text-2xl font-bold bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"

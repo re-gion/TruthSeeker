@@ -1,25 +1,40 @@
 "use client"
 
-import { useState } from "react"
+import { useState, type FormEvent } from "react"
+import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "motion/react"
-import { signIn } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
 import Image from "next/image"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import { ThemeToggle } from "@/components/landing/ThemeToggle"
+import { createClient } from "@/lib/supabase/client"
 
 export default function LoginPage() {
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
+    const router = useRouter()
 
-    async function handleSubmit(formData: FormData) {
+    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
         setLoading(true)
         setError(null)
-        const result = await signIn(formData)
-        if (result?.error) {
-            setError(result.error)
+
+        const formData = new FormData(event.currentTarget)
+        const supabase = createClient()
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: formData.get("email") as string,
+            password: formData.get("password") as string,
+        })
+
+        if (signInError) {
+            setError(signInError.message)
             setLoading(false)
+            return
         }
+
+        router.push("/")
+        router.refresh()
     }
 
     return (
@@ -61,13 +76,7 @@ export default function LoginPage() {
                     transition={{ delay: 0.15, duration: 0.5 }}
                 >
                     <div className="w-10 h-10 flex items-center justify-center">
-                        <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-lg">
-                            <path d="M 45 25 C 10 30 15 70 45 80" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <circle cx="48" cy="18" r="8" fill="#6366F1" />
-                            <path d="M 40 38 L 85 38" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 60 38 L 65 75" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 65 80 C 85 75 90 55 85 45" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                        </svg>
+                        <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <motion.span
                         className="text-2xl font-bold bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"
@@ -93,7 +102,7 @@ export default function LoginPage() {
                         </p>
                     </div>
 
-                    <form action={handleSubmit} className="space-y-[18px]">
+                    <form onSubmit={handleSubmit} className="space-y-[18px]">
                         <div className="relative group">
                             <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-[#6366F1] transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

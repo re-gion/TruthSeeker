@@ -12,6 +12,7 @@ import { InviteButton } from "@/components/collaboration/InviteButton"
 import { ExpertPanel } from "@/components/collaboration/ExpertPanel"
 import { EvidenceTimeline } from "@/components/detect/EvidenceTimeline"
 import { ProvenanceGraphView } from "@/components/detect/ProvenanceGraphView"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
 import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReport, downloadPdfReport } from "@/lib/report"
@@ -450,17 +451,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     <div className="w-px h-4 bg-white/10" />
                     <div className="flex items-center gap-2">
                         <div className="w-6 h-6 flex items-center justify-center relative transition-transform duration-500 hover:scale-110">
-                            <svg width="24" height="24" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-sm">
-                                {/* The "S" curve */}
-                                <path d="M 45 25 C 10 30 15 70 45 80" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                                {/* The dot */}
-                                <circle cx="48" cy="18" r="8" fill="#6366F1" />
-                                {/* The "T" cap and stem */}
-                                <path d="M 40 38 L 85 38" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                                <path d="M 60 38 L 65 75" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                                {/* The right arc */}
-                                <path d="M 65 80 C 85 75 90 55 85 45" stroke="#6366F1" strokeWidth="10" strokeLinecap="round" />
-                            </svg>
+                            <BrandLogo className="h-6 w-6" imageClassName="drop-shadow-sm" size={24} />
                         </div>
                         <span className="text-white font-semibold text-sm tracking-wide">四智能体协同检测控制台</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#D4FF12]/30 text-[#D4FF12] font-mono tracking-wider ml-1 bg-[#D4FF12]/5">LAYER 3</span>

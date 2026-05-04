@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react"
 import { usePathname } from "next/navigation"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 
 export function PageTransition({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
@@ -13,10 +14,10 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
         <motion.div key={pathname} className="w-full h-full relative">
             {/* The Overlay that appears instantly on route change, then animates out */}
             <motion.div
-                className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white dark:bg-[#0A0A0F] pointer-events-none"
+                className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white dark:bg-[#000000] pointer-events-none"
                 initial={{ opacity: 1, clipPath: 'inset(0 0 0% 0)' }}
                 animate={{ opacity: 0, clipPath: 'inset(100% 0 0 0)' }}
-                transition={{ duration: 0.9, ease: [0.76, 0, 0.24, 1], delay: 0.35 }}
+                transition={{ duration: 2, ease: [0.76, 0, 0.24, 1], delay: 0.35 }}
             >
                 {/* Background Details */}
                 <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-soft-light" />
@@ -25,26 +26,24 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
                 <div className="flex flex-col items-center gap-6 z-10 w-full px-4 mb-20">
                     <motion.div
                         className="flex flex-col items-center"
-                        initial={{ scale: 0.9, opacity: 0, y: 15 }}
+                        initial={{ scale: 0.96, opacity: 0, y: 15 }}
                         animate={{ scale: 1, opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, ease: "easeOut" }}
                     >
-                        {/* Custom Blue ST Logo based on user's image */}
-                        <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-xl">
-                            {/* The "S" curve */}
-                            <path d="M 45 25 C 10 30 15 70 45 80" stroke="#001CE8" strokeWidth="8" strokeLinecap="round" />
-                            {/* The dot */}
-                            <circle cx="48" cy="18" r="6" fill="#001CE8" />
-                            {/* The "T" cap and stem */}
-                            <path d="M 40 38 L 85 38" stroke="#001CE8" strokeWidth="8" strokeLinecap="round" />
-                            <path d="M 60 38 L 65 75" stroke="#001CE8" strokeWidth="8" strokeLinecap="round" />
-                            {/* The right arc */}
-                            <path d="M 65 80 C 85 75 90 55 85 45" stroke="#001CE8" strokeWidth="8" strokeLinecap="round" />
-                        </svg>
-                        
-                        <h1 className="text-5xl md:text-6xl font-black mt-3 tracking-tight text-[#001CE8]">
-                            TruthSeeker
-                        </h1>
+                        <BrandLogo
+                            variant="transition-light"
+                            className="block w-[min(80vw,680px)] dark:hidden"
+                            imageClassName="h-auto max-h-[68vh] w-full object-contain"
+                            size={680}
+                            priority
+                        />
+                        <BrandLogo
+                            variant="transition-dark"
+                            className="hidden w-[min(80vw,680px)] dark:block"
+                            imageClassName="h-auto max-h-[68vh] w-full object-contain"
+                            size={680}
+                            priority
+                        />
                     </motion.div>
 
                     {/* Loader */}
@@ -67,7 +66,7 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
                                 className="absolute inset-y-0 left-0 bg-[#001CE8]"
                                 initial={{ width: "0%" }}
                                 animate={{ width: "100%" }}
-                                transition={{ duration: 1.0, ease: "easeInOut" }}
+                                transition={{ duration: 2, ease: "easeInOut" }}
                             />
                         </div>
                     </motion.div>
@@ -78,7 +77,7 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
             <motion.div 
                 initial={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
                 animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1], delay: 0.4 }}
+                transition={{ duration: 2, ease: [0.22, 1, 0.36, 1], delay: 0.4 }}
                 className="w-full h-full"
             >
                 {children}

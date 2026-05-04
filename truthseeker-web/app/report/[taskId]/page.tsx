@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { motion } from "motion/react"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import StarBackground from "@/components/ui/StarBackground"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -96,9 +97,7 @@ export default function SharedReportPage() {
             <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0A0A0F]/80 backdrop-blur-md">
                 <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
                     <Link href="/" className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#6366F1] to-[#D4FF12] flex items-center justify-center text-xs font-bold text-black">
-                            T
-                        </div>
+                        <BrandLogo className="h-7 w-7" size={28} priority />
                         <span className="text-sm font-bold text-[#C0C0C0]">TruthSeeker</span>
                     </Link>
                     <div className="text-xs text-[#6B7280]">报告分享</div>

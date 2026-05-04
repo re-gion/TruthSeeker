@@ -1,6 +1,7 @@
 "use client"
 
 import { PresenceState } from "@/hooks/useRealtimeSession"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import { motion } from "motion/react"
 
 export function PresenceAvatars({ users }: { users: PresenceState[] }) {
@@ -22,13 +23,7 @@ export function PresenceAvatars({ users }: { users: PresenceState[] }) {
                         `}
                         title={`${u.role === 'host' ? '主持人' : '专家'} (${u.user_id})`}
                     >
-                        <svg width="14" height="14" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M 45 25 C 10 30 15 70 45 80" stroke="currentColor" strokeWidth="10" strokeLinecap="round" />
-                            <circle cx="48" cy="18" r="8" fill="currentColor" />
-                            <path d="M 40 38 L 85 38" stroke="currentColor" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 60 38 L 65 75" stroke="currentColor" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 65 80 C 85 75 90 55 85 45" stroke="currentColor" strokeWidth="10" strokeLinecap="round" />
-                        </svg>
+                        <BrandLogo className="h-4 w-4" size={16} alt="" />
                     </motion.div>
                 ))}
             </div>

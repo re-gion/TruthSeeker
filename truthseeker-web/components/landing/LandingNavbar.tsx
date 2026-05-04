@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { motion } from "motion/react"
 import { ThemeToggle } from "./ThemeToggle"
+import { BrandLogo } from "@/components/logo/BrandLogo"
 import { useScrollProgress } from "@/hooks/useScrollProgress"
 import { useEffect, useState } from "react"
 
@@ -31,17 +32,7 @@ export function LandingNavbar() {
                 {/* Logo */}
                 <Link href="/" className="flex items-center gap-3 group">
                     <div className="w-10 h-10 flex items-center justify-center relative transition-transform duration-500 group-hover:scale-110">
-                        <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-lg">
-                            {/* The "S" curve */}
-                            <path d="M 45 25 C 10 30 15 70 45 80" stroke="currentColor" className="text-[#6366F1]" strokeWidth="10" strokeLinecap="round" />
-                            {/* The dot */}
-                            <circle cx="48" cy="18" r="8" fill="currentColor" className="text-[#6366F1]" />
-                            {/* The "T" cap and stem */}
-                            <path d="M 40 38 L 85 38" stroke="currentColor" className="text-[#6366F1]" strokeWidth="10" strokeLinecap="round" />
-                            <path d="M 60 38 L 65 75" stroke="currentColor" className="text-[#6366F1]" strokeWidth="10" strokeLinecap="round" />
-                            {/* The right arc */}
-                            <path d="M 65 80 C 85 75 90 55 85 45" stroke="currentColor" className="text-[#6366F1]" strokeWidth="10" strokeLinecap="round" />
-                        </svg>
+                        <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <div className="flex flex-col">
                         <span className="font-black tracking-tighter text-2xl leading-none">TruthSeeker</span>
