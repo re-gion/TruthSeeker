@@ -19,9 +19,10 @@ import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnaps
 import type { ProvenanceGraph } from "@/lib/provenance-graph"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { type ComponentProps, useEffect, useMemo, useState } from "react"
 import StarBackground from "@/components/ui/StarBackground"
 import { getAuthToken } from "@/lib/auth"
+import type { AgentLineModes } from "@/components/bento/BentoScene"
 
 interface TaskContext {
     inputType: string
@@ -32,7 +33,7 @@ interface TaskContext {
     status?: string
 }
 
-function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
+export function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
     const normalized = extractVerdictSnapshot(verdict)
     const configs: Record<string, { color: string; bg: string; border: string; emoji: string }> = {
         forged: { color: "#EF4444", bg: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.3)", emoji: "🚨" },
@@ -64,6 +65,16 @@ function VerdictBadge({ verdict }: { verdict: Record<string, unknown> }) {
     )
 }
 
+type AgentLogEntries = ComponentProps<typeof AgentLog>["logs"]
+
+function AgentLogPanel({ logs }: { logs: AgentLogEntries }) {
+    return (
+        <div className="flex h-full w-full max-w-full min-h-0 min-w-0 flex-1 basis-0 flex-col rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden box-border">
+            <AgentLog logs={logs} maxHeight="100%" />
+        </div>
+    )
+}
+
 interface WorkflowLog {
     agent: string
     type: string
@@ -81,6 +92,7 @@ interface WorkflowStep {
     title: string
     detail: string
     tone: "ready" | "running" | "complete" | "waiting"
+    kind?: "default" | "challenge"
 }
 
 const AGENT_FLOW_LABELS: Record<string, string> = {
@@ -97,19 +109,53 @@ const CHALLENGER_TARGET_LABELS: Record<string, string> = {
     commander: "研判指挥 Agent",
 }
 
+const DETECTION_AGENT_KEYS = ["forensics", "osint", "challenger", "commander"] as const
+type DetectionAgentKey = (typeof DETECTION_AGENT_KEYS)[number]
+
+const READ_ACTIVITY_PATTERN = /读取|加载|调用|检索|查询|审查|分析|输入|上下文|证据板|工具|来源/
+const WRITE_ACTIVITY_PATTERN = /写入|完成|生成|输出|结论|裁决|报告|置信度|问题|判定|回填/
+
 function agentFlowLabel(agent?: string) {
     return AGENT_FLOW_LABELS[agent || "system"] || agent || "系统"
 }
 
-function phaseTargetLabel(phase?: string) {
-    return CHALLENGER_TARGET_LABELS[phase || ""] || agentFlowLabel(phase)
+function isDetectionAgentKey(agent: string | null | undefined): agent is DetectionAgentKey {
+    return Boolean(agent && DETECTION_AGENT_KEYS.includes(agent as DetectionAgentKey))
+}
+
+function inferAgentLineMode(log?: WorkflowLog): "read" | "write" {
+    if (!log) return "write"
+    if (WRITE_ACTIVITY_PATTERN.test(log.content)) return "write"
+    if ((log.type === "thinking" || log.type === "action") && READ_ACTIVITY_PATTERN.test(log.content)) return "read"
+    return "write"
+}
+
+function buildAgentLineModes(logs: WorkflowLog[], activeAgent: string | null): AgentLineModes {
+    if (!isDetectionAgentKey(activeAgent)) return {}
+    const latest = [...logs].reverse().find(log => log.agent === activeAgent)
+    return { [activeAgent]: inferAgentLineMode(latest) }
 }
 
 function challengerFlowTitle(phase: string | undefined, round: number) {
     if (phase === "forensics") return `逻辑质询 Agent vs 电子取证 Agent 第${round}轮`
     if (phase === "osint") return `逻辑质询 Agent vs 情报溯源 Agent 第${round}轮`
     if (phase === "commander") return `逻辑质询 Agent vs 研判指挥 Agent 第${round}轮`
-    return `逻辑质询 Agent vs ${phaseTargetLabel(phase)} 第${round}轮`
+    return "逻辑质询 Agent 活动"
+}
+
+function isChallengerPhaseLog(log: WorkflowLog) {
+    return log.agent === "challenger" &&
+        (log.type === "phase_review" || log.type === "challenge") &&
+        Boolean(CHALLENGER_TARGET_LABELS[log.phase || ""])
+}
+
+function summarizeChallengerDetail(log: WorkflowLog) {
+    const confidence = log.content.match(/置信度\s*([0-9.]+%)/)?.[1]
+    const issues = log.content.match(/问题\s*([0-9]+)\s*个/)?.[1]
+    const fragments = []
+    if (confidence) fragments.push(`置信度 ${confidence}`)
+    if (issues) fragments.push(`问题 ${issues} 个`)
+    return fragments.length > 0 ? fragments.join("，") : "阶段质询已写入全局证据板"
 }
 
 function summarizeWorkflowLog(log: WorkflowLog): WorkflowStep | null {
@@ -126,11 +172,20 @@ function summarizeWorkflowLog(log: WorkflowLog): WorkflowStep | null {
     if (action === "detect_completed" || action === "report_generated") {
         return { key: `${log.timestamp}|report`, title: "报告已生成", detail: log.content || "鉴伪与溯源报告完成", tone: "complete" }
     }
-    if (log.agent === "challenger") {
+    if (isChallengerPhaseLog(log)) {
         const round = log.phaseRound || log.round || 1
         return {
             key: `${log.timestamp}|challenger|${log.phase || "phase"}|${round}`,
             title: challengerFlowTitle(log.phase, round),
+            detail: summarizeChallengerDetail(log),
+            tone: "running",
+            kind: "challenge",
+        }
+    }
+    if (log.agent === "challenger") {
+        return {
+            key: `${log.timestamp}|challenger|${action}`,
+            title: "逻辑质询 Agent 活动",
             detail: log.content || "交叉验证阶段证据、置信度和残留风险",
             tone: "running",
         }
@@ -241,7 +296,7 @@ function buildSystemWorkflow({
     return steps.slice(-7)
 }
 
-function SystemFlowBoard({ steps }: { steps: WorkflowStep[] }) {
+function GlobalEvidenceBoard({ steps, variant = "top" }: { steps: WorkflowStep[], variant?: "top" | "center" }) {
     let activeIndex = steps.length - 1
     for (let index = steps.length - 1; index >= 0; index -= 1) {
         if (steps[index].tone === "running" || steps[index].tone === "waiting") {
@@ -251,27 +306,68 @@ function SystemFlowBoard({ steps }: { steps: WorkflowStep[] }) {
     }
     const current = steps[activeIndex] || steps[steps.length - 1]
     const progress = steps.length > 1 ? ((activeIndex + 1) / steps.length) * 100 : 10
+    const recentSteps = steps.slice(-4)
+    const compact = variant === "center"
+    const centerSteps = recentSteps.slice(-3)
+    const visibleSteps = compact ? centerSteps : recentSteps
 
     return (
-        <div className="liquid-glass rounded-lg px-3 py-1.5 border border-white/10 shadow-sm w-full md:w-[300px] md:max-w-[28vw]">
-            <div className="flex items-center justify-between gap-3">
+        <section className={`liquid-glass rounded-2xl border border-white/10 shadow-[0_18px_70px_rgba(0,0,0,0.25)] ${compact ? "px-3 py-2" : "px-4 py-3"}`}>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                    <div className="text-[10px] text-[#6B7280] uppercase tracking-wider">系统流程</div>
-                    <div className="truncate text-xs font-medium text-white">{current?.title || "等待流程启动"}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-white">全局证据板</span>
+                        <span className="rounded border border-[#D4FF12]/25 bg-[#D4FF12]/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-[#D4FF12]">
+                            Evidence Board
+                        </span>
+                    </div>
+                    <div className="mt-1 min-w-0 text-xs leading-relaxed text-white/55">
+                        <span className="font-medium text-white/75">{current?.title || "等待流程启动"}</span>
+                        {current?.detail ? (
+                            <span className="ml-2 text-white/45">{current.detail}</span>
+                        ) : (
+                            <span className="ml-2 text-white/45">等待检测上下文</span>
+                        )}
+                    </div>
                 </div>
-                <div className="flex items-center gap-1 text-[10px] text-[#10B981] shrink-0">
+                <div className={`flex items-center gap-1 text-xs text-[#10B981] shrink-0 ${compact ? "hidden xl:flex" : ""}`}>
                     <span className="h-1 w-1 rounded-full bg-[#10B981] shadow-[0_0_6px_#10B981]" />
                     实时推进
                 </div>
             </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div className={`${compact ? "mt-2" : "mt-3"} h-1.5 w-full overflow-hidden rounded-full bg-white/10`}>
                 <motion.div
                     className="h-full rounded-full bg-gradient-to-r from-[#6366F1] via-[#10B981] to-[#F59E0B]"
                     animate={{ width: `${Math.min(100, Math.max(8, progress))}%` }}
                     transition={{ duration: 0.45 }}
                 />
             </div>
-        </div>
+            <div className={`${compact ? "mt-2" : "mt-3"} flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-white/35`}>
+                <span>最近流程</span>
+                <span>{visibleSteps.length} 条</span>
+            </div>
+            <div className={compact ? "mt-2 space-y-1.5" : "mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-4"}>
+                {visibleSteps.map((step) => (
+                    <div key={step.key} className={`${compact ? "min-h-[42px] px-2.5 py-1.5" : "min-h-[58px] px-3 py-2"} rounded-lg border border-white/10 bg-black/25`}>
+                        <div className="flex items-start justify-between gap-2">
+                            <span className={`${compact ? "text-[11px]" : "text-xs"} min-w-0 font-medium leading-snug text-white/85`}>{step.title}</span>
+                            <span
+                                className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
+                                    step.tone === "complete"
+                                        ? "bg-[#10B981]"
+                                        : step.tone === "waiting"
+                                            ? "bg-[#F59E0B]"
+                                            : step.tone === "running"
+                                                ? "bg-[#D4FF12]"
+                                                : "bg-white/25"
+                                }`}
+                            />
+                        </div>
+                        <div className={`${compact ? "line-clamp-1 text-[10px]" : "line-clamp-2 text-[11px]"} mt-1 leading-relaxed text-white/45`}>{step.detail}</div>
+                    </div>
+                ))}
+            </div>
+        </section>
     )
 }
 
@@ -338,6 +434,14 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         isComplete,
         isWaitingConsultation,
     }), [currentNode, isComplete, isRunning, isWaitingConsultation, taskContext.files.length, taskLoaded, timelineLogs])
+    const activeAgent = currentNode || (isComplete ? "commander" : null)
+    const agentLineModes = useMemo(() => buildAgentLineModes(timelineLogs, activeAgent), [activeAgent, timelineLogs])
+    const logsByAgent = useMemo(() => ({
+        osint: logs.filter(l => l.agent === "osint"),
+        forensics: logs.filter(l => l.agent === "forensics"),
+        challenger: logs.filter(l => l.agent === "challenger"),
+        commander: logs.filter(l => l.agent === "commander"),
+    }), [logs])
 
     const agentStatus = (key: string, hasResult: boolean) =>
         currentNode === key ? "analyzing" : hasResult ? "complete" : "idle"
@@ -422,8 +526,8 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     }, [inviteToken, role, router, taskId])
 
     return (
-        <div className="min-h-screen relative flex flex-col bg-black overflow-hidden">
-            <div className="absolute inset-0 pointer-events-none z-0">
+        <div className="min-h-screen relative bg-black overflow-x-hidden">
+            <div className="fixed inset-0 pointer-events-none z-0">
                 <StarBackground
                     mouseInteraction={false}
                     mouseRepulsion={false}
@@ -440,7 +544,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                 />
             </div>
             
-            <div className="relative z-10 flex-1 flex flex-col">
+            <div className="relative z-10 min-h-screen flex flex-col">
 
             {/* Header */}
             <header className="px-6 py-3 flex items-center justify-between border-b border-white/5 bg-black/50 backdrop-blur-md sticky top-0 z-50">
@@ -540,11 +644,6 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         <PresenceAvatars users={onlineUsers} />
                     </div>
 
-                    {/* Layer 2: 顶部系统流程展板 */}
-                    <div className="hidden md:block">
-                        <SystemFlowBoard steps={workflowSteps} />
-                    </div>
-
                     <div className="flex items-center gap-2">
                         {isRunning && (
                             <motion.div
@@ -584,45 +683,42 @@ export function DetectConsole({ taskId }: { taskId: string }) {
 
             {/* Content Area */}
             {viewMode === "graph" ? (
-                <div className="flex-1 overflow-hidden">
+                <div className="min-h-[calc(100vh-56px)] overflow-visible">
                     <ProvenanceGraphView graph={provenanceGraph} isComplete={isComplete} />
                 </div>
             ) : viewMode === "3d" ? (
-                <div className="flex-1 w-full relative overflow-hidden">
+                <div className="w-full relative min-h-[calc(100vh-56px)] pb-6">
+                    <div className="mx-auto max-w-[1600px] px-4 pt-4 lg:px-6">
+                        <GlobalEvidenceBoard steps={workflowSteps} />
+                    </div>
                     <BentoScene
                         osintNode={
                             <>
                                 <AgentCard name="情报溯源Agent" agentKey="osint" icon={<Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("osint", !!osintResult)} confidence={osintSnapshot ? osintSnapshot.confidence : undefined} description="网络威胁情报 · 路由追踪" />
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "osint")} maxHeight="100%" /></div>
+                                <AgentLogPanel logs={logsByAgent.osint} />
                             </>
                         }
                         forensicsNode={
                             <>
                                 <AgentCard name="电子取证Agent" agentKey="forensics" icon={<Image src="/agent-icons/forensics.svg" alt="电子取证Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("forensics", !!forensicsResult)} confidence={forensicsSnapshot ? forensicsSnapshot.confidence : undefined} description="全模态取证 · 工具矩阵鉴伪" />
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "forensics")} maxHeight="100%" /></div>
+                                <AgentLogPanel logs={logsByAgent.forensics} />
                             </>
                         }
                         challengerNode={
                             <>
                                 <AgentCard name="逻辑质询Agent" agentKey="challenger" icon={<Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("challenger", !!challengerFeedback)} confidence={challengerSnapshot ? challengerSnapshot.qualityScore : undefined} description="跨模态矛盾检测 · 置信校验" />
-                                {!!challengerSnapshot?.requiresMoreEvidence && (
-                                    <div className="bg-[#F59E0B]/20 border border-[#F59E0B]/50 rounded-lg p-2 text-xs text-[#F59E0B]">🔄 发现矛盾，触发重审</div>
-                                )}
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0"><AgentLog logs={logs.filter(l => l.agent === "challenger")} maxHeight="100%" /></div>
+                                <AgentLogPanel logs={logsByAgent.challenger} />
                             </>
                         }
                         commanderNode={
                             <>
                                 <AgentCard name="研判指挥Agent" agentKey="commander" icon={<Image src="/agent-icons/commander.svg" alt="研判指挥Agent" width={20} height={20} className="w-5 h-5" />} status={agentStatus("commander", !!finalVerdict)} confidence={verdictSnapshot ? verdictSnapshot.confidence : undefined} description="多维向量收敛中心 · 最终判决" />
-                                <div className="flex-1 rounded-xl liquid-glass p-2 border border-white/10 overflow-hidden min-h-0 flex flex-col gap-2">
-                                    {finalVerdict && <div className="shrink-0"><VerdictBadge verdict={finalVerdict} /></div>}
-                                    <div className="flex-1 min-h-0">
-                                        <AgentLog logs={logs.filter(l => l.agent === "commander")} maxHeight="100%" />
-                                    </div>
-                                </div>
+                                <AgentLogPanel logs={logsByAgent.commander} />
                             </>
                         }
-                        activeAgent={currentNode || (isComplete ? 'commander' : null)}
+                        activeAgent={activeAgent}
+                        agentLineModes={agentLineModes}
+                        evidenceBoardNode={<GlobalEvidenceBoard steps={workflowSteps} variant="center" />}
                     />
                 </div>
             ) : null}
@@ -635,9 +731,11 @@ export function DetectConsole({ taskId }: { taskId: string }) {
             )}
 
             {/* Mobile Workflow */}
-            <div className="md:hidden px-4 pb-4">
-                <SystemFlowBoard steps={workflowSteps} />
-            </div>
+            {viewMode !== "3d" && (
+                <div className="md:hidden px-4 pb-4">
+                    <GlobalEvidenceBoard steps={workflowSteps} />
+                </div>
+            )}
 
             {/* Expert Panel Overlay */}
             <AnimatePresence>

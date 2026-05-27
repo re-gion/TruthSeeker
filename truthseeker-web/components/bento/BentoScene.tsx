@@ -2,8 +2,51 @@
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Float, MeshTransmissionMaterial, Stars } from '@react-three/drei'
-import { ReactNode, useRef, useMemo } from 'react'
+import {
+    type CSSProperties,
+    type ReactNode,
+    type RefObject,
+    useCallback,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react'
 import * as THREE from 'three'
+
+type AgentKey = 'forensics' | 'challenger' | 'osint' | 'commander'
+type AgentLineKind = 'read' | 'write'
+export type AgentLineModes = Partial<Record<AgentKey, AgentLineKind>>
+type AgentVerticalSide = 'top' | 'bottom'
+type AgentHorizontalSide = 'left' | 'right'
+
+interface RelativeRect {
+    left: number
+    right: number
+    top: number
+    bottom: number
+    width: number
+    height: number
+}
+
+interface Point {
+    x: number
+    y: number
+}
+
+interface AgentConnectionConfig {
+    agent: AgentKey
+    color: string
+    verticalSide: AgentVerticalSide
+    horizontalSide: AgentHorizontalSide
+}
+
+interface ConnectionSegment {
+    agent: AgentKey
+    color: string
+    kind: AgentLineKind
+    d: string
+}
 
 /* ─── Floating 3D glass shard decorations behind each agent ───────────── */
 const SHARD_GEOMETRIES = [
@@ -60,30 +103,6 @@ function GlassShard({ position, scale, color, speed }: {
     )
 }
 
-/* ─── Glowing energy ring in the center of the scene ──────────────────── */
-function EnergyRing({ activeAgent }: { activeAgent: string | null }) {
-    const ref = useRef<THREE.Mesh>(null)
-    const color = useMemo(() => {
-        const map: Record<string, string> = {
-            osint: '#10B981', forensics: '#6366F1',
-            challenger: '#F59E0B', commander: '#06B6D4'
-        }
-        return map[activeAgent || ''] || '#6366F1'
-    }, [activeAgent])
-
-    useFrame((state) => {
-        if (!ref.current) return
-        ref.current.rotation.z = state.clock.getElapsedTime() * 0.15
-    })
-
-    return (
-        <mesh ref={ref} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -2]}>
-            <torusGeometry args={[3, 0.02, 16, 100]} />
-            <meshBasicMaterial color={color} transparent opacity={0.6} />
-        </mesh>
-    )
-}
-
 /* ─── Animated particle field ─────────────────────────────────────────── */
 function pseudoRandom(seed: number) {
     const value = Math.sin(seed * 12.9898) * 43758.5453
@@ -122,7 +141,7 @@ function ParticleField() {
 }
 
 /* ─── Background 3D Scene (rendered BEHIND the CSS layout) ────────────── */
-function BackgroundScene({ activeAgent }: { activeAgent: string | null }) {
+function BackgroundScene() {
     return (
         <Canvas
             camera={{ position: [0, 0, 8], fov: 50 }}
@@ -130,12 +149,12 @@ function BackgroundScene({ activeAgent }: { activeAgent: string | null }) {
             gl={{ antialias: true, alpha: true, stencil: false, depth: true }}
             style={{ background: 'transparent' }}
         >
-            <SceneContent activeAgent={activeAgent} />
+            <SceneContent />
         </Canvas>
     )
 }
 
-function SceneContent({ activeAgent }: { activeAgent: string | null }) {
+function SceneContent() {
     const { mouse } = useThree()
     const groupRef = useRef<THREE.Group>(null)
 
@@ -170,9 +189,6 @@ function SceneContent({ activeAgent }: { activeAgent: string | null }) {
                 <GlassShard position={[0, 6, -5]} scale={2} color="#A855F7" speed={0.3} />
             </Float>
 
-            {/* Central energy ring */}
-            <EnergyRing activeAgent={activeAgent} />
-
             {/* Particle field for depth */}
             <ParticleField />
 
@@ -193,7 +209,7 @@ function AgentPanel({ children, isActive, glowColor, delay }: {
 }) {
     return (
         <div
-            className="relative rounded-2xl overflow-hidden transition-all duration-700 ease-out h-full"
+            className="relative h-[520px] min-h-0 rounded-2xl overflow-hidden transition-all duration-700 ease-out lg:h-full"
             style={{
                 animationDelay: `${delay}ms`,
                 animation: 'fadeSlideUp 0.6s ease-out both',
@@ -228,7 +244,7 @@ function AgentPanel({ children, isActive, glowColor, delay }: {
             />
 
             {/* Content */}
-            <div className="relative z-10 h-full flex flex-col p-5 gap-3">
+            <div className="relative z-10 flex h-full min-h-0 flex-col gap-3 p-5">
                 {children}
             </div>
 
@@ -250,20 +266,253 @@ function AgentPanel({ children, isActive, glowColor, delay }: {
     )
 }
 
+const CONNECTION_CONFIGS: AgentConnectionConfig[] = [
+    {
+        agent: 'forensics',
+        color: '#6366F1',
+        verticalSide: 'top',
+        horizontalSide: 'left',
+    },
+    {
+        agent: 'challenger',
+        color: '#F59E0B',
+        verticalSide: 'top',
+        horizontalSide: 'right',
+    },
+    {
+        agent: 'osint',
+        color: '#10B981',
+        verticalSide: 'bottom',
+        horizontalSide: 'left',
+    },
+    {
+        agent: 'commander',
+        color: '#06B6D4',
+        verticalSide: 'bottom',
+        horizontalSide: 'right',
+    },
+] as const
+
+const CONNECTION_STROKE_WIDTH = {
+    idle: 1.25,
+    active: 3.4,
+} as const
+
+const CONNECTION_DASH_PATTERN = "12 10"
+
+function toRelativeRect(elementRect: DOMRect, rootRect: DOMRect): RelativeRect {
+    return {
+        left: elementRect.left - rootRect.left,
+        right: elementRect.right - rootRect.left,
+        top: elementRect.top - rootRect.top,
+        bottom: elementRect.bottom - rootRect.top,
+        width: elementRect.width,
+        height: elementRect.height,
+    }
+}
+
+function midpointX(rect: RelativeRect) {
+    return rect.left + rect.width / 2
+}
+
+function midpointY(rect: RelativeRect) {
+    return rect.top + rect.height / 2
+}
+
+function getReadAnchors(
+    boardRect: RelativeRect,
+    agentRect: RelativeRect,
+    config: AgentConnectionConfig,
+): { start: Point; end: Point } {
+    return {
+        start: {
+            x: midpointX(boardRect),
+            y: config.verticalSide === 'top' ? boardRect.top : boardRect.bottom,
+        },
+        end: {
+            x: config.horizontalSide === 'left' ? agentRect.right : agentRect.left,
+            y: midpointY(agentRect),
+        },
+    }
+}
+
+function getWriteAnchors(
+    boardRect: RelativeRect,
+    agentRect: RelativeRect,
+    config: AgentConnectionConfig,
+): { start: Point; end: Point } {
+    return {
+        start: {
+            x: config.horizontalSide === 'left' ? boardRect.left : boardRect.right,
+            y: midpointY(boardRect),
+        },
+        end: {
+            x: midpointX(agentRect),
+            y: config.verticalSide === 'top' ? agentRect.bottom : agentRect.top,
+        },
+    }
+}
+
+function buildConnectionPath(start: Point, end: Point, kind: AgentLineKind) {
+    const horizontalDirection = end.x >= start.x ? 1 : -1
+    const verticalDirection = end.y >= start.y ? 1 : -1
+    const horizontalBend = Math.min(180, Math.max(72, Math.abs(end.x - start.x) * 0.32))
+    const verticalBend = Math.min(180, Math.max(72, Math.abs(end.y - start.y) * 0.32))
+
+    if (kind === 'read') {
+        return [
+            `M ${start.x.toFixed(1)} ${start.y.toFixed(1)}`,
+            `C ${start.x.toFixed(1)} ${(start.y + verticalDirection * verticalBend).toFixed(1)},`,
+            `${(end.x - horizontalDirection * horizontalBend).toFixed(1)} ${end.y.toFixed(1)},`,
+            `${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
+        ].join(' ')
+    }
+
+    return [
+        `M ${start.x.toFixed(1)} ${start.y.toFixed(1)}`,
+        `C ${(start.x + horizontalDirection * horizontalBend).toFixed(1)} ${start.y.toFixed(1)},`,
+        `${end.x.toFixed(1)} ${(end.y - verticalDirection * verticalBend).toFixed(1)},`,
+        `${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
+    ].join(' ')
+}
+
+function ConnectionOverlay({
+    activeAgent,
+    lineModes,
+    boardRef,
+    agentRefs,
+}: {
+    activeAgent: string | null
+    lineModes?: AgentLineModes
+    boardRef: RefObject<HTMLDivElement | null>
+    agentRefs: Record<AgentKey, RefObject<HTMLDivElement | null>>
+}) {
+    const overlayRef = useRef<SVGSVGElement>(null)
+    const [overlaySize, setOverlaySize] = useState({ width: 1, height: 1 })
+    const [segments, setSegments] = useState<ConnectionSegment[]>([])
+
+    const measureConnections = useCallback(() => {
+        const overlay = overlayRef.current
+        const board = boardRef.current
+        if (!overlay || !board) return
+
+        const overlayRect = overlay.getBoundingClientRect()
+        if (overlayRect.width <= 0 || overlayRect.height <= 0) return
+
+        const boardRect = toRelativeRect(board.getBoundingClientRect(), overlayRect)
+        const nextSegments = CONNECTION_CONFIGS.flatMap((config) => {
+            const agent = agentRefs[config.agent].current
+            if (!agent) return []
+
+            const agentRect = toRelativeRect(agent.getBoundingClientRect(), overlayRect)
+            const readAnchors = getReadAnchors(boardRect, agentRect, config)
+            const writeAnchors = getWriteAnchors(boardRect, agentRect, config)
+
+            return [
+                {
+                    agent: config.agent,
+                    color: config.color,
+                    kind: "read" as const,
+                    d: buildConnectionPath(readAnchors.start, readAnchors.end, "read"),
+                },
+                {
+                    agent: config.agent,
+                    color: config.color,
+                    kind: "write" as const,
+                    d: buildConnectionPath(writeAnchors.start, writeAnchors.end, "write"),
+                },
+            ]
+        })
+
+        setOverlaySize({ width: overlayRect.width, height: overlayRect.height })
+        setSegments(nextSegments)
+    }, [agentRefs, boardRef])
+
+    useLayoutEffect(() => {
+        measureConnections()
+
+        const elements = [
+            overlayRef.current,
+            boardRef.current,
+            ...Object.values(agentRefs).map((ref) => ref.current),
+        ].filter(Boolean) as Element[]
+
+        const resizeObserver = typeof ResizeObserver === 'undefined'
+            ? null
+            : new ResizeObserver(() => measureConnections())
+
+        elements.forEach((element) => resizeObserver?.observe(element))
+        window.addEventListener('resize', measureConnections)
+        const frame = window.requestAnimationFrame(measureConnections)
+
+        return () => {
+            window.cancelAnimationFrame(frame)
+            window.removeEventListener('resize', measureConnections)
+            resizeObserver?.disconnect()
+        }
+    }, [agentRefs, boardRef, measureConnections])
+
+    return (
+        <svg
+            ref={overlayRef}
+            className="pointer-events-none absolute inset-0 z-[1] hidden h-full w-full lg:block"
+            viewBox={`0 0 ${overlaySize.width} ${overlaySize.height}`}
+            preserveAspectRatio="none"
+            aria-hidden="true"
+        >
+            {segments.map((segment) => {
+                const activeMode = lineModes?.[segment.agent] || (activeAgent === segment.agent ? "write" : undefined)
+                const isActive = activeAgent === segment.agent && activeMode === segment.kind
+                return (
+                    <path
+                        key={`${segment.agent}-${segment.kind}`}
+                        className={`agent-connection-line transition-all duration-500 ${isActive ? "agent-connection-line--active" : ""}`}
+                        d={segment.d}
+                        fill="none"
+                        stroke={segment.color}
+                        strokeWidth={isActive ? CONNECTION_STROKE_WIDTH.active : CONNECTION_STROKE_WIDTH.idle}
+                        strokeLinecap="round"
+                        strokeDasharray={segment.kind === "read" ? CONNECTION_DASH_PATTERN : undefined}
+                        opacity={isActive ? 0.88 : 0.34}
+                        style={{
+                            "--agent-line-glow": segment.color,
+                            animation: isActive ? "agentLineBreathe 1.8s ease-in-out infinite" : undefined,
+                        } as CSSProperties}
+                    />
+                )
+            })}
+        </svg>
+    )
+}
+
 /* ─── Main Export: BentoScene ─────────────────────────────────────────── */
 export function BentoScene({
     osintNode, forensicsNode, challengerNode, commanderNode,
-    activeAgent
+    activeAgent, evidenceBoardNode, agentLineModes
 }: {
     osintNode: ReactNode, forensicsNode: ReactNode,
     challengerNode: ReactNode, commanderNode: ReactNode,
     activeAgent: string | null
+    evidenceBoardNode: ReactNode
+    agentLineModes?: AgentLineModes
 }) {
+    const evidenceBoardRef = useRef<HTMLDivElement>(null)
+    const forensicsRef = useRef<HTMLDivElement>(null)
+    const challengerRef = useRef<HTMLDivElement>(null)
+    const osintRef = useRef<HTMLDivElement>(null)
+    const commanderRef = useRef<HTMLDivElement>(null)
+    const agentRefs = useMemo<Record<AgentKey, RefObject<HTMLDivElement | null>>>(() => ({
+        forensics: forensicsRef,
+        challenger: challengerRef,
+        osint: osintRef,
+        commander: commanderRef,
+    }), [])
+
     return (
-        <div className="w-full relative" style={{ height: 'calc(100vh - 56px)' }}>
+        <div className="w-full relative min-h-[2100px] md:min-h-[1160px] lg:min-h-[1220px]">
             {/* Layer 1: 3D Background Scene */}
             <div className="absolute inset-0 z-0">
-                <BackgroundScene activeAgent={activeAgent} />
+                <BackgroundScene />
             </div>
 
             {/* Layer 2: Gradient overlays for depth */}
@@ -273,29 +522,48 @@ export function BentoScene({
             </div>
 
             {/* Layer 3: Agent Content Grid (CSS layout, fully readable) */}
-            <div className="relative z-[2] w-full p-4 lg:p-6" style={{ height: '100%', boxSizing: 'border-box' }}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-5 h-full max-w-[1600px] mx-auto"
-                    style={{ gridTemplateRows: '1fr 1fr' }}
-                >
-                    {/* Top-Left: OSINT Agent */}
-                    <AgentPanel isActive={activeAgent === 'osint'} glowColor="#10B981" delay={0}>
-                        {osintNode}
-                    </AgentPanel>
-
-                    {/* Top-Right: Forensics Agent */}
-                    <AgentPanel isActive={activeAgent === 'forensics'} glowColor="#6366F1" delay={100}>
+            <div className="relative z-[2] w-full p-4 lg:p-6" style={{ minHeight: '100%', boxSizing: 'border-box' }}>
+                <ConnectionOverlay
+                    activeAgent={activeAgent}
+                    lineModes={agentLineModes}
+                    boardRef={evidenceBoardRef}
+                    agentRefs={agentRefs}
+                />
+                <div className="relative z-[2] mx-auto grid max-w-[1600px] grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,320px)_minmax(0,1fr)] lg:grid-rows-[520px_120px_520px] lg:gap-x-4 lg:gap-y-2">
+                    {/* Top-Left: Forensics Agent */}
+                    <div ref={forensicsRef} className="lg:col-start-1 lg:row-start-1">
+                        <AgentPanel isActive={activeAgent === 'forensics'} glowColor="#6366F1" delay={100}>
                         {forensicsNode}
-                    </AgentPanel>
+                        </AgentPanel>
+                    </div>
 
-                    {/* Bottom-Left: Challenger Agent */}
-                    <AgentPanel isActive={activeAgent === 'challenger'} glowColor="#F59E0B" delay={200}>
+                    {/* Center: Global Evidence Board */}
+                    <div ref={evidenceBoardRef} className="relative z-[4] self-center lg:col-start-2 lg:row-start-2">
+                        <div className="rounded-2xl border border-[#D4FF12]/20 bg-black/35 shadow-[0_0_36px_rgba(212,255,18,0.10)]">
+                            {evidenceBoardNode}
+                        </div>
+                    </div>
+
+                    {/* Top-Right: Challenger Agent */}
+                    <div ref={challengerRef} className="lg:col-start-3 lg:row-start-1">
+                        <AgentPanel isActive={activeAgent === 'challenger'} glowColor="#F59E0B" delay={200}>
                         {challengerNode}
-                    </AgentPanel>
+                        </AgentPanel>
+                    </div>
+
+                    {/* Bottom-Left: OSINT Agent */}
+                    <div ref={osintRef} className="lg:col-start-1 lg:row-start-3">
+                        <AgentPanel isActive={activeAgent === 'osint'} glowColor="#10B981" delay={0}>
+                        {osintNode}
+                        </AgentPanel>
+                    </div>
 
                     {/* Bottom-Right: Commander Agent */}
-                    <AgentPanel isActive={activeAgent === 'commander'} glowColor="#06B6D4" delay={300}>
+                    <div ref={commanderRef} className="lg:col-start-3 lg:row-start-3">
+                        <AgentPanel isActive={activeAgent === 'commander'} glowColor="#06B6D4" delay={300}>
                         {commanderNode}
-                    </AgentPanel>
+                        </AgentPanel>
+                    </div>
                 </div>
             </div>
 
@@ -309,6 +577,16 @@ export function BentoScene({
                 @keyframes scanSweep {
                     0%, 100% { transform: translateX(-100%); }
                     50% { transform: translateX(100%); }
+                }
+                @keyframes agentLineBreathe {
+                    0%, 100% {
+                        opacity: 0.55;
+                        filter: drop-shadow(0 0 3px var(--agent-line-glow));
+                    }
+                    50% {
+                        opacity: 1;
+                        filter: drop-shadow(0 0 8px var(--agent-line-glow)) drop-shadow(0 0 16px var(--agent-line-glow));
+                    }
                 }
             `}} />
         </div>

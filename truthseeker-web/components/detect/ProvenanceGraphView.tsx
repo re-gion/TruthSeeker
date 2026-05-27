@@ -62,12 +62,12 @@ function FilterButton({ label, active, onClick }: { label: string; active: boole
 
 function CitationPanel({ citations }: { citations: ProvenanceCitation[] }) {
   return (
-    <div className="min-h-0 rounded-lg border border-white/10 bg-black/25 p-3">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/25 p-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/80">
         <FileSearch className="h-4 w-4 text-[#06B6D4]" />
         引用来源
       </div>
-      <div className="max-h-44 space-y-2 overflow-auto pr-1">
+      <div className="flex-1 min-h-0 overflow-auto space-y-2 pr-1">
         {citations.length === 0 ? (
           <div className="text-xs text-white/40">暂无引用</div>
         ) : (
@@ -226,7 +226,7 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
 
   if (!isComplete) {
     return (
-      <div className="flex min-h-[520px] items-center justify-center p-8">
+      <div className="flex min-h-[calc(100vh-88px)] items-center justify-center p-8">
         <div className="rounded-xl border border-white/10 bg-black/35 px-5 py-4 text-sm text-white/55">
           图谱将在最终裁决完成后展示审定版本
         </div>
@@ -236,7 +236,7 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
 
   if (!graph || !Array.isArray(graph.nodes) || graph.nodes.length === 0) {
     return (
-      <div className="flex min-h-[520px] items-center justify-center p-8">
+      <div className="flex min-h-[calc(100vh-88px)] items-center justify-center p-8">
         <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-5 py-4 text-sm text-[#FCD34D]">
           最终报告未返回可视化图谱
         </div>
@@ -245,8 +245,8 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
   }
 
   return (
-    <div className="grid h-full min-h-[620px] grid-cols-[minmax(0,1fr)_320px] gap-4 p-4">
-      <div className="min-w-0 rounded-xl border border-white/10 bg-black/35 flex flex-col">
+    <div className="grid min-h-[calc(100vh-88px)] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="flex min-h-[620px] min-w-0 flex-col rounded-xl border border-white/10 bg-black/35">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Network className="h-4 w-4 text-[#D4FF12]" />
@@ -289,14 +289,16 @@ export function ProvenanceGraphView({ graph, isComplete }: ProvenanceGraphViewPr
         </div>
       </div>
 
-      <aside className="flex min-h-0 flex-col gap-3">
-        <div className="grid grid-cols-2 gap-2">
+      <aside className="flex min-h-[520px] flex-col gap-3 lg:min-h-0">
+        <div className="grid shrink-0 grid-cols-2 gap-2">
           <Metric label="完整性" value={`${(readNumber(quality.completeness) * 100).toFixed(0)}%`} />
           <Metric label="引用覆盖" value={`${(readNumber(quality.citation_coverage) * 100).toFixed(0)}%`} />
           <Metric label="推断占比" value={`${(readNumber(quality.model_inferred_ratio) * 100).toFixed(0)}%`} />
           <Metric label="审查质量" value={`${(readNumber(quality.challenger_quality_score) * 100).toFixed(0)}%`} />
         </div>
-        <NodeDetails node={selectedNode} />
+        <div className="shrink-0">
+          <NodeDetails node={selectedNode} />
+        </div>
         <CitationPanel citations={citations} />
       </aside>
     </div>

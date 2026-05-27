@@ -60,10 +60,10 @@ export function ProblemSection() {
                             现实困境
                         </div>
                         <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">
-                            Deepfake 威胁<br />正在失控
+                            恶意 AIGC 威胁<br />正在失控
                         </h2>
                         <p className="text-muted-foreground text-lg leading-relaxed mb-8">
-                            随着生成式 AI 的爆发，深度伪造技术门槛大幅降低。传统的单点防御机制在面对具备多模态欺骗能力的定向攻击时，显得力不从心。
+                            随着生成式 AI 的爆发，恶意 AIGC 技术门槛大幅降低。传统的单点防御机制在面对具备多模态欺骗能力的定向攻击时，显得力不从心。
                         </p>
                         <div className="p-6 md:p-8 rounded-3xl bg-[#FFFFFF] text-black group relative overflow-hidden shadow-lg hover:-translate-y-2 transition-transform duration-500 border border-black/10">
                             <div className="absolute top-0 right-0 w-24 h-24 border-t-[6px] border-r-[6px] border-black/90 border-transparent rounded-tr-3xl transition-all duration-500 group-hover:border-t-black group-hover:border-r-black opacity-0 group-hover:opacity-100" />

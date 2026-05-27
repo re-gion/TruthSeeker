@@ -16,9 +16,9 @@ export function UseCases() {
         },
         {
             icon: <Film className="w-8 h-8 text-red-400" />,
-            title: "政治人物换脸虚假声明",
+            title: "政治人物 AI 伪造虚假声明",
             tags: ["Video", "Election Interference"],
-            desc: "深度剖析逐帧微表情与面部光影，揭露意图操纵选举或引发社会恐慌的 Deepfake 政治视频。",
+            desc: "深度剖析逐帧微表情与面部光影，揭露意图操纵选举或引发社会恐慌的 AI 生成政治视频。",
             color: "from-red-500/20 to-orange-500/5",
             demoId: "video-election-fake"
         },
@@ -48,7 +48,7 @@ export function UseCases() {
                     <div className="max-w-2xl">
                         <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">
                             <span className="block">应对全场景</span>
-                            <span className="text-muted-foreground">Deepfake 挑战</span>
+                            <span className="text-muted-foreground">恶意 AIGC 挑战</span>
                         </h2>
                         <p className="text-muted-foreground text-lg leading-relaxed">
                             涵盖音视频伪造、模态融合欺诈等高频攻击场景，提供可解释的专业鉴伪能力。

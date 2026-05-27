@@ -6,7 +6,7 @@ This file provides guidance to GitHub Copilot when working with code in this rep
 
 ## Project Overview
 
-**TruthSeeker** is a cross-modal deepfake detection system for the CISCN2026 competition. It uses a multi-agent architecture with LangGraph orchestration, featuring four specialized agents (Forensics, OSINT, Challenger, Commander) that debate and converge on a final verdict.
+**TruthSeeker** is a cross-modal AIGC detection system for the CISCN2026 competition. It uses a multi-agent architecture with LangGraph orchestration, featuring four specialized agents (Forensics, OSINT, Challenger, Commander) that debate and converge on a final verdict.
 
 ### High-Level Architecture
 

@@ -1273,7 +1273,7 @@ export function DashboardClient({ viewModel }: DashboardClientProps) {
             </div>
 
             <h1 className="whitespace-nowrap text-3xl font-semibold tracking-tight text-white md:text-[2.75rem]">
-              深度伪造风险与系统能力数据大屏
+              恶意 AIGC 风险与系统能力数据大屏
             </h1>
 
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">

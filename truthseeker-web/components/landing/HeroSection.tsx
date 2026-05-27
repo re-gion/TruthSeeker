@@ -201,11 +201,11 @@ export function HeroSection() {
         <section className={`relative min-h-screen flex items-center justify-center pt-24 pb-20 overflow-hidden transition-colors duration-500 ${isDark ? 'bg-black' : 'bg-white'}`}>
             {/* ReactBits Orb Background */}
             <div className="absolute inset-0 z-0 pointer-events-none">
-                <Orb 
-                   hue={orbHue} 
-                   backgroundColor={orbBgColor}
-                   hoverIntensity={orbIntensity} 
-                   rotateOnHover={true}
+                <Orb
+                    hue={orbHue}
+                    backgroundColor={orbBgColor}
+                    hoverIntensity={orbIntensity}
+                    rotateOnHover={true}
                 />
             </div>
 
@@ -302,8 +302,8 @@ export function HeroSection() {
                         <motion.h1
                             className="text-6xl md:text-8xl lg:text-[110px] font-bold tracking-tighter mb-4 leading-none flex justify-center flex-wrap relative z-10 font-serif drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
                         >
-                            <GradientText 
-                                colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]} 
+                            <GradientText
+                                colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}
                                 animationSpeed={16}
                                 showBorder={false}
                                 className=""
@@ -317,10 +317,10 @@ export function HeroSection() {
                     <motion.div variants={itemVars} className="mt-8 mb-12 relative flex flex-col items-center">
                         <h2 className="mx-auto inline-grid place-items-center gap-2 text-center font-semibold leading-[1.08] text-[#111827] dark:text-gray-100">
                             <span className="inline-flex w-full justify-center text-[clamp(2rem,4.2vw,3.9rem)] tracking-[0.08em] whitespace-nowrap text-center">
-                                基于多智能体交叉验证的
+                                基于多智能体协同的
                             </span>
                             <ShinyText
-                                text="跨模态Deepfake鉴伪与溯源系统"
+                                text="跨模态恶意AIGC鉴伪与溯源系统"
                                 className="inline-flex w-full justify-center whitespace-nowrap text-center text-[clamp(1.66rem,3.3vw,3.08rem)] font-bold tracking-[0em] text-black dark:text-white drop-shadow-md"
                                 shineColor={isDark ? "#ffffff" : "#aaaaaa"}
                                 speed={3}

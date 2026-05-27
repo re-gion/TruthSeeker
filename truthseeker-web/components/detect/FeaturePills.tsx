@@ -3,7 +3,7 @@
 import { Film, Mic, ImageIcon, Radar, FileSearch } from "lucide-react"
 
 const features = [
-    { icon: <Film className="w-4 h-4 text-[#6366F1]" />, label: "视频深度伪造检测" },
+    { icon: <Film className="w-4 h-4 text-[#6366F1]" />, label: "视频 AIGC 检测" },
     { icon: <Mic className="w-4 h-4 text-[#10B981]" />, label: "音频声纹克隆识别" },
     { icon: <ImageIcon className="w-4 h-4 text-[#F59E0B]" />, label: "图片 AI 生成鉴别" },
     { icon: <Radar className="w-4 h-4 text-[#06B6D4]" />, label: "实时 Agent 推理" },

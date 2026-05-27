@@ -25,10 +25,10 @@ const siyuanSong = localFont({
 })
 
 export const metadata: Metadata = {
-  title: "TruthSeeker | AI 深度伪造鉴定系统",
+  title: "TruthSeeker | 恶意 AIGC 鉴定系统",
   description:
-    "基于多智能体辩论的跨模态 Deepfake 检测与溯源系统 - CISCN 2026",
-  keywords: ["deepfake", "AI检测", "视频鉴伪", "CISCN", "TruthSeeker"],
+    "基于多智能体协同的跨模态恶意 AIGC 检测与溯源系统 - CISCN 2026",
+  keywords: ["AIGC", "恶意AIGC检测", "AI检测", "视频鉴伪", "CISCN", "TruthSeeker"],
   icons: {
     icon: "/icon.png?v=20260505-white",
     shortcut: "/favicon.ico?v=20260505-white",

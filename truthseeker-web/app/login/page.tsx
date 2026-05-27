@@ -98,7 +98,7 @@ export default function LoginPage() {
                             欢迎回来
                         </h1>
                         <p className="text-sm text-white/70 mt-1.5 tracking-wide">
-                            登录以继续 Deepfake 鉴定任务
+                            登录以继续 AIGC 鉴定任务
                         </p>
                     </div>
 

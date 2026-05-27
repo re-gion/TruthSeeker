@@ -78,6 +78,13 @@ function deriveInputType(files: UploadedEvidenceFile[]) {
     return modalities.length === 1 ? modalities[0] : modalities.join("_")
 }
 
+export function getUploadErrorMessage(err: unknown, apiBase: string): string {
+    if (err instanceof TypeError && /failed to fetch|fetch failed|networkerror|load failed/i.test(err.message)) {
+        return `后端服务未连接，无法访问 ${apiBase}。请先确认 truthseeker-api 已启动并监听 8000 端口。`
+    }
+    return err instanceof Error ? err.message : "上传失败，请重试"
+}
+
 async function getAuthToken(): Promise<string | null> {
     try {
         const supabase = createClient()
@@ -242,7 +249,7 @@ export function FileUploader() {
             await new Promise((resolve) => setTimeout(resolve, 250))
             router.push(`/detect/${taskData.id}?focus=${priorityFocus}`)
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "上传失败，请重试"
+            const msg = getUploadErrorMessage(err, apiBase)
             setError(msg)
             setUploading(false)
             setProgress(0)
@@ -305,7 +312,7 @@ export function FileUploader() {
                         <div className="flex items-start justify-between gap-4 mb-5">
                             <div>
                                 <div className="text-lg md:text-xl font-semibold text-[#1F1F23] dark:text-white">多媒体上传区</div>
-                                <div className="mt-1 text-sm text-black/50 dark:text-white/45 whitespace-nowrap">最多 5 个文件，全部检材会进入电子取证Agent，文本线索同时进入情报溯源Agent处理。</div>
+                                <div className="mt-1 text-sm text-black/50 dark:text-white/45 whitespace-nowrap">最多 5 个文件</div>
                             </div>
                             <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">
                                 <div>MP4 / WebM / MP3 / WAV / JPG / PNG /</div>

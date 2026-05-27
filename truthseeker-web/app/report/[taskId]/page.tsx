@@ -169,7 +169,7 @@ export default function SharedReportPage() {
                     className="mt-8 text-center"
                 >
                     <p className="text-sm text-[#6B7280] mb-4">
-                        使用 TruthSeeker 进行跨模态 Deepfake 鉴伪与溯源
+                        使用 TruthSeeker 进行跨模态恶意 AIGC 鉴伪与溯源
                     </p>
                     <Link
                         href="/detect"

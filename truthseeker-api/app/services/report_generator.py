@@ -303,7 +303,7 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append("")
     now_cn = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
     lines.append(f"*报告生成时间: {now_cn.strftime('%Y-%m-%d %H:%M:%S')}*")
-    lines.append(f"*TruthSeeker - 跨模态 Deepfake 鉴伪与溯源系统*")
+    lines.append(f"*TruthSeeker - 跨模态恶意 AIGC 鉴伪与溯源系统*")
 
     return "\n".join(lines)
 

@@ -2,6 +2,7 @@
 import logging
 import sys
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,7 +53,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="TruthSeeker API",
-    description="Cross-modal deepfake detection with multi-agent debate",
+    description="Cross-modal malicious AIGC detection with multi-agent debate",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -86,9 +87,20 @@ def _build_with_pure_asgi_middlewares():
 
 app.build_middleware_stack = _build_with_pure_asgi_middlewares
 
+
+def _cors_allowed_origins(frontend_url: str) -> list[str]:
+    origins = {frontend_url.rstrip("/")}
+    parsed = urlparse(frontend_url)
+    if parsed.scheme in {"http", "https"} and parsed.hostname in {"localhost", "127.0.0.1"}:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        origins.add(f"{parsed.scheme}://localhost:{port}")
+        origins.add(f"{parsed.scheme}://127.0.0.1:{port}")
+    return sorted(origin for origin in origins if origin)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=_cors_allowed_origins(settings.FRONTEND_URL),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],

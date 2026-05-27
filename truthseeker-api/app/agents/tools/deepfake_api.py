@@ -1,4 +1,4 @@
-"""Deepfake Detection Tool - Reality Defender API with mock fallback
+"""恶意 AIGC 检测工具 - Reality Defender API with mock fallback
 
 Reality Defender API 流程:
 1. POST /api/files/aws-presigned → 获取签名URL + request_id
@@ -270,7 +270,7 @@ def _parse_rd_result(rd_data: dict) -> dict:
 
 
 async def analyze_with_reality_defender(file_url: str, media_type: str = "video") -> dict:
-    """调用 Reality Defender API 进行 Deepfake 检测
+    """调用 Reality Defender API 进行恶意 AIGC 检测
 
     完整3步流程:
     1. 下载文件 → 请求预签名URL

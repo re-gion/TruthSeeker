@@ -582,7 +582,7 @@ export function StatsOverview() {
 
     const stats = [
         { label: "累计检测总量", value: dbStats.totalTasks, icon: <Activity className="w-5 h-5" />, color: "from-blue-500 to-cyan-400" },
-        { label: "深度伪造拦截", value: dbStats.deepfakeDetected, icon: <ShieldAlert className="w-5 h-5" />, color: "from-red-500 to-orange-400" },
+        { label: "恶意 AIGC 拦截", value: dbStats.deepfakeDetected, icon: <ShieldAlert className="w-5 h-5" />, color: "from-red-500 to-orange-400" },
         { label: "平均响应延时 (ms)", value: dbStats.avgResponseMs, icon: <Zap className="w-5 h-5" />, color: "from-emerald-400 to-green-500" },
         { label: "活跃节点并发", value: dbStats.activeSessions, icon: <Server className="w-5 h-5" />, color: "from-[#6366F1] to-[#A855F7]" },
     ]

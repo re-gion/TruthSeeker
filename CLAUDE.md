@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## Project Overview
 
-**TruthSeeker** — 跨模态 Deepfake 鉴伪与溯源系统（CISCN2026 竞赛项目）。基于 LangGraph 多智能体辩论架构，四个 Agent（Forensics、OSINT、Challenger、Commander）动态辩论并收敛出最终裁决。
+**TruthSeeker** — 基于多智能体协同的跨模态恶意 AIGC 鉴伪与溯源系统（CISCN2026 竞赛项目）。基于 LangGraph 多智能体辩论架构，四个 Agent（Forensics、OSINT、Challenger、Commander）动态辩论并收敛出最终裁决。
 
 ```
 Frontend (Next.js + React 19)          Backend (FastAPI + LangGraph)

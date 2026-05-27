@@ -123,7 +123,7 @@ truthseeker-web/app/
 ```tsx
 // 静态 metadata
 export const metadata: Metadata = {
-  title: 'TruthSeeker - Deepfake 检测',
+  title: 'TruthSeeker - AIGC 检测',
   description: '...',
 }
 

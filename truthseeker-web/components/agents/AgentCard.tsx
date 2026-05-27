@@ -34,7 +34,7 @@ export function AgentCard({ name, agentKey, icon, status, confidence, descriptio
 
     return (
         <motion.div
-            className={`glass-card rounded-xl p-4 border transition-all duration-500 ${config.glowClass}`}
+            className={`glass-card min-h-[122px] rounded-xl p-4 border transition-all duration-500 ${config.glowClass}`}
             animate={{
                 borderColor: status === "analyzing"
                     ? ["rgba(99,102,241,0.3)", "rgba(99,102,241,0.7)", "rgba(99,102,241,0.3)"]
@@ -45,19 +45,19 @@ export function AgentCard({ name, agentKey, icon, status, confidence, descriptio
             transition={status === "analyzing" ? { duration: 2, repeat: Infinity } : { duration: 0.3 }}
         >
             {/* Header */}
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                    <span className="text-xl">{icon}</span>
-                    <div>
+            <div className="flex min-w-0 items-center justify-between gap-3 mb-3">
+                <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 text-xl">{icon}</span>
+                    <div className="min-w-0">
                         <div className="text-white text-sm font-semibold">{name}</div>
                         {description && (
-                            <div className="text-[#6B7280] text-xs">{description}</div>
+                            <div className="text-[#6B7280] text-xs leading-snug">{description}</div>
                         )}
                     </div>
                 </div>
 
                 {/* Status badge */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
                     {config.pulse && (
                         <motion.div
                             className="w-2 h-2 rounded-full"

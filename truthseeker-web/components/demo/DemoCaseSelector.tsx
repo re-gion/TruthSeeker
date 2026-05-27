@@ -16,13 +16,13 @@ const DEMO_CASES = [
         glow: "shadow-[0_0_20px_rgba(59,130,246,0.3)]",
         accentColor: "text-blue-600 dark:text-blue-400",
         accentBg: "bg-blue-500/10",
-        description: "通过少量样本克隆高管声音，指使财务转账的典型音频深度伪造案例。",
+        description: "通过少量样本克隆高管声音，指使财务转账的典型音频 AIGC 伪造案例。",
         duration: "1:24",
         difficulty: "High"
     },
     {
         id: "case-video-faceswap",
-        title: "Politician 换脸视频",
+        title: "Politician AI 伪造视频",
         type: "视频伪造",
         icon: <Film className="w-8 h-8 text-red-400" />,
         color: "from-red-500/20 to-red-500/5",

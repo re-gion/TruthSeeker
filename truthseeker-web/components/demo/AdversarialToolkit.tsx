@@ -6,8 +6,8 @@ import { Smartphone, Download, AlertTriangle, ArrowRight, X } from "lucide-react
 export function AdversarialToolkit({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
     const steps = [
         {
-            title: "下载换脸应用",
-            description: "推荐使用 iOS/Android 上的开源或商用换脸应用 (如 Reface, Avatarify等) 进行快速生成。",
+            title: "下载 AI 伪造应用",
+            description: "推荐使用 iOS/Android 上的开源或商用 AI 伪造应用 (如 Reface, Avatarify等) 进行快速生成。",
             icon: <Download className="w-5 h-5 text-[#6366F1]" />,
         },
         {

@@ -1,4 +1,4 @@
-"""LLM client wrapper for TruthSeeker multi-agent deepfake detection system.
+"""LLM client wrapper for TruthSeeker multi-agent malicious AIGC detection system.
 
 Wraps the selected Kimi API endpoint (OpenAI-compatible) using langchain-openai's ChatOpenAI.
 Each agent-specific function builds a prompt chain and invokes the LLM asynchronously.
@@ -401,7 +401,7 @@ async def forensics_interpret(
 ) -> str:
     """Let the LLM interpret raw forensic detection results into professional analysis."""
     system_prompt = (
-            "你是一位专攻深度伪造检测的取证分析专家。"
+            "你是一位专攻恶意 AIGC 检测的取证分析专家。"
             "你需要在同一上下文中综合样本引用、全局检测目标、Reality Defender 和 VirusTotal 等工具结果，"
             "撰写结构清晰、术语准确的中文电子取证 Markdown 报告。"
             "必须使用以下二级内小标题，且标题原样保留："

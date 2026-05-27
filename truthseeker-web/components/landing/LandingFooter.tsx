@@ -26,7 +26,7 @@ export function LandingFooter() {
                         </Link>
                         <p className="text-muted-foreground text-sm leading-relaxed max-w-sm">
                             基于鲁棒联邦学习与多智能体交叉验证的跨模态鉴伪与溯源系统。
-                            不是另一个 Deepfake 检测工具，而是具备专家团队思维的智能研判中枢。
+                            不是另一个 AIGC 检测工具，而是具备专家团队思维的智能研判中枢。
                         </p>
                     </div>
 

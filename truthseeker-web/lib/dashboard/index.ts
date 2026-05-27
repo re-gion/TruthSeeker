@@ -156,14 +156,14 @@ export const DASHBOARD_EXTERNAL_INSIGHTS: ExternalInsightModule[] = [
       { label: "听说过生成式AI", value: 3.31, unit: "亿人", description: "有认知但未深度使用的潜在用户池" },
       { label: "认知占比", value: 23.5, unit: "%", description: "听说过生成式AI的网民比例" },
       { label: "20-29 岁使用比例", value: 41.5, unit: "%", description: "最活跃年龄段，也是伪造内容的高传播群体" },
-      { label: "生成图片/视频", value: 31.0, unit: "%", description: "直接使用AI生成多媒体内容的用户占比，与Deepfake风险直接相关" },
+      { label: "生成图片/视频", value: 31.0, unit: "%", description: "直接使用AI生成多媒体内容的用户占比，与AIGC伪造风险直接相关" },
     ],
   },
   {
     id: "audiovisual-ecosystem",
     layer: "risk-foundation",
     moduleTitle: "网络视听传播土壤",
-    summary: "Deepfake 的主要扩散场已经和短视频、直播、微短剧平台深度重叠。",
+    summary: "AIGC 伪造内容主要扩散场已经和短视频、直播、微短剧平台深度重叠。",
     visualType: "pictorial-bar",
     source: {
       publisher: "中国网络视听节目服务协会",
@@ -173,7 +173,7 @@ export const DASHBOARD_EXTERNAL_INSIGHTS: ExternalInsightModule[] = [
     },
     metrics: [
       { label: "网络视听用户", value: 10.91, unit: "亿人", description: "网民使用率 98.4%" },
-      { label: "短视频用户", value: 10.4, unit: "亿人", description: "使用率 93.8%，Deepfake 主要扩散场" },
+      { label: "短视频用户", value: 10.4, unit: "亿人", description: "使用率 93.8%，AIGC 伪造内容主要扩散场" },
       { label: "微短剧用户", value: 6.62, unit: "亿人", description: "使用率 59.7%，碎片化内容真伪难辨" },
       { label: "网络直播用户", value: 8.33, unit: "亿人", description: "占网民 75.2%，实时伪造风险高" },
       { label: "市场规模", value: 12226.49, unit: "亿元", description: "2024 年网络视听产业总规模" },

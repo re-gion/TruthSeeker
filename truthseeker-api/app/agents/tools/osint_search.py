@@ -76,7 +76,7 @@ def build_deidentified_queries(
     for name in file_names or []:
         stem = re.sub(r"\.[A-Za-z0-9]{1,8}$", "", str(name))
         if stem:
-            candidates.append(f"{stem} deepfake provenance")
+            candidates.append(f"{stem} AIGC provenance")
     if case_prompt and not _is_generic_case_prompt(case_prompt) and not _is_internal_diagnostic(case_prompt):
         candidates.append(case_prompt)
 

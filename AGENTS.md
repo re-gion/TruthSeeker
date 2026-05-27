@@ -6,7 +6,7 @@ This file applies to the whole repository. More specific `AGENTS.md` files in ch
 
 ## Project Map
 
-TruthSeeker is a CISCN 2026 cross-modal Deepfake detection and provenance system.
+TruthSeeker is a CISCN 2026 cross-modal AIGC detection and provenance system.
 
 - `truthseeker-web/` - Next.js frontend: landing page, detection console, reports, dashboard, collaboration UI.
 - `truthseeker-api/` - FastAPI backend: task APIs, upload/detection streams, reports, consultation, LangGraph agents.
