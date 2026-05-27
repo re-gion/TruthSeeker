@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import tempfile
+import hashlib
 from pathlib import Path
 
 import filetype
@@ -57,6 +58,7 @@ SIZE_LIMITS: dict[str, int] = {
     "text": 5 * 1024 * 1024,      # 5 MB
 }
 DEFAULT_SIZE_LIMIT = 250 * 1024 * 1024  # 250 MB
+CASEBASE_FILE_SIZE_LIMIT = 50 * 1024 * 1024  # Supabase Free project upload ceiling
 
 
 def _get_size_limit(mime: str) -> int:
@@ -120,6 +122,7 @@ async def upload_file(
     request: Request,
     file: UploadFile = File(...),
     user_id: str = Form("anonymous"),
+    share_to_casebase: bool = Form(False),
 ):
     # 1. 客户端声明 MIME 校验
     if file.content_type not in ALLOWED_MIME:
@@ -135,9 +138,12 @@ async def upload_file(
     ext = _safe_ext(file.filename or "upload")
     tmp_path: str | None = None
     max_size = _get_size_limit(file.content_type)
+    if share_to_casebase:
+        max_size = min(max_size, CASEBASE_FILE_SIZE_LIMIT)
 
     try:
         total = 0
+        sha256 = hashlib.sha256()
         with tempfile.NamedTemporaryFile(
             suffix=f".{ext}", delete=False, dir=tempfile.gettempdir(),
         ) as tmp:
@@ -155,6 +161,7 @@ async def upload_file(
                         {"detail": f"文件大小不能超过 {limit_mb}MB"},
                         status_code=400,
                     )
+                sha256.update(chunk)
                 tmp.write(chunk)
 
         # 3. Magic bytes 校验（U-1 修复）
@@ -212,6 +219,7 @@ async def upload_file(
                 "size_bytes": total,
                 "modality": modality,
                 "storage_path": storage_path,
+                "sha256": sha256.hexdigest(),
                 **text_encoding,
             },
         )
@@ -224,6 +232,7 @@ async def upload_file(
             "modality": modality,
             "file_url": file_url,
             "storage_path": storage_path,
+            "sha256": sha256.hexdigest(),
             **text_encoding,
         }
 

@@ -376,6 +376,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const searchParams = useSearchParams()
     const role = (searchParams.get("role") || "host") as UserRole
     const inviteToken = searchParams.get("invite_token")
+    const casebaseNotice = searchParams.get("casebase")
     const [showExpertPanel, setShowExpertPanel] = useState(false)
     const [viewMode, setViewMode] = useState<"3d" | "timeline" | "graph">("3d")
     const [taskContext, setTaskContext] = useState<TaskContext>({
@@ -670,6 +671,12 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                     </div>
                 </div>
             </header>
+
+            {casebaseNotice === "duplicate" && (
+                <div className="mx-6 mt-3 rounded-xl border border-[#D4FF12]/25 bg-[#D4FF12]/10 px-4 py-3 text-sm text-[#D4FF12]">
+                    公开案例库已存在相同检材和提示词，本次检测会正常生成报告，但不会重复入库。
+                </div>
+            )}
 
             {(taskLoadError || errorMessage || isWaitingConsultation || consultationState.status === "summary_pending") && (
                 <div className="mx-6 mt-3 rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/10 px-4 py-3 text-sm text-[#FCD34D]">

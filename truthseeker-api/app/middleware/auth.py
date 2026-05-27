@@ -18,6 +18,11 @@ PUBLIC_PREFIXES: frozenset[str] = frozenset()
 PUBLIC_GET_PREFIXES: frozenset[str] = frozenset({
     "/api/v1/share/",
     "/api/v1/consultation/invite/",
+    "/api/v1/cases",
+})
+
+PUBLIC_POST_PREFIXES: frozenset[str] = frozenset({
+    "/api/v1/cases/",
 })
 
 PUBLIC_POST_PATH_SUFFIXES: frozenset[str] = frozenset({
@@ -41,6 +46,10 @@ def _is_public(path: str, method: str = "GET") -> bool:
     if method.upper() == "GET":
         for prefix in PUBLIC_GET_PREFIXES:
             if path.startswith(prefix):
+                return True
+    if method.upper() == "POST":
+        for prefix in PUBLIC_POST_PREFIXES:
+            if path.startswith(prefix) and path.endswith("/preview-url"):
                 return True
     if method.upper() == "POST":
         for suffix in PUBLIC_POST_PATH_SUFFIXES:

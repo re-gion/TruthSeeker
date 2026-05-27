@@ -26,6 +26,7 @@ class UploadedEvidenceFile(TypedDict, total=False):
     modality: EvidenceModality
     storage_path: str
     file_url: str
+    sha256: str
 
 
 def infer_modality(mime_type: str, name: str = "") -> EvidenceModality:
@@ -74,6 +75,9 @@ def normalize_uploaded_files(raw_files: list[dict[str, Any]] | None) -> list[Upl
         }
         if file_url:
             normalized_item["file_url"] = file_url
+        sha256 = str(item.get("sha256") or "").strip().lower()
+        if sha256:
+            normalized_item["sha256"] = sha256
         normalized.append(normalized_item)
 
     return normalized
@@ -87,7 +91,7 @@ def derive_input_type(files: list[UploadedEvidenceFile]) -> str:
     modalities = sorted({item["modality"] for item in files})
     if len(modalities) == 1:
         return modalities[0]
-    return "_".join(modalities)
+    return "mixed"
 
 
 def build_agent_file_views(files: list[UploadedEvidenceFile]) -> dict[str, Any]:

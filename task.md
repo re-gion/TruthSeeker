@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-04-28（审计日志增强与文档同步更新）
+> **最后审查日期**: 2026-05-28（公开案例库真实化）
 
 ---
 
@@ -46,7 +46,7 @@
 - [x] 审计日志覆盖 upload、task_create、detect_start、detect_failed、detect_completed、report_generated、report_downloaded、share_created、share_viewed、consultation_message、consultation_resume。
 - [x] 白皮书将 PARSIFAL/PARSFIAL 统一调整为 FedPaRS。
 - [x] `docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md` 已同步最新流程。
-- [ ] 案例库真实加载功能暂不实现。
+- [x] 公开案例库真实加载：用户授权公开后，完整报告生成才入库，支持去重、分页筛选和短期检材预览。
 - [ ] pgvector / 向量库暂不实现。
 
 ## 2026-04-21 调研报告问题修复 ✅
@@ -61,7 +61,7 @@
 - [x] 分享报告页支持 Markdown 表格渲染，报告权重表不再显示为原始 `|` 文本。
 - [x] 注册成功后保留页面成功态，不再立即跳转导致提示不可见。
 - [x] 删除 Forensics Agent 中不可达的文本检测分支，文本检材只由 OSINT 处理。
-- [ ] 案例库真实加载功能暂不实现。
+- [x] 公开案例库真实加载：新增独立案例表、公开 API、前端列表/详情页和保守脱敏。
 - [ ] FedPaRS 训练底座运行时代码暂不实现，白皮书/PRD 保持目标架构叙事。
 - [ ] 部署配置暂不实现。
 
@@ -184,7 +184,7 @@
 ## Polish: 竞赛优化与演示准备
 
 ### Phase 4.1: 竞赛功能完善 ✅
-- [x] 演示案例库（4 个内置案例，`DemoCaseSelector.tsx`）
+- [x] 公开案例库（4 个内置展示案例 + 授权公开的真实历史检测案例）
 - [x] 数据大屏（统计仪表盘 + 3D 地球 + 图表，使用硬编码数据）
 - [x] 实时对抗演示（对比视图 + 对抗工具箱）
 
@@ -241,9 +241,9 @@
 - [x] API 集成测试 — report/consultation/dashboard 端点 mock DB 测试通过
 - [ ] 前后端联调测试（需真实 Supabase 环境）
 
-### 前端补全（先不做案例库真实加载功能）
+### 前端补全
 - [x] Dashboard 接入真实数据（替换硬编码）
-- [ ] 案例库真实加载功能
+- [x] 案例库真实加载功能
 - [x] 文件上传进度条接入真实进度
 
 ### 2026-04-29 质询、报告与检测页体验修订

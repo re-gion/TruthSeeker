@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-04-29
+> 更新时间：2026-05-28
 
 ## 1. 输入边界
 
@@ -24,6 +24,8 @@
 3. 后端返回标准文件对象：`id`、`name`、`mime_type`、`size_bytes`、`modality`、`storage_path`、可选 `file_url`。
 4. 前端调用 `POST /api/v1/tasks` 创建任务。
 5. 检测页只携带 `taskId`，不依赖 URL 中传 signed file URL。
+
+如果用户勾选“愿意脱敏后公开至案例库”，上传端额外要求单个公开视频检材不超过 50MB，并把文件 SHA-256 写入任务文件清单。任务创建时会用“文件 SHA-256 集合 + 规范化 `case_prompt`”检查公开案例库是否已有重复案例；重复时检测照常进行，但不会重复入库。
 
 任务表约定：
 
@@ -172,9 +174,18 @@ flowchart TD
 
 `report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 
-## 9. 暂不实现
+## 9. 公开案例库
+
+公开案例库使用独立 `case_library_entries` 表，只保存脱敏后的卡片字段、报告 Markdown、文件元数据和私有 Storage 引用，不复制音视频等大文件。案例入库条件：
+
+- 用户在上传时勾选愿意脱敏后公开。
+- 检测任务完整生成最终报告并写入 `reports`。
+- 全局公开案例中不存在相同文件 SHA-256 集合和相同 `case_prompt` 的案例。
+
+公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的案例；预览接口按需生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告。
+
+## 10. 暂不实现
 
 - 不新增独立图数据库，图谱先复用现有 JSONB。
-- 不实现真实案例库升级。
 - 不实现 pgvector / 向量库。
 - 不把 FedPaRS 训练/推理底座写成已运行实现；当前代码是 FedPaRS-compatible 运行时架构，底层检测器未来可替换为 FedPaRS 模型服务。

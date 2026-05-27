@@ -352,6 +352,24 @@ class AnalysisPersistenceService:
             metadata={"report_hash": report_row.get("report_hash"), "verdict": report_row.get("verdict")},
             client=self.client,
         )
+        try:
+            from app.services.case_library import ensure_case_library_entry, wants_public_case
+            from app.services.report_generator import generate_markdown_report
+
+            task = self._fetch_task(task_id)
+            if not wants_public_case(task):
+                return
+            report_markdown = self._generate_case_markdown(task_id, generate_markdown_report)
+            result = ensure_case_library_entry(self.client, task, report_row, report_markdown=report_markdown)
+            if result.get("status") in {"created", "duplicate"}:
+                record_audit_event(
+                    action=f"case_library.{result['status']}",
+                    task_id=task_id,
+                    metadata={"case_id": (result.get("entry") or {}).get("id")},
+                    client=self.client,
+                )
+        except Exception as exc:
+            logger.warning("Public case library sync skipped for %s: %s", task_id, exc)
 
     def mark_task_completed(self, task_id: str, final_verdict: dict[str, Any] | None) -> None:
         normalized = normalize_final_verdict(final_verdict)
@@ -373,6 +391,47 @@ class AnalysisPersistenceService:
         except Exception as exc:
             logger.warning("Failed to fetch report for %s: %s", task_id, exc)
         return None
+
+    def _fetch_task(self, task_id: str) -> dict[str, Any] | None:
+        try:
+            resp = self.client.table("tasks").select("*").eq("id", task_id).execute()
+            if resp.data:
+                return resp.data[0]
+        except Exception as exc:
+            logger.warning("Failed to fetch task for public case sync %s: %s", task_id, exc)
+        return None
+
+    def _generate_case_markdown(self, task_id: str, generator: Any) -> str | None:
+        try:
+            import asyncio
+            import threading
+
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(generator(task_id))
+
+            result: dict[str, str | None] = {"markdown": None, "error": None}
+
+            def run_in_thread() -> None:
+                try:
+                    result["markdown"] = asyncio.run(generator(task_id))
+                except Exception as exc:  # pragma: no cover - surfaced through warning below
+                    result["error"] = f"{type(exc).__name__}: {exc}"
+
+            thread = threading.Thread(target=run_in_thread, daemon=True)
+            thread.start()
+            thread.join(timeout=15)
+            if thread.is_alive():
+                logger.warning("Timed out generating canonical public case markdown for %s", task_id)
+                return None
+            if result["error"]:
+                logger.warning("Failed to generate canonical public case markdown for %s: %s", task_id, result["error"])
+                return None
+            return result["markdown"]
+        except Exception as exc:
+            logger.warning("Failed to generate canonical public case markdown for %s: %s", task_id, exc)
+            return None
 
     def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> bool:
         try:

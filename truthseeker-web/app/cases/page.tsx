@@ -1,32 +1,30 @@
 import Header from "@/components/layout/Header"
-import { DemoCaseSelector } from "@/components/demo/DemoCaseSelector"
+import { CaseLibraryClient } from "@/components/cases/CaseLibraryClient"
 
 export default function CasesPage() {
     return (
-        <main className="min-h-screen grid-bg flex flex-col relative pt-16 bg-background text-foreground">
-            {/* Dynamic background elements for depth */}
-            <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-br from-[#6366F1]/10 to-transparent pointer-events-none -translate-y-1/2 rounded-full blur-[120px]" />
-            <div className="absolute bottom-0 right-0 w-[800px] h-[800px] bg-gradient-to-tl from-[#D4FF12]/5 to-transparent pointer-events-none translate-y-1/3 translate-x-1/3 rounded-full blur-[150px]" />
-
+        <main className="min-h-screen grid-bg bg-background pt-16 text-foreground">
             <Header />
 
-            <div className="flex-1 container mx-auto px-6 py-16 max-w-6xl flex flex-col relative z-10">
-                <div className="mb-12 text-center">
-                    <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-black/20 dark:border-[#D4FF12]/30 bg-black/5 dark:bg-[#D4FF12]/5 text-black/80 dark:text-[#D4FF12] text-xs font-mono tracking-wider mb-6 dark:shadow-[0_0_15px_rgba(212,255,18,0.1)]">
-                        <span className="w-2 h-2 rounded-full bg-[#10B981] dark:bg-[#D4FF12] animate-pulse dark:shadow-[0_0_8px_rgba(212,255,18,0.8)]" />
-                        LIVE DEMO VAULT
+            <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-10">
+                <div className="flex flex-col gap-4 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
+                    <div>
+                        <div className="inline-flex items-center gap-2 rounded-lg border border-[#D4FF12]/25 bg-[#D4FF12]/8 px-3 py-1.5 text-xs font-mono text-[#D4FF12]">
+                            PUBLIC CASE LIBRARY
+                        </div>
+                        <h1 className="mt-5 text-4xl font-bold text-white md:text-5xl">
+                            公开案例库
+                        </h1>
+                        <p className="mt-3 max-w-3xl text-base leading-7 text-white/58">
+                            汇集用户授权公开后的历史检测案例，按检材类型、研判结论和报告证据进行归档。
+                        </p>
                     </div>
-                    <h1 className="text-4xl md:text-6xl font-bold text-foreground mb-6 tracking-tight drop-shadow-sm">
-                        全模态演示案例库
-                    </h1>
-                    <p className="text-muted-foreground text-lg max-w-3xl mx-auto leading-relaxed">
-                        涵盖”音、视、图、文”四大高危场景，体验真实业务环境下多智能体协同辩论流程。针对新型 AI 伪造攻击，一键体验溯源侦查的魅力。
-                    </p>
+                    <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/55">
+                        完整报告生成后自动入库
+                    </div>
                 </div>
 
-                <div className="flex-1 flex flex-col">
-                    <DemoCaseSelector />
-                </div>
+                <CaseLibraryClient />
             </div>
         </main>
     )

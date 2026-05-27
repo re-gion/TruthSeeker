@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.services.analysis_persistence import build_report_row, normalize_final_verdict
 from app.services.audit_log import record_audit_event
+from app.services.case_library import ensure_case_library_entry
 from app.services.report_generator import generate_markdown_report
 from app.utils.supabase_client import supabase
 
@@ -45,7 +46,7 @@ def _fetch_report(task_id: str) -> dict | None:
 
 
 def _create_report_from_completed_task(task_id: str, share_token: str) -> dict:
-    task_resp = supabase.table("tasks").select("id,status,result").eq("id", task_id).execute()
+    task_resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
     if not task_resp.data:
         raise HTTPException(status_code=404, detail="任务不存在")
 
@@ -57,7 +58,9 @@ def _create_report_from_completed_task(task_id: str, share_token: str) -> dict:
     report_row = build_report_row(task_id, task_result, existing_share_token=share_token)
     try:
         resp = supabase.table("reports").insert(report_row).execute()
-        return resp.data[0] if resp.data else report_row
+        report = resp.data[0] if resp.data else report_row
+        ensure_case_library_entry(supabase, task, report)
+        return report
     except Exception as exc:
         logger.error("Failed to create report row for share task %s: %s", task_id, exc)
         raise HTTPException(status_code=500, detail="报告分享准备失败")

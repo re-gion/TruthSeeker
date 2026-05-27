@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.audit_log import record_audit_event
+from app.services.case_library import public_case_duplicate_metadata
 from app.services.evidence_files import derive_input_type, normalize_uploaded_files, require_evidence_files
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ async def create_task(req: CreateTaskRequest, request: Request):
         "case_prompt": case_prompt,
         "files": evidence_files,
     }
+    if metadata.get("share_to_casebase"):
+        metadata.update(public_case_duplicate_metadata(_get_supabase(), evidence_files, case_prompt))
     storage_paths = {
         **req.storage_paths,
         "files": [
@@ -89,6 +92,7 @@ async def create_task(req: CreateTaskRequest, request: Request):
                 "size_bytes": item.get("size_bytes"),
                 "modality": item.get("modality"),
                 "storage_path": item.get("storage_path"),
+                "sha256": item.get("sha256"),
             }
             for item in evidence_files
         ],

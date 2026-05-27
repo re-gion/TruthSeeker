@@ -143,6 +143,7 @@ def _task_storage_files(files: list[UploadedEvidenceFile]) -> list[dict[str, Any
             "size_bytes": item.get("size_bytes"),
             "modality": item.get("modality"),
             "storage_path": item.get("storage_path"),
+            "sha256": item.get("sha256"),
             "detected_encoding": item.get("detected_encoding") or item.get("charset"),
             "charset": item.get("charset") or item.get("detected_encoding"),
         }

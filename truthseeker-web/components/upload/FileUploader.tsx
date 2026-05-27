@@ -26,6 +26,7 @@ const ACCEPTED_TYPES = [
 const ACCEPTED_EXT = ".mp4,.mov,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.jpg,.jpeg,.png,.gif,.webp,.txt"
 const MAX_FILES = 5
 const MAX_SIZE = 250 * 1024 * 1024
+const CASEBASE_MAX_SIZE = 50 * 1024 * 1024
 
 const promptTemplates = [
     {
@@ -65,6 +66,7 @@ interface UploadedEvidenceFile {
     size_bytes: number
     modality: "video" | "audio" | "image" | "text"
     storage_path: string
+    sha256?: string
     file_url?: string
 }
 
@@ -83,6 +85,13 @@ export function getUploadErrorMessage(err: unknown, apiBase: string): string {
         return `后端服务未连接，无法访问 ${apiBase}。请先确认 truthseeker-api 已启动并监听 8000 端口。`
     }
     return err instanceof Error ? err.message : "上传失败，请重试"
+}
+
+export function getCasebaseFileSizeError(files: File[], shareToCasebase: boolean): string | null {
+    if (!shareToCasebase) return null
+    const oversize = files.find((file) => file.size > CASEBASE_MAX_SIZE)
+    if (!oversize) return null
+    return `${oversize.name} 超过公开案例库 50MB 上限。请压缩后再勾选公开，或取消公开后仅用于本次检测。`
 }
 
 async function getAuthToken(): Promise<string | null> {
@@ -161,6 +170,11 @@ export function FileUploader() {
             setError("请至少上传 1 个待检测文件，提示词只作为全局检测目标")
             return
         }
+        const casebaseSizeError = getCasebaseFileSizeError(selectedFiles, shareToCasebase)
+        if (casebaseSizeError) {
+            setError(casebaseSizeError)
+            return
+        }
 
         const authToken = await getAuthToken()
         if (!authToken) {
@@ -180,6 +194,7 @@ export function FileUploader() {
                 const file = selectedFiles[index]
                 const formData = new FormData()
                 formData.append("file", file)
+                formData.append("share_to_casebase", String(shareToCasebase))
 
                 const uploadResp = await fetch(`${apiBase}/api/v1/upload/`, {
                     method: "POST",
@@ -198,6 +213,7 @@ export function FileUploader() {
                     size_bytes: uploadData.size_bytes || file.size,
                     modality: uploadData.modality,
                     storage_path: uploadData.storage_path,
+                    sha256: uploadData.sha256,
                     file_url: uploadData.file_url,
                 })
                 setProgress(Math.round(((index + 1) / selectedFiles.length) * 70))
@@ -234,6 +250,7 @@ export function FileUploader() {
                             size_bytes: file.size_bytes,
                             modality: file.modality,
                             storage_path: file.storage_path,
+                            sha256: file.sha256,
                         })),
                     },
                 }),
@@ -247,7 +264,8 @@ export function FileUploader() {
             const taskData = await taskResp.json()
             setProgress(100)
             await new Promise((resolve) => setTimeout(resolve, 250))
-            router.push(`/detect/${taskData.id}?focus=${priorityFocus}`)
+            const duplicateNotice = taskData.metadata?.casebase_duplicate ? "&casebase=duplicate" : ""
+            router.push(`/detect/${taskData.id}?focus=${priorityFocus}${duplicateNotice}`)
         } catch (err: unknown) {
             const msg = getUploadErrorMessage(err, apiBase)
             setError(msg)

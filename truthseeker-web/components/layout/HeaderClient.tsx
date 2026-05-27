@@ -37,8 +37,8 @@ export function HeaderClient({ user }: HeaderClientProps) {
                     href="/cases"
                     className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
                 >
-                    <Image src="/nav-icons/cases.svg" alt="演示案例库图标" width={16} height={16} className="size-4" />
-                    演示案例库
+                    <Image src="/nav-icons/cases.svg" alt="公开案例库图标" width={16} height={16} className="size-4" />
+                    公开案例库
                 </Link>
                 <Link
                     href="/dashboard"

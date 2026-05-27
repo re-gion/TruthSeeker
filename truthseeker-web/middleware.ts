@@ -30,9 +30,10 @@ export async function middleware(request: NextRequest) {
     const pathname = request.nextUrl.pathname
     const isAuthPage = pathname === '/login' || pathname === '/signup'
     const isPublicSharePage = pathname.startsWith('/report/')
+    const isPublicCasesPage = pathname === '/cases' || pathname.startsWith('/cases/')
 
     // 未登录用户：除登录/注册页外，全部重定向到 /login
-    if (!user && !isAuthPage && !isPublicSharePage) {
+    if (!user && !isAuthPage && !isPublicSharePage && !isPublicCasesPage) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
