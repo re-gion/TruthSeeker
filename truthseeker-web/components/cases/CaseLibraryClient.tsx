@@ -16,7 +16,7 @@ const PAGE_SIZE = 6
 
 const STATIC_CASES = [
   {
-    id: "static-audio-scam",
+    id: "builtin-audio-scam",
     title: "董事长语音诈骗",
     categoryLabel: "音频伪造",
     summary: "通过少量样本克隆高管声音，指使财务转账的典型音频 AIGC 伪造案例。",
@@ -25,7 +25,7 @@ const STATIC_CASES = [
     tone: "border-blue-400/25 bg-blue-500/8 text-blue-300",
   },
   {
-    id: "static-video-faceswap",
+    id: "builtin-video-faceswap",
     title: "Politician AI 伪造视频",
     categoryLabel: "视频伪造",
     summary: "使用高质量目标人脸替换源视频人物，用于散播虚假政治言论。",
@@ -34,7 +34,7 @@ const STATIC_CASES = [
     tone: "border-red-400/25 bg-red-500/8 text-red-300",
   },
   {
-    id: "static-mixed-phishing",
+    id: "builtin-mixed-phishing",
     title: "钓鱼链接+伪造截图",
     categoryLabel: "图文混合",
     summary: "结合生成的虚假聊天记录截图与恶意链接，进行多维度社会工程学攻击。",
@@ -43,7 +43,7 @@ const STATIC_CASES = [
     tone: "border-amber-400/25 bg-amber-500/8 text-amber-300",
   },
   {
-    id: "static-text-news",
+    id: "builtin-text-news",
     title: "AI 生成新闻",
     categoryLabel: "文本生成",
     summary: "利用大语言模型批量生成的虚假舆情新闻，具有煽动性与迷惑性。",
@@ -70,7 +70,7 @@ function verdictTone(verdict: string) {
 function StaticCaseCard({ item }: { item: (typeof STATIC_CASES)[number] }) {
   const Icon = item.icon
   return (
-    <div className={`rounded-lg border p-5 ${item.tone}`}>
+    <Link href={`/cases/${item.id}`} className={`block rounded-lg border p-5 transition-colors hover:border-[#D4FF12]/35 ${item.tone}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <Icon className="h-6 w-6 shrink-0" />
@@ -79,11 +79,11 @@ function StaticCaseCard({ item }: { item: (typeof STATIC_CASES)[number] }) {
             <div className="mt-1 text-xs text-white/55">{item.categoryLabel}</div>
           </div>
         </div>
-        <span className="rounded border border-white/10 px-2 py-1 text-[11px] whitespace-nowrap text-white/50">展示</span>
+        <span className="rounded border border-white/10 px-2 py-1 text-[11px] whitespace-nowrap text-white/50">内置</span>
       </div>
       <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-white/68">{item.summary}</p>
       <div className="mt-5 border-t border-white/10 pt-3 text-xs text-white/45">{item.meta}</div>
-    </div>
+    </Link>
   )
 }
 

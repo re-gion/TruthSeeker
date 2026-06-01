@@ -7,6 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.services.builtin_cases import get_builtin_case
 from app.services.case_library import find_public_file, sanitize_case_for_response
 from app.utils.supabase_client import supabase
 
@@ -69,6 +70,9 @@ async def list_cases(category: Category = "all", page: int = 1, page_size: int =
 
 @router.get("/{case_id}")
 async def get_case(case_id: str):
+    builtin = get_builtin_case(case_id)
+    if builtin:
+        return sanitize_case_for_response(builtin, include_report=True)
     try:
         row = _fetch_public_case(case_id)
     except Exception as exc:

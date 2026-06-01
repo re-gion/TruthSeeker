@@ -277,6 +277,7 @@ def sanitize_case_for_response(row: dict[str, Any], *, include_report: bool = Fa
         )
     payload = {
         "id": row.get("id"),
+        "source_kind": row.get("source_kind") or "public",
         "task_id": row.get("task_id"),
         "title": row.get("title"),
         "media_category": row.get("media_category"),

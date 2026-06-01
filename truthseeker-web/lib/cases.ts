@@ -19,6 +19,7 @@ export interface PublicCaseFile {
 
 export interface PublicCaseCard {
   id: string
+  sourceKind: "public" | "builtin" | string
   taskId: string | null
   title: string
   mediaCategory: CaseCategory
@@ -39,6 +40,7 @@ export interface PublicCaseDetail extends PublicCaseCard {
 
 interface BackendCase {
   id?: string | null
+  source_kind?: "public" | "builtin" | string | null
   task_id?: string | null
   title?: string | null
   media_category?: CaseCategory | null
@@ -102,6 +104,7 @@ function normalizeCase(row: BackendCase): PublicCaseCard {
   const confidence = typeof row.confidence_overall === "number" ? row.confidence_overall : null
   return {
     id: row.id || "",
+    sourceKind: row.source_kind || "public",
     taskId: row.task_id || null,
     title: row.title || "未命名公开案例",
     mediaCategory,
@@ -137,6 +140,13 @@ export function normalizeCaseListResponse(payload: BackendListResponse) {
   }
 }
 
+export function normalizeCaseDetail(payload: BackendCase): PublicCaseDetail {
+  return {
+    ...normalizeCase(payload),
+    reportMarkdown: payload.report_markdown || "",
+  }
+}
+
 export async function getCaseList(
   params: { category?: CaseCategory; page?: number; pageSize?: number },
   fetchImpl: typeof fetch = fetch,
@@ -155,10 +165,7 @@ export async function getCaseDetail(caseId: string, fetchImpl: typeof fetch = fe
   const resp = await fetchImpl(`${API_BASE}/api/v1/cases/${caseId}`, { cache: "no-store" })
   if (!resp.ok) throw new Error("公开案例不存在或暂时不可用")
   const payload = await resp.json() as BackendCase
-  return {
-    ...normalizeCase(payload),
-    reportMarkdown: payload.report_markdown || "",
-  }
+  return normalizeCaseDetail(payload)
 }
 
 export async function deleteCase(caseId: string, token: string, fetchImpl: typeof fetch = fetch): Promise<void> {

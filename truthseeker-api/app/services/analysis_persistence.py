@@ -354,6 +354,7 @@ class AnalysisPersistenceService:
         )
         try:
             from app.services.case_library import ensure_case_library_entry, wants_public_case
+            from app.services.case_rag import index_case_record
             from app.services.report_generator import generate_markdown_report
 
             task = self._fetch_task(task_id)
@@ -368,6 +369,8 @@ class AnalysisPersistenceService:
                     metadata={"case_id": (result.get("entry") or {}).get("id")},
                     client=self.client,
                 )
+            if result.get("status") == "created" and result.get("entry"):
+                self._index_case_rag(result["entry"], index_case_record)
         except Exception as exc:
             logger.warning("Public case library sync skipped for %s: %s", task_id, exc)
 
@@ -432,6 +435,31 @@ class AnalysisPersistenceService:
         except Exception as exc:
             logger.warning("Failed to generate canonical public case markdown for %s: %s", task_id, exc)
             return None
+
+    def _index_case_rag(self, entry: dict[str, Any], indexer: Any) -> None:
+        try:
+            import asyncio
+            import threading
+
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(indexer(self.client, entry, source_kind="public"))
+                return
+
+            def run_in_thread() -> None:
+                try:
+                    asyncio.run(indexer(self.client, entry, source_kind="public"))
+                except Exception as exc:  # pragma: no cover - warning path
+                    logger.warning("Failed to index public case RAG chunk: %s", exc)
+
+            thread = threading.Thread(target=run_in_thread, daemon=True)
+            thread.start()
+            thread.join(timeout=20)
+            if thread.is_alive():
+                logger.warning("Timed out indexing public case RAG chunks for %s", entry.get("id"))
+        except Exception as exc:
+            logger.warning("Public case RAG indexing skipped for %s: %s", entry.get("id"), exc)
 
     def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> bool:
         try:

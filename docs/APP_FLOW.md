@@ -102,6 +102,7 @@ flowchart TD
 - 首轮全量调用：所有媒体文件进 Reality Defender；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal。
 - 后续智能重跑：只重跑失败、降级、被 Challenger 命中或新 IOC 对应的工具。
 - Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
+- 公开案例 RAG 由 Forensics 和 OSINT 作为内部工具调用。语料来自用户授权公开的真实案例和 4 个内置案例 Markdown，使用 pgvector + 全文检索混合召回；命中结果只作为类案参考和复核方向，不直接改变当前裁决分数。
 - 所有外部工具保留硬超时；超时必须写成结构化失败结果。
 
 ## 6. 情报溯源图谱
@@ -182,10 +183,11 @@ flowchart TD
 - 检测任务完整生成最终报告并写入 `reports`。
 - 全局公开案例中不存在相同文件 SHA-256 集合和相同 `case_prompt` 的案例。
 
-公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的案例；预览接口按需生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告。
+公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的真实案例；`GET /api/v1/cases/{id}` 也支持 `builtin-*` 内置案例详情。预览接口按需生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告，内置展示案例也可点击查看补齐后的 Markdown 报告。
+
+公开案例 RAG 使用 `case_library_rag_chunks` 保存真实公开案例和内置案例的 Markdown 分块、1024 维 embedding、分类/裁决元数据和全文索引。默认 embedding 服务为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`，配置项为 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`CASE_RAG_ENABLED` 和 `CASE_RAG_TOP_K`。新增公开案例生成完整报告后会尝试自动索引；历史案例和内置案例可用 `python scripts/rebuild_case_rag_index.py --include-builtin --include-public` 回填。
 
 ## 10. 暂不实现
 
 - 不新增独立图数据库，图谱先复用现有 JSONB。
-- 不实现 pgvector / 向量库。
 - 不把 FedPaRS 训练/推理底座写成已运行实现；当前代码是 FedPaRS-compatible 运行时架构，底层检测器未来可替换为 FedPaRS 模型服务。

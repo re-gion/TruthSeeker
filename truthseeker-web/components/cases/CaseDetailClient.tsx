@@ -121,19 +121,21 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
           <ArrowLeft className="h-4 w-4" />
           返回公开案例库
         </Link>
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={deleteLoading}
-          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
-            deleteConfirm
-              ? "border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/25"
-              : "border-white/10 text-white/40 hover:border-red-400/40 hover:text-red-300"
-          }`}
-        >
-          {deleteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-          {deleteLoading ? "删除中" : deleteConfirm ? "确认删除" : "删除案例"}
-        </button>
+        {detail.sourceKind !== "builtin" && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleteLoading}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
+              deleteConfirm
+                ? "border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                : "border-white/10 text-white/40 hover:border-red-400/40 hover:text-red-300"
+            }`}
+          >
+            {deleteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {deleteLoading ? "删除中" : deleteConfirm ? "确认删除" : "删除案例"}
+          </button>
+        )}
       </div>
 
       <section className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
@@ -164,14 +166,16 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
                     <div className="mt-1 text-xs text-white/45">{file.mimeType || "unknown"} · {formatCaseFileSize(file.sizeBytes)}</div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => loadPreview(file.id)}
-                  disabled={previewLoading === file.id}
-                  className="rounded-lg border border-[#D4FF12]/25 px-3 py-1.5 text-xs text-[#D4FF12] disabled:opacity-50"
-                >
-                  {previewLoading === file.id ? "生成中" : "短期预览"}
-                </button>
+                {detail.sourceKind !== "builtin" && (
+                  <button
+                    type="button"
+                    onClick={() => loadPreview(file.id)}
+                    disabled={previewLoading === file.id}
+                    className="rounded-lg border border-[#D4FF12]/25 px-3 py-1.5 text-xs text-[#D4FF12] disabled:opacity-50"
+                  >
+                    {previewLoading === file.id ? "生成中" : "短期预览"}
+                  </button>
+                )}
               </div>
               {previewUrl && <PreviewPane url={previewUrl} mimeType={file.mimeType} />}
             </div>

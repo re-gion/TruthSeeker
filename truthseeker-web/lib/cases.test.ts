@@ -4,6 +4,7 @@ import {
   CASE_CATEGORY_OPTIONS,
   getCaseDetail,
   getCaseList,
+  normalizeCaseDetail,
   normalizeCaseListResponse,
   requestCasePreviewUrl,
 } from "./cases"
@@ -45,6 +46,20 @@ describe("public case library mapping", () => {
     expect(view.items[0].confidenceLabel).toBe("91.0%")
     expect(view.items[0].publicFiles[0].storagePath).toBeNull()
     expect(view.totalPages).toBe(2)
+  })
+
+  it("maps builtin case source for detail pages", () => {
+    const detail = normalizeCaseDetail({
+      id: "builtin-audio-scam",
+      source_kind: "builtin",
+      title: "董事长语音诈骗",
+      media_category: "audio_forgery",
+      public_files: [],
+      report_markdown: "# 董事长语音诈骗",
+    })
+
+    expect(detail.sourceKind).toBe("builtin")
+    expect(detail.reportMarkdown).toContain("董事长语音诈骗")
   })
 
   it("fetches list/detail/preview endpoints with the expected public API shape", async () => {
