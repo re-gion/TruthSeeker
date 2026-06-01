@@ -92,7 +92,7 @@ async def ensure_case_library_entry_async(
 
 内部调用 `generate_case_title_and_summary`，替换原有的 `title` 和 `summary` 生成逻辑。
 
-原同步版 `ensure_case_library_entry` 保留，内部改为 `asyncio.run` 调用 async 版（兼容 `share.py` 的同步调用场景）。
+原同步版 `ensure_case_library_entry` 保留不变（`share.py` 继续调用它），其内部 title/summary 生成逻辑同步调用 LLM（用 `asyncio.get_event_loop().run_until_complete` 或直接用同步 HTTP 客户端）。async 版 `ensure_case_library_entry_async` 仅供 `detect.py` 的 SSE 生成器使用，两者共享 `generate_case_title_and_summary` 的 prompt 逻辑但分别实现同步/异步调用。
 
 ### 4.3 `detect.py` — 在 `complete` 后推送导入进度
 
@@ -236,7 +236,7 @@ if (isComplete) {
 
 ## 六、兼容性
 
-- `share.py` 中的 `ensure_case_library_entry` 同步调用保留，内部通过 `asyncio.run` 调用 async 版，兼容旧分享链接场景（此时 LLM 生成同步等待，可接受）
+- `share.py` 中的 `ensure_case_library_entry` 同步调用保留不变，内部使用同步 LLM 调用（`httpx` 同步客户端），不依赖 async 版，避免在 FastAPI 事件循环中嵌套 `asyncio.run`
 - 已完成任务（从历史恢复）：`caseImportStatus` 默认 `skipped`，`isReportReady` 直接为 `true`，不影响已完成任务的报告查看
 - 未勾选公开的任务：`case_import_skipped` 立即推送，按钮立即解锁，用户无感知延迟
 
