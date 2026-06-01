@@ -16,6 +16,7 @@ def _read_kimi_env() -> dict[str, str]:
     for key in (
         "KIMI_PROVIDER", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_MODEL",
         "KIMI_CODING_API_KEY", "KIMI_CODING_BASE_URL", "KIMI_CODING_MODEL",
+        "KIMI_SILICONFLOW_API_KEY", "KIMI_SILICONFLOW_BASE_URL", "KIMI_SILICONFLOW_MODEL",
     ):
         value = raw.get(key)
         if value is not None:
@@ -75,6 +76,15 @@ class Settings(BaseSettings):
         default="kimi-k2.5",
         validation_alias=AliasChoices("KIMI_CODING_MODEL", "Kimi_Coding_Model"),
     )
+    KIMI_SILICONFLOW_API_KEY: str = Field(default="", validation_alias=AliasChoices("KIMI_SILICONFLOW_API_KEY"))
+    KIMI_SILICONFLOW_BASE_URL: str = Field(
+        default="https://api.siliconflow.cn/v1",
+        validation_alias=AliasChoices("KIMI_SILICONFLOW_BASE_URL"),
+    )
+    KIMI_SILICONFLOW_MODEL: str = Field(
+        default="Pro/moonshotai/Kimi-K2.5",
+        validation_alias=AliasChoices("KIMI_SILICONFLOW_MODEL"),
+    )
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
@@ -108,6 +118,8 @@ def _normalize_kimi_provider(provider: str) -> str:
     value = (provider or "official").strip().lower().replace("-", "_")
     if value in {"coding", "coding_plan", "kimi_coding", "kimi_coding_plan"}:
         return "coding"
+    if value in {"siliconflow", "silicon_flow"}:
+        return "siliconflow"
     return "official"
 
 
@@ -141,6 +153,16 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
             "model": coding_model,
             "base_url": coding_base,
             "api_key": coding_key,
+        }
+    if provider == "siliconflow":
+        sf_key = env.get("KIMI_SILICONFLOW_API_KEY") or cfg.KIMI_SILICONFLOW_API_KEY or official_key
+        sf_model = (env.get("KIMI_SILICONFLOW_MODEL") or cfg.KIMI_SILICONFLOW_MODEL or "Pro/moonshotai/Kimi-K2.5").strip()
+        sf_base = (env.get("KIMI_SILICONFLOW_BASE_URL") or cfg.KIMI_SILICONFLOW_BASE_URL or "https://api.siliconflow.cn/v1").strip().rstrip("/")
+        return {
+            "provider": "siliconflow",
+            "model": sf_model,
+            "base_url": sf_base,
+            "api_key": sf_key,
         }
     return {
         "provider": "official",

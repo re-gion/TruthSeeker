@@ -161,6 +161,18 @@ export async function getCaseDetail(caseId: string, fetchImpl: typeof fetch = fe
   }
 }
 
+export async function deleteCase(caseId: string, token: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const resp = await fetchImpl(`${API_BASE}/api/v1/cases/${caseId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) {
+    let detail = "删除失败"
+    try { detail = (await resp.json()).detail || detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+}
+
 export async function requestCasePreviewUrl(caseId: string, fileId: string, fetchImpl: typeof fetch = fetch) {
   const resp = await fetchImpl(`${API_BASE}/api/v1/cases/${caseId}/preview-url`, {
     method: "POST",

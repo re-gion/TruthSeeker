@@ -1,11 +1,13 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ArrowLeft, ExternalLink, FileText, Film, Image as ImageIcon, Loader2, Mic } from "lucide-react"
-import { formatCaseFileSize, getCaseDetail, requestCasePreviewUrl, type PublicCaseDetail } from "@/lib/cases"
+import { ArrowLeft, ExternalLink, FileText, Film, Image as ImageIcon, Loader2, Mic, Trash2 } from "lucide-react"
+import { deleteCase, formatCaseFileSize, getCaseDetail, requestCasePreviewUrl, type PublicCaseDetail } from "@/lib/cases"
+import { getAuthToken } from "@/lib/auth"
 
 function FileIcon({ modality }: { modality: string | null }) {
   if (modality === "audio") return <Mic className="h-5 w-5" />
@@ -22,7 +24,12 @@ function PreviewPane({ url, mimeType }: { url: string; mimeType: string | null }
     return <video controls src={url} className="mt-3 aspect-video w-full rounded-lg border border-white/10 bg-black" />
   }
   if (mimeType?.startsWith("image/")) {
-    return <object data={url} type={mimeType} className="mt-3 aspect-video w-full rounded-lg border border-white/10 bg-black" />
+    return (
+      <a href={url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm text-[#D4FF12]">
+        <ExternalLink className="h-4 w-4" />
+        在新页面查看原图
+      </a>
+    )
   }
   return (
     <a href={url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm text-[#D4FF12]">
@@ -33,11 +40,14 @@ function PreviewPane({ url, mimeType }: { url: string; mimeType: string | null }
 }
 
 export function CaseDetailClient({ caseId }: { caseId: string }) {
+  const router = useRouter()
   const [detail, setDetail] = useState<PublicCaseDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({})
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +78,25 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
     }
   }
 
+  async function handleDelete() {
+    if (!deleteConfirm) {
+      setDeleteConfirm(true)
+      return
+    }
+    setDeleteLoading(true)
+    try {
+      const token = await getAuthToken()
+      if (!token) throw new Error("请先登录")
+      await deleteCase(caseId, token)
+      router.push("/cases")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败")
+      setDeleteConfirm(false)
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center text-white/55">
@@ -87,10 +116,25 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <Link href="/cases" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white">
-        <ArrowLeft className="h-4 w-4" />
-        返回公开案例库
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link href="/cases" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white">
+          <ArrowLeft className="h-4 w-4" />
+          返回公开案例库
+        </Link>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleteLoading}
+          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
+            deleteConfirm
+              ? "border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/25"
+              : "border-white/10 text-white/40 hover:border-red-400/40 hover:text-red-300"
+          }`}
+        >
+          {deleteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          {deleteLoading ? "删除中" : deleteConfirm ? "确认删除" : "删除案例"}
+        </button>
+      </div>
 
       <section className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
         <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">

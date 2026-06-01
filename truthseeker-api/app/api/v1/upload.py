@@ -177,13 +177,20 @@ async def upload_file(
             )
 
         text_encoding: dict[str, str] = {}
+        upload_content_type = real_mime
         if real_mime == "text/plain":
             with open(tmp_path, "rb") as text_file:
-                decoded = decode_text_bytes(text_file.read(), max_chars=1)
+                raw_bytes = text_file.read()
+            decoded = decode_text_bytes(raw_bytes)
             text_encoding = {
                 "detected_encoding": decoded["encoding"],
-                "charset": decoded["charset"],
+                "charset": "utf-8",
             }
+            # Re-encode as UTF-8 so browsers display CJK text correctly
+            utf8_bytes = decoded["text"].encode("utf-8")
+            with open(tmp_path, "wb") as text_file:
+                text_file.write(utf8_bytes)
+            upload_content_type = "text/plain; charset=utf-8"
 
         # 4. 上传到 Supabase Storage
         from storage3.types import FileOptions
@@ -191,7 +198,7 @@ async def upload_file(
         storage_path = f"{folder}/{os.path.basename(tmp_path)}"
         with open(tmp_path, "rb") as f:
             _get_supabase().storage.from_("media").upload(
-                storage_path, f, file_options=FileOptions(content_type=real_mime),
+                storage_path, f, file_options=FileOptions(content_type=upload_content_type),
             )
 
         # 5. 生成签名 URL（有效 24 小时，U-5 修复）

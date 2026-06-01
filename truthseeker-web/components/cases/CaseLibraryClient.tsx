@@ -79,7 +79,7 @@ function StaticCaseCard({ item }: { item: (typeof STATIC_CASES)[number] }) {
             <div className="mt-1 text-xs text-white/55">{item.categoryLabel}</div>
           </div>
         </div>
-        <span className="rounded border border-white/10 px-2 py-1 text-[11px] text-white/50">展示</span>
+        <span className="rounded border border-white/10 px-2 py-1 text-[11px] whitespace-nowrap text-white/50">展示</span>
       </div>
       <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-white/68">{item.summary}</p>
       <div className="mt-5 border-t border-white/10 pt-3 text-xs text-white/45">{item.meta}</div>

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.case_library import find_public_file, sanitize_case_for_response
@@ -101,3 +101,30 @@ async def create_preview_url(case_id: str, request: PreviewUrlRequest):
     except Exception as exc:
         logger.error("Failed to sign public case file %s/%s: %s", case_id, request.file_id, exc)
         raise HTTPException(status_code=500, detail="检材预览链接生成失败")
+
+
+@router.delete("/{case_id}", status_code=204)
+async def delete_case(case_id: str, request: Request):
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id or user_id == "anonymous":
+        raise HTTPException(status_code=401, detail="需要登录")
+    try:
+        resp = (
+            supabase.table("case_library_entries")
+            .select("id, user_id")
+            .eq("id", case_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Failed to fetch case %s for deletion: %s", case_id, exc)
+        raise HTTPException(status_code=503, detail="服务暂时不可用")
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="案例不存在")
+    if resp.data[0].get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="无权删除此案例")
+    try:
+        supabase.table("case_library_entries").delete().eq("id", case_id).execute()
+    except Exception as exc:
+        logger.error("Failed to delete case %s: %s", case_id, exc)
+        raise HTTPException(status_code=503, detail="删除失败，请稍后重试")
