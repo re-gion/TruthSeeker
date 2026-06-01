@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -96,6 +97,37 @@ class FakeSupabase:
         return FakeQuery(table_name, self.db)
 
 
+class CapturingLLM:
+    def __init__(self, content):
+        self.content = content
+        self.prompt = ""
+
+    async def ainvoke(self, prompt):
+        self.prompt = prompt
+        return SimpleNamespace(content=self.content)
+
+
+class RaceInsertQuery(FakeQuery):
+    def execute(self):
+        if self.operation == "insert":
+            table = self.db.setdefault(self.table_name, [])
+            table.append(
+                {
+                    **self.payload,
+                    "id": "case-race",
+                    "status": "published",
+                    "content_fingerprint": self.payload["content_fingerprint"],
+                }
+            )
+            raise RuntimeError("duplicate key value violates unique constraint")
+        return super().execute()
+
+
+class RaceInsertSupabase(FakeSupabase):
+    def table(self, table_name):
+        return RaceInsertQuery(table_name, self.db)
+
+
 def test_build_case_fingerprint_is_stable_for_same_files_and_prompt():
     files_a = [
         {"name": "a.png", "sha256": "bbb", "storage_path": "u/a.png"},
@@ -163,12 +195,28 @@ def test_build_case_library_entry_derives_category_and_public_fields():
     assert entry["verdict"] == "forged"
     assert entry["confidence_overall"] == 0.91
     assert entry["content_fingerprint"]
-    assert entry["public_files"][0]["storage_path"] == "user-1/tmp.mp3"
+    assert "storage_path" not in entry["public_files"][0]
+    assert "sha256" not in entry["public_files"][0]
     assert entry["public_files"][0]["name"] == "voice-of-boss.mp3"
     assert "13812345678" not in entry["report_markdown"]
 
 
-def test_ensure_case_library_entry_is_idempotent_and_skips_duplicates():
+def test_build_markdown_from_report_row_tolerates_invalid_confidence():
+    from app.services.case_library import build_markdown_from_report_row
+
+    markdown = build_markdown_from_report_row({
+        "verdict": "forged",
+        "confidence_overall": "not-a-number",
+        "summary": "存在伪造风险。",
+        "verdict_payload": {},
+    })
+
+    assert "存在伪造风险" in markdown
+    assert "综合置信度" not in markdown
+
+
+@pytest.mark.asyncio
+async def test_ensure_case_library_entry_is_idempotent_and_skips_duplicates():
     db = {
         "case_library_entries": [
             {
@@ -188,7 +236,7 @@ def test_ensure_case_library_entry_is_idempotent_and_skips_duplicates():
     }
     report = {"verdict": "suspicious", "summary": "重复", "verdict_payload": {}}
 
-    result = ensure_case_library_entry(client, task, report, "# 报告")
+    result = await ensure_case_library_entry(client, task, report, "# 报告")
 
     assert result["status"] == "duplicate"
     assert result["entry"]["id"] == "case-existing"
@@ -218,7 +266,7 @@ def test_public_cases_api_lists_details_and_creates_preview_urls(monkeypatch):
                         "mime_type": "image/png",
                         "modality": "image",
                         "size_bytes": 2048,
-                        "storage_path": "user-1/sample.png",
+                        "storage_path": "stale-public-path.png",
                     }
                 ],
                 "report_markdown": "# 报告\n存在局部篡改。",
@@ -230,7 +278,20 @@ def test_public_cases_api_lists_details_and_creates_preview_urls(monkeypatch):
                 "title": "未公开",
                 "media_category": "image_forgery",
             },
-        ]
+        ],
+        "tasks": [
+            {
+                "id": "task-1",
+                "metadata": {
+                    "files": [
+                        {
+                            "id": "file-1",
+                            "storage_path": "user-1/sample.png",
+                        }
+                    ]
+                },
+            }
+        ],
     }
     fake = FakeSupabase(db)
     monkeypatch.setattr(cases_module, "supabase", fake)
@@ -248,3 +309,75 @@ def test_public_cases_api_lists_details_and_creates_preview_urls(monkeypatch):
     assert detail.json()["public_files"][0]["storage_path"] is None
     assert preview.status_code == 200
     assert preview.json()["signed_url"].startswith("https://storage.example/sign/user-1/sample.png")
+    assert fake.storage.bucket.signed_paths == [("user-1/sample.png", 600)]
+
+
+@pytest.mark.asyncio
+async def test_generate_case_title_and_summary_fallback():
+    """LLM 失败时应返回规则生成的 fallback 标题和摘要"""
+    from app.services.case_library import generate_case_title_and_summary
+
+    task = {
+        "description": "测试案例提示词",
+        "metadata": {"files": [{"name": "test.jpg", "modality": "image"}]},
+    }
+    report = {
+        "verdict": "forged",
+        "confidence_overall": 0.92,
+        "verdict_payload": {},
+    }
+
+    # 传入 None 作为 llm，触发 fallback
+    title, summary = await generate_case_title_and_summary(task, report, llm=None)
+
+    assert isinstance(title, str) and len(title) > 0
+    assert isinstance(summary, str) and len(summary) > 0
+    assert "forged" in title.lower() or "伪造" in title or "确认" in title
+
+
+@pytest.mark.asyncio
+async def test_generate_case_title_and_summary_does_not_send_raw_file_name_to_llm():
+    """LLM prompt 不应包含原始文件名，避免模型复述敏感语义"""
+    from app.services.case_library import generate_case_title_and_summary
+
+    llm = CapturingLLM('{"title":"公开案例标题","summary":"这是一个面向公众的案例摘要，用于说明检测结论。"}')
+    task = {
+        "description": "测试案例提示词",
+        "metadata": {"files": [{"name": "张三公司内部通知.jpg", "modality": "image"}]},
+    }
+    report = {"verdict": "forged", "confidence_overall": 0.92, "verdict_payload": {}}
+
+    await generate_case_title_and_summary(task, report, llm=llm)
+
+    assert "张三公司内部通知.jpg" not in llm.prompt
+    assert "张三公司" not in llm.prompt
+
+
+@pytest.mark.asyncio
+async def test_ensure_case_library_entry_treats_race_insert_as_duplicate():
+    from app.services.case_library import ensure_case_library_entry
+
+    db = {"case_library_entries": []}
+    client = RaceInsertSupabase(db)
+    task = {
+        "id": "task-race",
+        "description": "核验",
+        "metadata": {"share_to_casebase": True, "files": [{"name": "a.txt", "modality": "text", "sha256": "race"}]},
+    }
+    report = {"verdict": "suspicious", "summary": "重复", "verdict_payload": {}}
+
+    result = await ensure_case_library_entry(client, task, report, "# 报告")
+
+    assert result["status"] == "duplicate"
+    assert result["entry"]["id"] == "case-race"
+
+
+@pytest.mark.asyncio
+async def test_ensure_case_library_entry_async_skipped():
+    """未勾选 share_to_casebase 时应返回 skipped"""
+    from app.services.case_library import ensure_case_library_entry
+
+    task = {"metadata": {}}  # 没有 share_to_casebase
+    result = await ensure_case_library_entry(None, task, None)
+    assert result["status"] == "skipped"
+    assert result["reason"] == "not_requested"

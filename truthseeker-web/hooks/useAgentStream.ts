@@ -28,6 +28,11 @@ export type AgentEvent =
     | { type: "node_complete"; node: string }
     | { type: "error"; message: string; detail?: unknown }
     | { type: "complete"; task_id: string }
+    | { type: "case_import_start"; task_id: string }
+    | { type: "case_import_created"; task_id: string }
+    | { type: "case_import_duplicate"; task_id: string }
+    | { type: "case_import_skipped"; task_id: string; reason?: string }
+    | { type: "case_import_error"; task_id: string }
 
 export interface AgentLogEntry {
     agent: string
@@ -58,6 +63,8 @@ export type ConsultationStatus =
     | "summary_confirmed"
     | "skipped"
     | "resumed"
+
+export type CaseImportStatus = "idle" | "importing" | "created" | "duplicate" | "skipped" | "error"
 
 export interface ConsultationLink {
     label: string
@@ -97,6 +104,7 @@ export interface StreamStateFromHistory {
     finalVerdict: Record<string, unknown> | null
     currentRound: number
     isComplete: boolean
+    caseImportStatus: CaseImportStatus
     isWaitingConsultation: boolean
     consultationState: ConsultationState
 }
@@ -127,6 +135,8 @@ interface UseAgentStreamReturn {
     maxRounds: number
     isRunning: boolean
     isComplete: boolean
+    caseImportStatus: CaseImportStatus
+    isReportReady: boolean
     currentNode: string | null
     isWaitingConsultation: boolean
     errorMessage: string | null
@@ -544,6 +554,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
         finalVerdict,
         currentRound,
         isComplete: status === "completed" || Boolean(finalVerdict),
+        caseImportStatus: status === "completed" || Boolean(finalVerdict) ? "skipped" : "idle",
         isWaitingConsultation: isConsultationWaiting(status, consultationStatus),
         consultationState,
     }
@@ -588,6 +599,7 @@ export function useAgentStream({
     const [maxRoundsState, setMaxRoundsState] = useState(maxRounds)
     const [isRunning, setIsRunning] = useState(false)
     const [isComplete, setIsComplete] = useState(false)
+    const [caseImportStatus, setCaseImportStatus] = useState<CaseImportStatus>("idle")
     const [currentNode, setCurrentNode] = useState<string | null>(null)
     const [isWaitingConsultation, setIsWaitingConsultation] = useState(false)
     const [consultationState, setConsultationState] = useState<ConsultationState>(INITIAL_CONSULTATION_STATE)
@@ -700,6 +712,16 @@ export function useAgentStream({
             setIsRunning(false)
             setIsWaitingConsultation(false)
             setCurrentNode(null)
+        } else if (event.type === "case_import_start") {
+            setCaseImportStatus("importing")
+        } else if (event.type === "case_import_created") {
+            setCaseImportStatus("created")
+        } else if (event.type === "case_import_duplicate") {
+            setCaseImportStatus("duplicate")
+        } else if (event.type === "case_import_skipped") {
+            setCaseImportStatus("skipped")
+        } else if (event.type === "case_import_error") {
+            setCaseImportStatus("error")
         }
     }, [updateConsultationState])
 
@@ -708,6 +730,7 @@ export function useAgentStream({
         if (!resume) startedRef.current = true
         setIsRunning(true)
         setIsComplete(false)
+        setCaseImportStatus("idle")
         setErrorMessage(null)
 
         abortRef.current = new AbortController()
@@ -814,6 +837,7 @@ export function useAgentStream({
                 setAgentWeights(mapped.agentWeights)
                 setCurrentRound(mapped.currentRound)
                 setIsComplete(mapped.isComplete)
+                setCaseImportStatus(mapped.caseImportStatus)
                 setIsWaitingConsultation(mapped.isWaitingConsultation)
                 updateConsultationState(mapped.consultationState)
                 if (mapped.isComplete) {
@@ -859,6 +883,8 @@ export function useAgentStream({
         }
     }, [autoStart, start, role, channel, processEvent])
 
+    const isReportReady = isComplete && caseImportStatus !== "idle" && caseImportStatus !== "importing"
+
     return {
         events,
         logs,
@@ -871,6 +897,8 @@ export function useAgentStream({
         maxRounds: maxRoundsState,
         isRunning,
         isComplete,
+        caseImportStatus,
+        isReportReady,
         currentNode,
         isWaitingConsultation,
         errorMessage,

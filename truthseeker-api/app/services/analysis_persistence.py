@@ -352,27 +352,6 @@ class AnalysisPersistenceService:
             metadata={"report_hash": report_row.get("report_hash"), "verdict": report_row.get("verdict")},
             client=self.client,
         )
-        try:
-            from app.services.case_library import ensure_case_library_entry, wants_public_case
-            from app.services.case_rag import index_case_record
-            from app.services.report_generator import generate_markdown_report
-
-            task = self._fetch_task(task_id)
-            if not wants_public_case(task):
-                return
-            report_markdown = self._generate_case_markdown(task_id, generate_markdown_report)
-            result = ensure_case_library_entry(self.client, task, report_row, report_markdown=report_markdown)
-            if result.get("status") in {"created", "duplicate"}:
-                record_audit_event(
-                    action=f"case_library.{result['status']}",
-                    task_id=task_id,
-                    metadata={"case_id": (result.get("entry") or {}).get("id")},
-                    client=self.client,
-                )
-            if result.get("status") == "created" and result.get("entry"):
-                self._index_case_rag(result["entry"], index_case_record)
-        except Exception as exc:
-            logger.warning("Public case library sync skipped for %s: %s", task_id, exc)
 
     def mark_task_completed(self, task_id: str, final_verdict: dict[str, Any] | None) -> None:
         normalized = normalize_final_verdict(final_verdict)

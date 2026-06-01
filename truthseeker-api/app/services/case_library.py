@@ -121,6 +121,118 @@ def _difficulty(confidence: Any) -> str:
     return "Low"
 
 
+VERDICT_LABEL_MAP = {
+    "forged": "确认伪造",
+    "suspicious": "高度可疑",
+    "authentic": "内容真实",
+    "inconclusive": "无法判定",
+}
+
+CATEGORY_LABEL_MAP = {
+    "text_generation": "文本生成",
+    "image_forgery": "图像伪造",
+    "image_text_mixed": "图文混合",
+    "audio_forgery": "音频伪造",
+    "video_forgery": "视频伪造",
+}
+
+
+def _fallback_title_and_summary(
+    verdict: str,
+    media_category: str,
+    confidence: float | None,
+    difficulty: str,
+) -> tuple[str, str]:
+    verdict_label = VERDICT_LABEL_MAP.get(verdict, verdict)
+    category_label = CATEGORY_LABEL_MAP.get(media_category, media_category)
+    title = f"{verdict_label}·{category_label}·{difficulty}难度案例"
+    conf_text = f"{confidence * 100:.1f}%" if confidence is not None else "未知"
+    summary = f"本案为{category_label}类型检材，研判结论为{verdict_label}，综合置信度 {conf_text}。"
+    return title, summary
+
+
+def _coerce_confidence(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_llm_json(content: Any) -> dict[str, Any]:
+    text = str(content or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    payload = match.group(0) if match else text
+    parsed = json.loads(payload)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _clean_generated_public_text(value: Any, *, max_chars: int) -> str:
+    return redact_public_text(str(value or "")).strip()[:max_chars]
+
+
+async def generate_case_title_and_summary(
+    task: dict[str, Any],
+    report: dict[str, Any],
+    llm: Any | None,
+) -> tuple[str, str]:
+    """Generate a public-facing title and summary, with deterministic fallback."""
+    verdict_payload = normalize_final_verdict(report.get("verdict_payload") or {})
+    verdict = report.get("verdict") or verdict_payload.get("verdict") or "inconclusive"
+    confidence = _coerce_confidence(report.get("confidence_overall", verdict_payload.get("confidence_overall")))
+    files = _task_files(task)
+    media_category = _derive_media_category(files, task.get("input_type"))
+    difficulty = _difficulty(confidence)
+    fallback = _fallback_title_and_summary(verdict, media_category, confidence, difficulty)
+
+    if llm is None:
+        return fallback
+
+    key_evidence = report.get("key_evidence") or verdict_payload.get("key_evidence") or []
+    if not isinstance(key_evidence, list):
+        key_evidence = [key_evidence]
+    file_descriptors = [
+        {
+            "id": f"file-{index}",
+            "modality": item.get("modality") or "unknown",
+            "mime_type": item.get("mime_type"),
+            "size_bytes": item.get("size_bytes"),
+        }
+        for index, item in enumerate(files[:5], 1)
+    ]
+    prompt_payload = {
+        "verdict": verdict,
+        "confidence_overall": confidence,
+        "media_category": media_category,
+        "difficulty": difficulty,
+        "files": file_descriptors,
+        "case_prompt": redact_public_text(str(task.get("description") or _metadata(task).get("case_prompt") or ""))[:200],
+        "key_evidence": [redact_public_text(str(item))[:160] for item in key_evidence[:3]],
+    }
+    prompt = (
+        "你是 TruthSeeker 的公开案例编辑。请基于输入生成适合公开案例库展示的标题和摘要。\n"
+        "要求：标题 10-20 个中文字符，概括案例类型，不使用原始文件名；"
+        "摘要 50-120 个中文字符，面向公众解释案情、结论和置信度；"
+        "不得泄露邮箱、手机号、身份证号、存储路径或签名 URL。\n"
+        "只输出 JSON，格式为 {\"title\":\"...\",\"summary\":\"...\"}。\n"
+        f"输入：{json.dumps(prompt_payload, ensure_ascii=False)}"
+    )
+    try:
+        response = await llm.ainvoke(prompt)
+        content = getattr(response, "content", response)
+        parsed = _parse_llm_json(content)
+        title = _clean_generated_public_text(parsed.get("title"), max_chars=120)
+        summary = _clean_generated_public_text(parsed.get("summary"), max_chars=360)
+        if title and summary:
+            return title, summary
+    except Exception as exc:
+        logger.warning("Failed to generate public case title/summary by LLM: %s", exc)
+
+    return fallback
+
+
 def _safe_file_name(name: Any, index: int) -> str:
     raw = redact_public_text(str(name or f"检材 {index}")).strip()
     if not raw:
@@ -138,8 +250,6 @@ def _public_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "mime_type": item.get("mime_type"),
                 "modality": item.get("modality"),
                 "size_bytes": item.get("size_bytes"),
-                "storage_path": item.get("storage_path"),
-                "sha256": item.get("sha256"),
             }
         )
     return result
@@ -158,8 +268,9 @@ def build_markdown_from_report_row(report: dict[str, Any]) -> str:
         f"- 裁决结果：{report.get('verdict') or verdict.get('verdict') or 'inconclusive'}",
     ]
     confidence = report.get("confidence_overall") or verdict.get("confidence_overall")
-    if confidence is not None:
-        lines.append(f"- 综合置信度：{float(confidence) * 100:.1f}%")
+    safe_confidence = _coerce_confidence(confidence)
+    if safe_confidence is not None:
+        lines.append(f"- 综合置信度：{safe_confidence * 100:.1f}%")
     summary = report.get("summary") or verdict.get("analysis_summary")
     if summary:
         lines.extend(["", "## 摘要", str(summary)])
@@ -176,12 +287,28 @@ def build_markdown_from_report_row(report: dict[str, Any]) -> str:
     return redact_public_markdown("\n".join(lines))
 
 
-def build_case_library_entry(task: dict[str, Any], report: dict[str, Any], report_markdown: str) -> dict[str, Any]:
+def build_case_library_entry(
+    task: dict[str, Any],
+    report: dict[str, Any],
+    report_markdown: str,
+    *,
+    public_title: str | None = None,
+    public_summary: str | None = None,
+) -> dict[str, Any]:
     files = _task_files(task)
     case_prompt = task.get("description") or _metadata(task).get("case_prompt") or ""
     verdict = normalize_final_verdict(report.get("verdict_payload") or {})
     confidence = report.get("confidence_overall", verdict.get("confidence_overall"))
-    title = redact_public_text(str(task.get("title") or "未命名公开案例")).strip()[:120] or "未命名公开案例"
+    title = (
+        redact_public_text(public_title).strip()[:120]
+        if public_title
+        else redact_public_text(str(task.get("title") or "未命名公开案例")).strip()[:120]
+    ) or "未命名公开案例"
+    summary = (
+        redact_public_text(public_summary).strip()[:360]
+        if public_summary
+        else _summary_from_report(report, verdict)
+    )
     public_files = _public_files(files)
 
     return {
@@ -190,7 +317,7 @@ def build_case_library_entry(task: dict[str, Any], report: dict[str, Any], repor
         "status": "published",
         "title": title,
         "media_category": _derive_media_category(files, task.get("input_type")),
-        "summary": _summary_from_report(report, verdict),
+        "summary": summary,
         "verdict": report.get("verdict") or verdict.get("verdict") or "inconclusive",
         "confidence_overall": confidence,
         "difficulty": _difficulty(confidence),
@@ -229,11 +356,12 @@ def public_case_duplicate_metadata(client: Any, files: list[dict[str, Any]] | No
     }
 
 
-def ensure_case_library_entry(
+async def ensure_case_library_entry(
     client: Any,
     task: dict[str, Any] | None,
     report: dict[str, Any] | None,
     report_markdown: str | None = None,
+    llm: Any | None = None,
 ) -> dict[str, Any]:
     """Create public case entry once, returning duplicate/skipped/created status."""
     if not wants_public_case(task):
@@ -250,12 +378,22 @@ def ensure_case_library_entry(
         return {"status": "duplicate", "entry": duplicate}
 
     markdown = report_markdown if report_markdown is not None else build_markdown_from_report_row(report)
-    entry = build_case_library_entry(task, report, markdown)
+    title, summary = await generate_case_title_and_summary(task, report, llm)
+    entry = build_case_library_entry(
+        task,
+        report,
+        markdown,
+        public_title=title,
+        public_summary=summary,
+    )
     try:
         resp = client.table("case_library_entries").insert(entry).execute()
         created = resp.data[0] if resp.data else entry
         return {"status": "created", "entry": created}
     except Exception as exc:
+        duplicate = find_duplicate_case(client, files, case_prompt)
+        if duplicate:
+            return {"status": "duplicate", "entry": duplicate}
         logger.error("Failed to create public case entry for task %s: %s", task.get("id"), exc)
         return {"status": "error", "reason": f"{type(exc).__name__}: {exc}", "entry": None}
 

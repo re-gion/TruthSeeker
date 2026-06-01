@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from app.services.analysis_persistence import build_report_row, normalize_final_verdict
 from app.services.audit_log import record_audit_event
-from app.services.case_library import ensure_case_library_entry
 from app.services.report_generator import generate_markdown_report
 from app.utils.supabase_client import supabase
 
@@ -25,7 +24,7 @@ class ShareResponse(BaseModel):
 def _assert_task_owner(task_id: str, request: Request) -> None:
     user_id = getattr(request.state, "user_id", None)
     if not user_id or user_id == "anonymous":
-        return
+        raise HTTPException(status_code=401, detail="需要登录")
 
     try:
         task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
@@ -58,9 +57,7 @@ def _create_report_from_completed_task(task_id: str, share_token: str) -> dict:
     report_row = build_report_row(task_id, task_result, existing_share_token=share_token)
     try:
         resp = supabase.table("reports").insert(report_row).execute()
-        report = resp.data[0] if resp.data else report_row
-        ensure_case_library_entry(supabase, task, report)
-        return report
+        return resp.data[0] if resp.data else report_row
     except Exception as exc:
         logger.error("Failed to create report row for share task %s: %s", task_id, exc)
         raise HTTPException(status_code=500, detail="报告分享准备失败")

@@ -41,6 +41,26 @@ def _fetch_public_case(case_id: str) -> dict[str, Any] | None:
     return resp.data[0] if resp.data else None
 
 
+def _find_private_storage_path(row: dict[str, Any], file_id: str) -> str | None:
+    task_id = row.get("task_id")
+    if not task_id:
+        return None
+    try:
+        resp = supabase.table("tasks").select("metadata,storage_paths").eq("id", task_id).limit(1).execute()
+    except Exception as exc:
+        logger.warning("Failed to fetch task files for public case preview %s: %s", row.get("id"), exc)
+        return None
+    task = resp.data[0] if resp.data else {}
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    storage_paths = task.get("storage_paths") if isinstance(task.get("storage_paths"), dict) else {}
+    files = metadata.get("files") or storage_paths.get("files") or []
+    for item in files:
+        if isinstance(item, dict) and str(item.get("id")) == str(file_id):
+            storage_path = item.get("storage_path")
+            return str(storage_path) if storage_path else None
+    return None
+
+
 @router.get("", response_model=CaseListResponse)
 async def list_cases(category: Category = "all", page: int = 1, page_size: int = 6):
     safe_page = max(page, 1)
@@ -94,10 +114,11 @@ async def create_preview_url(case_id: str, request: PreviewUrlRequest):
         raise HTTPException(status_code=404, detail="公开案例不存在")
 
     file_info = find_public_file(row, request.file_id)
-    if not file_info or not file_info.get("storage_path"):
+    storage_path = _find_private_storage_path(row, request.file_id)
+    if not file_info or not storage_path:
         raise HTTPException(status_code=404, detail="公开案例检材不存在")
     try:
-        signed = supabase.storage.from_("media").create_signed_url(file_info["storage_path"], 600)
+        signed = supabase.storage.from_("media").create_signed_url(storage_path, 600)
         signed_url = signed.get("signedURL") or signed.get("signedUrl")
         if not signed_url:
             raise ValueError("Empty signed URL response")

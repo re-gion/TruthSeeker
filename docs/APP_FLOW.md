@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-05-28
+> 更新时间：2026-06-01
 
 ## 1. 输入边界
 
@@ -153,7 +153,14 @@ flowchart TD
 - `consultation_resumed`
 - `task_failed`
 - `error`
+- `case_import_start`
+- `case_import_created`
+- `case_import_duplicate`
+- `case_import_skipped`
+- `case_import_error`
 - `complete`
+
+`final_verdict` 后，如果任务已勾选公开案例库，后端会先推送 `case_import_start`，生成公开案例标题和摘要并尝试入库/索引，然后推送 `case_import_created`、`case_import_duplicate` 或 `case_import_error`；未勾选时推送 `case_import_skipped`。`complete` 在案例导入阶段终态之后发送，前端报告按钮只在 `complete` 且导入阶段结束后显示。历史回放中的已完成任务默认视为导入阶段已结束，不重新触发入库。
 
 新图谱不新增必须消费的新 SSE 事件，随 `final_verdict.provenance_graph` 下发；历史回放从 `reports.verdict_payload`、`analysis_states.result_snapshot`、`agent_logs`、`timeline_events` 和 `audit_logs` 读取。
 
@@ -177,13 +184,13 @@ flowchart TD
 
 ## 9. 公开案例库
 
-公开案例库使用独立 `case_library_entries` 表，只保存脱敏后的卡片字段、报告 Markdown、文件元数据和私有 Storage 引用，不复制音视频等大文件。案例入库条件：
+公开案例库使用独立 `case_library_entries` 表，只保存脱敏后的卡片字段、报告 Markdown 和公开展示所需文件元数据，不复制音视频等大文件，也不在公开案例记录中保存 `storage_path` 或文件 SHA-256。重复判断仍基于任务原始文件清单中的 SHA-256 指纹完成。案例入库条件：
 
 - 用户在上传时勾选愿意脱敏后公开。
 - 检测任务完整生成最终报告并写入 `reports`。
 - 全局公开案例中不存在相同文件 SHA-256 集合和相同 `case_prompt` 的案例。
 
-公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的真实案例；`GET /api/v1/cases/{id}` 也支持 `builtin-*` 内置案例详情。预览接口按需生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告，内置展示案例也可点击查看补齐后的 Markdown 报告。
+公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的真实案例；`GET /api/v1/cases/{id}` 也支持 `builtin-*` 内置案例详情。预览接口按需从原任务私有文件记录读取 Storage path 并生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告，内置展示案例也可点击查看补齐后的 Markdown 报告。
 
 公开案例 RAG 使用 `case_library_rag_chunks` 保存真实公开案例和内置案例的 Markdown 分块、1024 维 embedding、分类/裁决元数据和全文索引。默认 embedding 服务为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`，配置项为 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`CASE_RAG_ENABLED` 和 `CASE_RAG_TOP_K`。新增公开案例生成完整报告后会尝试自动索引；历史案例和内置案例可用 `python scripts/rebuild_case_rag_index.py --include-builtin --include-public` 回填。
 

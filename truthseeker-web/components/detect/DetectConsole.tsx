@@ -3,7 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "motion/react"
 import Image from "next/image"
-import { useAgentStream } from "@/hooks/useAgentStream"
+import { useAgentStream, type CaseImportStatus } from "@/hooks/useAgentStream"
 import { useRealtimeSession, UserRole } from "@/hooks/useRealtimeSession"
 import { AgentLog } from "@/components/agents/AgentLog"
 import { AgentCard } from "@/components/agents/AgentCard"
@@ -225,6 +225,7 @@ function buildSystemWorkflow({
     isRunning,
     isComplete,
     isWaitingConsultation,
+    caseImportStatus,
 }: {
     logs: WorkflowLog[]
     taskLoaded: boolean
@@ -233,6 +234,7 @@ function buildSystemWorkflow({
     isRunning: boolean
     isComplete: boolean
     isWaitingConsultation: boolean
+    caseImportStatus: CaseImportStatus
 }) {
     const steps: WorkflowStep[] = [
         {
@@ -291,6 +293,45 @@ function buildSystemWorkflow({
             detail: "鉴伪与溯源报告完成",
             tone: "complete",
         })
+    }
+
+    if (isComplete || caseImportStatus === "importing") {
+        if (caseImportStatus === "importing") {
+            steps.push({
+                key: "case-import-running",
+                title: "公开案例导入中",
+                detail: "AI 正在生成案例标题与摘要",
+                tone: "running",
+            })
+        } else if (caseImportStatus === "created") {
+            steps.push({
+                key: "case-import-done",
+                title: "案例已入库",
+                detail: "已发布至公开案例库",
+                tone: "complete",
+            })
+        } else if (caseImportStatus === "duplicate") {
+            steps.push({
+                key: "case-import-dup",
+                title: "案例已存在",
+                detail: "相同检材已在案例库中",
+                tone: "complete",
+            })
+        } else if (caseImportStatus === "skipped") {
+            steps.push({
+                key: "case-import-skip",
+                title: "案例导入跳过",
+                detail: "未勾选公开至案例库",
+                tone: "complete",
+            })
+        } else if (caseImportStatus === "error") {
+            steps.push({
+                key: "case-import-err",
+                title: "案例导入失败",
+                detail: "不影响报告查看",
+                tone: "complete",
+            })
+        }
     }
 
     return steps.slice(-7)
@@ -394,7 +435,8 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         logs, forensicsResult, osintResult, challengerFeedback,
         finalVerdict, isRunning, isComplete,
         currentNode, currentRound, isWaitingConsultation,
-        errorMessage, consultationState, resume
+        errorMessage, consultationState, resume,
+        caseImportStatus, isReportReady
     } = useAgentStream({
         taskId,
         inputType: taskContext.inputType,
@@ -434,7 +476,8 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         isRunning,
         isComplete,
         isWaitingConsultation,
-    }), [currentNode, isComplete, isRunning, isWaitingConsultation, taskContext.files.length, taskLoaded, timelineLogs])
+        caseImportStatus,
+    }), [caseImportStatus, currentNode, isComplete, isRunning, isWaitingConsultation, taskContext.files.length, taskLoaded, timelineLogs])
     const activeAgent = currentNode || (isComplete ? "commander" : null)
     const agentLineModes = useMemo(() => buildAgentLineModes(timelineLogs, activeAgent), [activeAgent, timelineLogs])
     const logsByAgent = useMemo(() => ({
@@ -601,7 +644,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 继续研判
                             </button>
                         )}
-                        {isComplete && (
+                        {isReportReady && (
                             <button
                                 onClick={async () => downloadCanonicalMarkdownReport(taskId, await getAuthToken())}
                                 className="text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors"
@@ -609,7 +652,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 MD 报告
                             </button>
                         )}
-                        {isComplete && (
+                        {isReportReady && (
                             <button
                                 onClick={async () => downloadPdfReport(taskId, await getAuthToken())}
                                 className="text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors"
@@ -617,7 +660,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                                 PDF 报告
                             </button>
                         )}
-                        {isComplete && (
+                        {isReportReady && (
                             <button
                                 onClick={async () => {
                                     try {

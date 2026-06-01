@@ -85,6 +85,7 @@ def test_create_share_link_reuses_existing_token(monkeypatch):
     from app.api.v1 import share as share_module
 
     monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+    monkeypatch.setattr(share_module, "_assert_task_owner", lambda task_id, request: None)
 
     db = {
         "reports": [{"id": "report-1", "task_id": "task-1", "share_token": "existing-token"}],
@@ -103,6 +104,7 @@ def test_create_share_link_builds_report_from_completed_task_when_missing(monkey
     from app.api.v1 import share as share_module
 
     monkeypatch.setattr("app.middleware.auth._is_public", lambda path, method="GET": True)
+    monkeypatch.setattr(share_module, "_assert_task_owner", lambda task_id, request: None)
 
     db = {
         "tasks": [
@@ -428,6 +430,17 @@ def test_create_share_link_rejects_cross_user_task(monkeypatch):
         share_module._assert_task_owner("task-1", request)
 
     assert exc_info.value.status_code == 403
+
+
+def test_create_share_link_rejects_anonymous_user():
+    from app.api.v1 import share as share_module
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="anonymous"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        share_module._assert_task_owner("task-1", request)
+
+    assert exc_info.value.status_code == 401
 
 
 def test_download_pdf_returns_error_when_generation_unavailable(monkeypatch):

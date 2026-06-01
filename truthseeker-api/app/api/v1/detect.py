@@ -21,6 +21,8 @@ from app.services.analysis_persistence import (
     normalize_final_verdict,
 )
 from app.services.audit_log import record_audit_event
+from app.services.case_library import ensure_case_library_entry, wants_public_case
+from app.services.case_rag import index_case_record
 from app.services.consultation_workflow import latest_human_consultation_messages
 from app.services.evidence_files import (
     UploadedEvidenceFile,
@@ -29,6 +31,7 @@ from app.services.evidence_files import (
     normalize_uploaded_files,
     require_evidence_files,
 )
+from app.agents.tools.llm_client import get_llm
 from app.utils.supabase_client import supabase
 
 try:
@@ -124,6 +127,68 @@ def _safe_storage_paths(task: dict[str, Any] | None) -> dict[str, Any]:
 def _fetch_task(task_id: str) -> dict[str, Any] | None:
     resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
     return resp.data[0] if resp.data else None
+
+
+def _fetch_report(task_id: str) -> dict[str, Any] | None:
+    resp = supabase.table("reports").select("*").eq("task_id", task_id).execute()
+    return resp.data[0] if resp.data else None
+
+
+def _insert_report(task_id: str, final_verdict_data: dict[str, Any]) -> dict[str, Any]:
+    from app.services.analysis_persistence import build_report_row
+
+    report_row = build_report_row(task_id, final_verdict_data)
+    resp = supabase.table("reports").insert(report_row).execute()
+    return resp.data[0] if resp.data else report_row
+
+
+async def _run_case_import_phase(
+    queue: asyncio.Queue[str],
+    task_id: str,
+    task: dict[str, Any] | None,
+    final_verdict_data: dict[str, Any],
+    user_id: str,
+) -> None:
+    try:
+        fresh_task = _fetch_task(task_id) or task
+    except Exception as exc:
+        logger.warning("Failed to refresh task for case import %s, using loaded task: %s", task_id, exc)
+        fresh_task = task
+    if not wants_public_case(fresh_task):
+        await queue.put(_sse({"type": "case_import_skipped", "task_id": task_id, "reason": "not_requested"}))
+        return
+
+    await queue.put(_sse({"type": "case_import_start", "task_id": task_id}))
+    try:
+        report_row = _fetch_report(task_id) or _insert_report(task_id, final_verdict_data)
+        try:
+            llm = get_llm()
+        except Exception as exc:
+            logger.warning("Kimi unavailable for public case import %s, using fallback title/summary: %s", task_id, exc)
+            llm = None
+
+        import_result = await ensure_case_library_entry(
+            supabase,
+            fresh_task,
+            report_row,
+            llm=llm,
+        )
+        import_status = import_result.get("status", "error")
+        if import_status == "created" and import_result.get("entry"):
+            try:
+                await index_case_record(supabase, import_result["entry"], source_kind="public")
+            except Exception as exc:
+                logger.warning("Public case RAG indexing skipped for %s: %s", task_id, exc)
+        await queue.put(_sse({"type": f"case_import_{import_status}", "task_id": task_id}))
+        record_audit_event(
+            action=f"case_import_{import_status}",
+            task_id=task_id,
+            user_id=user_id,
+            metadata={"import_status": import_status},
+        )
+    except Exception as exc:
+        logger.error("Case import failed for task %s: %s", task_id, exc)
+        await queue.put(_sse({"type": "case_import_error", "task_id": task_id}))
 
 
 def _assert_task_owner(task: dict[str, Any] | None, user_id: str | None) -> None:
@@ -475,6 +540,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     metadata={"mode": "persistence_recovery", "expert_message_count": len(expert_messages)},
                 )],
             }))
+            await _run_case_import_phase(queue, task_id, task, final_verdict_data, user_id)
             await queue.put(_sse({
                 "type": "complete",
                 "task_id": task_id,
@@ -699,6 +765,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         metadata={"verdict": final_verdict_data.get("verdict")},
                     )],
                 }))
+                await _run_case_import_phase(queue, task_id, task, final_verdict_data, user_id)
                 await queue.put(_sse({
                     "type": "complete",
                     "task_id": task_id,
