@@ -81,18 +81,11 @@ async def generate_case_title_and_summary(
 
 ### 4.2 `case_library.py` — 改造 `ensure_case_library_entry` 为 async
 
-```python
-async def ensure_case_library_entry_async(
-    client,
-    task: dict | None,
-    report: dict | None,
-    report_markdown: str | None = None,
-) -> dict:
-```
+将 `ensure_case_library_entry` 改为 `async def`，内部调用 `await generate_case_title_and_summary(...)`，替换原有的 `title` 和 `summary` 生成逻辑。
 
-内部调用 `generate_case_title_and_summary`，替换原有的 `title` 和 `summary` 生成逻辑。
+`detect.py` 和 `share.py` 均改为 `await ensure_case_library_entry(...)`（两者路由函数都是 `async def`，直接 await 即可）。
 
-原同步版 `ensure_case_library_entry` 保留不变（`share.py` 继续调用它），其内部 title/summary 生成逻辑同步调用 LLM（用 `asyncio.get_event_loop().run_until_complete` 或直接用同步 HTTP 客户端）。async 版 `ensure_case_library_entry_async` 仅供 `detect.py` 的 SSE 生成器使用，两者共享 `generate_case_title_and_summary` 的 prompt 逻辑但分别实现同步/异步调用。
+**注意**：`share.py` 中的 `ensure_case_library_entry` 调用**直接删除**。分享报告只负责生成 `share_token` 返回链接，与入库完全无关。入库已在研判完成后自动完成，分享时无需重复检测或入库。
 
 ### 4.3 `detect.py` — 在 `complete` 后推送导入进度
 
@@ -236,7 +229,8 @@ if (isComplete) {
 
 ## 六、兼容性
 
-- `share.py` 中的 `ensure_case_library_entry` 同步调用保留不变，内部使用同步 LLM 调用（`httpx` 同步客户端），不依赖 async 版，避免在 FastAPI 事件循环中嵌套 `asyncio.run`
+- `share.py` 中删除 `ensure_case_library_entry` 调用，分享只负责生成 `share_token`，与入库完全解耦
+- `ensure_case_library_entry` 改为 async，`detect.py` 和 `share.py` 路由函数均为 `async def`，直接 `await` 调用，无嵌套事件循环问题
 - 已完成任务（从历史恢复）：`caseImportStatus` 默认 `skipped`，`isReportReady` 直接为 `true`，不影响已完成任务的报告查看
 - 未勾选公开的任务：`case_import_skipped` 立即推送，按钮立即解锁，用户无感知延迟
 
