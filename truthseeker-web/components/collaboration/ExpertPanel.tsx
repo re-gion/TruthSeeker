@@ -169,6 +169,7 @@ export function ExpertPanel({
     const [moderationPending, setModerationPending] = useState(false)
     const sentIdsRef = useRef<Set<string>>(new Set())
     const scrollRef = useRef<HTMLDivElement>(null)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
     const canModerate = canModerateConsultation(currentRole)
     const effectiveStatus = statusOverride ?? consultationState?.status
     const supabase = useMemo(() => {
@@ -185,6 +186,14 @@ export function ExpertPanel({
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }
     }, [comments])
+
+    // 输入框自动高度
+    useEffect(() => {
+        const el = textareaRef.current
+        if (!el) return
+        el.style.height = "auto"
+        el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+    }, [inputValue])
 
     useEffect(() => {
         if (consultationState?.summaryDraft) {
@@ -252,7 +261,7 @@ export function ExpertPanel({
 
         const pollTimer = window.setInterval(() => {
             void loadMessages()
-        }, 2500)
+        }, 10000)
 
         void channel.subscribe()
 
@@ -639,8 +648,8 @@ export function ExpertPanel({
                                         value={editableSummary}
                                         onChange={(e) => setEditableSummary(e.target.value)}
                                         placeholder="编辑 Commander 待确认的会诊摘要..."
-                                        rows={2}
-                                        className="w-full resize-none rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-[#D4FF12]/40"
+                                        rows={5}
+                                        className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-[#D4FF12]/40 min-h-[80px]"
                                     />
                                     <button
                                         type="button"
@@ -659,8 +668,8 @@ export function ExpertPanel({
                             专家可提交意见，不能结束会诊或确认摘要。
                         </div>
                     )}
-                    <div className="flex gap-2 items-center">
-                        <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
+                    <div className="flex gap-2 items-end">
+                        <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0 mb-0.5">
                             <Image
                                 src={ROLE_CONFIG[currentRole]?.avatar || "/host-avatar.png"}
                                 alt="我"
@@ -669,17 +678,27 @@ export function ExpertPanel({
                                 className="w-full h-full object-cover"
                             />
                         </div>
-                        <input
-                            type="text"
+                        <textarea
+                            ref={textareaRef}
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
-                            placeholder={currentRole === 'host' ? "以用户身份回复专家..." : "提交专家意见..."}
-                            className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-1.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault()
+                                    if (inputValue.trim()) {
+                                        e.currentTarget.form?.requestSubmit()
+                                    }
+                                }
+                            }}
+                            placeholder={currentRole === 'host' ? "以用户身份回复专家… (Enter 发送，Shift+Enter 换行)" : "提交专家意见… (Enter 发送，Shift+Enter 换行)"}
+                            rows={1}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-1.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none overflow-hidden"
+                            style={{ minHeight: "36px", maxHeight: "120px" }}
                         />
                         <button
                             type="submit"
                             disabled={!inputValue.trim()}
-                            className="px-4 py-1.5 bg-[#D4FF12] text-black font-semibold rounded-full text-xs hover:bg-[#bce600] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            className="px-4 py-1.5 bg-[#D4FF12] text-black font-semibold rounded-full text-xs hover:bg-[#bce600] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5"
                         >
                             发送
                         </button>

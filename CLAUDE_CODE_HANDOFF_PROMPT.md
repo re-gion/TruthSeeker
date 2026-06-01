@@ -1,414 +1,393 @@
 # Claude Code Handoff Prompt
 
-你是接手 TruthSeeker 项目的本地工程代理。请在用户电脑上的真实终端和网络环境里继续收尾、验证并必要时修复 Codex 已实现但尚未完成真实 Supabase 端到端验证的“公开案例库真实化”工作。
+你是接手 TruthSeeker 项目的本地工程代理。请在用户电脑上的真实终端、真实网络和可用浏览器环境里继续收尾、验证并必要时修复 Codex 已实现但仍未做真实远端验证的“公开案例库 RAG 工具化”工作。
 
 ## 角色和沟通约定
 
 - 默认用通俗、清晰、自然的中文向用户汇报。
 - 汇报优先说明：做了什么、当前是否可用、实际验证、残留风险、是否需要用户介入。
 - 不要把计划、猜测或“理论上可行”说成已经完成。
-- 不要泄露 `.env`、`.env.local`、Supabase service role key、JWT secret、API key 或本地配置里的真实密钥。
+- 不要泄露 `.env`、`.env.local`、`.mcp.json`、Supabase service role key、JWT secret、SiliconFlow API key 或任何真实密钥。
 - 不要覆盖、回滚或混入用户无关改动；提交前必须用 `git status --short` 和选择性 staging 确认范围。
+- 用户偏好实际验证，不喜欢泛泛而谈。网络、沙箱、权限或依赖问题要用现场命令证据说明。
 
-## 当前环境
+## 当前环境和仓库状态
 
 - 项目路径：`D:\a311\系统赛\2026系统赛\信安`
 - 操作系统：Windows
-- 当前 shell：PowerShell
-- 当前分支：Codex 开始交接时在 `codex/public-case-library`，用户要求合并回 `main`。
-- Codex 已尝试使用 Windows/Codex 沙盒和受限终端；真实 Supabase 线上连接和迁移执行未完成。
-- 这台机器历史上存在 Codex 沙盒网络/DNS/代理问题。浏览器能联网不代表 Codex 沙盒内 `npm`、`pip`、`git`、`curl`、Supabase REST 可用。你应优先使用用户真实终端/真实网络环境验证远端 Supabase。
+- 常用 shell：PowerShell
+- 当前分支：`codex/case-rag-tooling`
+- 当前 HEAD：`716bea4`
+- Codex 本轮没有提交，工作区有未提交改动。
+- 这台机器历史上存在 Codex 沙盒网络/DNS/权限问题。浏览器或普通 PowerShell 能联网，不代表 Codex 沙盒里的 `npm`、`pip`、`git`、`curl`、Supabase REST 或外部 API 可用。
 
-## 用户目标
+### 当前 `git status --short --branch`
 
-用户最初要求把原本纯前端硬编码的“全模态演示案例库”真实实现，并改定位为“公开案例库”：
+```text
+## codex/case-rag-tooling
+ M docs/APP_FLOW.md
+ M docs/BACKEND_STRUCTURE.md
+ M docs/TECH_STACK.md
+ M lessons.md
+ M task.md
+ M truthseeker-api/.env.example
+ M truthseeker-api/app/agents/nodes/forensics.py
+ M truthseeker-api/app/agents/nodes/osint.py
+ M truthseeker-api/app/agents/tools/llm_client.py
+ M truthseeker-api/app/api/v1/cases.py
+ M truthseeker-api/app/config.py
+ M truthseeker-api/app/services/analysis_persistence.py
+ M truthseeker-api/app/services/case_library.py
+ M truthseeker-api/app/services/report_generator.py
+ M truthseeker-web/components/cases/CaseDetailClient.tsx
+ M truthseeker-web/components/cases/CaseLibraryClient.tsx
+ M truthseeker-web/lib/cases.test.ts
+ M truthseeker-web/lib/cases.ts
+?? truthseeker-api/app/services/builtin_cases.py
+?? truthseeker-api/app/services/case_rag.py
+?? truthseeker-api/scripts/
+?? truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
+?? truthseeker-api/tests/test_agent_case_rag.py
+?? truthseeker-api/tests/test_case_rag.py
+?? truthseeker-api/tests/test_case_rag_report.py
+```
 
-- 保留原来的 4 个内置案例，只作为不可点击的展示卡片。
-- 真实新增案例来自用户历史检测任务。
-- 只有用户上传时勾选“愿意脱敏后公开至案例库”，且检测完整生成最终研判报告后，才自动进入公开案例库。
-- 原始图片/文本/音频/视频检材不写入数据库，只复用 Supabase Storage 私有 `media` bucket 的 `storage_path`。
-- 案例表保存：标题、媒体标签、摘要、结论、置信度、难度/风险、脱敏文件元数据、报告 Markdown、去重指纹、发布时间和状态。
-- 公开案例详情页以 Markdown 渲染研判报告，而不是只给报告链接。
-- 支持分类筛选和分页：全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造。
-- 去重规则：同一组初始媒体检材 SHA-256 + 同一份规范化 `case_prompt` 才算重复；重复时继续正常检测并生成用户报告，但不重复入库。
-- 公开案例库匿名可见；详情页可通过后端生成短期签名 URL 预览原检材。
-- Supabase Free 层约束：不要复制大文件；勾选公开案例库时单文件按 50MB 上限处理。
+没有发现本轮之外的明显无关脏文件，但你仍需在提交前重新检查 `git status --short`。
 
-用户最新要求：
+## 用户目标和补充要求
 
-- 生成一份 Claude Code 可直接复制使用的交接提示词。
-- 默认写入项目根目录 `CLAUDE_CODE_HANDOFF_PROMPT.md`。
-- 帮用户把当前功能分支合并回主分支。
+用户最初目标：把之前做的公开案例库升级成一个 RAG，让电子取证 Agent 和情报溯源 Agent 在鉴伪与溯源过程中多一个“公开案例搜索工具”，能检索已有公开案例进行推理分析借鉴，并在研判报告中展示工具调用情况和分析汇报。
 
-## Codex 已完成的代码改动
+本轮规划中已经确定：
 
-### 后端
+- 语料范围：真实公开案例 + 4 个内置展示案例。
+- 检索底座：Supabase Postgres + pgvector 混合检索。
+- embedding 配置：独立 embedding 配置，不复用 Kimi 推理配置。
+- embedding 模型：SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`。
+- API 文档：`https://api-docs.siliconflow.cn/docs/api/embeddings-post`
+- 默认 endpoint：`https://api.siliconflow.cn/v1/embeddings`
+- embedding 维度：1024。
+- RAG 影响边界：只做类案参考，不直接改变裁决分数，不作为当前检材的强证据。
+- 调用位置：Forensics + OSINT，Commander 汇总但不重复检索。
+- 展示范围：报告 + agent/audit 日志，不新增检测台相似案例卡片。
+- 内置展示案例：后端补齐 Markdown 报告，前端也要能点击进入详情页查看报告。
+- API key：用户最后再填；你只需把基础设施搭好，填 key 后能直接接入。
 
-新增/修改：
+## Codex 已完成的文件改动
 
-- `truthseeker-api/sql/migrations/20260528_case_library_entries.sql`
-  - 新增 `public.case_library_entries` 表。
-  - 新增 `status`、`media_category`、`public_files`、`report_markdown`、`content_fingerprint` 等字段。
-  - 新增公开案例查询索引和 published 指纹唯一索引。
-  - 调整 `tasks.input_type` 约束，允许 `mixed`。
-- `truthseeker-api/app/services/case_library.py`
-  - 公开案例指纹：`build_case_fingerprint(files, case_prompt)`。
-  - 保守脱敏：邮箱、手机号、身份证号、签名 URL token、临时 storage path。
-  - 分类推导：文本生成、图像伪造、图文混合、音频伪造、视频伪造。
-  - 入库幂等：`ensure_case_library_entry()`。
-  - API 响应脱敏：不把 `storage_path` 返回给列表/详情，只在预览接口内部使用。
-- `truthseeker-api/app/api/v1/cases.py`
-  - `GET /api/v1/cases`
-  - `GET /api/v1/cases/{case_id}`
-  - `POST /api/v1/cases/{case_id}/preview-url`
-  - 只读取 `status='published'` 的案例。
-  - 预览 URL 有效期 600 秒。
-- `truthseeker-api/app/api/v1/router.py`
-  - 注册 `/cases` router。
-- `truthseeker-api/app/middleware/auth.py`
-  - 放行公开案例 GET。
-  - 放行 `POST /api/v1/cases/{id}/preview-url`。
-- `truthseeker-api/app/api/v1/upload.py`
-  - 上传时计算完整 SHA-256。
-  - `share_to_casebase=true` 时单文件限制 50MB。
-  - 上传响应返回 `sha256`。
-- `truthseeker-api/app/services/evidence_files.py`
-  - 标准化上传文件时保留 `sha256`。
-  - 混合模态 `input_type` 改为 `mixed`，避免 SQL 约束冲突。
-- `truthseeker-api/app/api/v1/tasks.py`
-  - 创建任务时，如果 `share_to_casebase` 为真，检查公开案例重复并写入 metadata：
-    - `casebase_duplicate`
-    - `casebase_duplicate_case_id`
-    - `casebase_fingerprint`
-  - `storage_paths.files` 保留 `sha256`。
-- `truthseeker-api/app/api/v1/detect.py`
-  - 检测任务文件快照保留 `sha256`。
-- `truthseeker-api/app/services/analysis_persistence.py`
-  - `upsert_report()` 写入报告后，如果任务勾选公开案例库，自动创建公开案例。
-  - 优先使用现有 `generate_markdown_report(task_id)` 生成完整 Markdown。
-  - 若完整 Markdown 生成失败，会退回 `case_library.py` 中根据 report row 构造的简版 Markdown。
-  - 对未勾选公开案例库的普通报告不额外生成案例 Markdown。
-- `truthseeker-api/app/api/v1/share.py`
-  - 当分享接口从已完成任务补建 report row 时，也会调用公开案例入库服务。
-- `truthseeker-api/tests/test_case_library.py`
-  - 覆盖指纹稳定性、脱敏、分类/字段构造、重复不入库、公开 API 列表/详情/预览。
+### 后端 RAG 基础设施
+
+- 新增 `truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql`
+  - `create extension if not exists vector`
+  - 新增 `case_library_rag_chunks`
+  - `embedding vector(1024)`
+  - HNSW cosine 索引
+  - 全文 GIN 索引
+  - `match_case_library_rag_chunks(...)` RPC
+- 新增 `truthseeker-api/app/services/case_rag.py`
+  - Markdown 分块
+  - `build_chunk_hash`
+  - SiliconFlow/OpenAI-compatible embedding client
+  - vector + keyword 混合检索
+  - `case_rag_search`
+  - `index_case_record`
+  - `rebuild_case_rag_index`
+- 新增 `truthseeker-api/scripts/rebuild_case_rag_index.py`
+  - 用法：`python scripts/rebuild_case_rag_index.py --include-builtin --include-public`
+- 修改 `truthseeker-api/app/config.py`
+  - 新增 `CASE_RAG_ENABLED`
+  - 新增 `CASE_RAG_TOP_K`
+  - 新增 `EMBEDDING_BASE_URL`
+  - 新增 `EMBEDDING_API_KEY`
+  - 新增 `EMBEDDING_MODEL=Qwen/Qwen3-VL-Embedding-8B`
+  - 新增 `EMBEDDING_DIMENSIONS=1024`
+- 修改 `truthseeker-api/.env.example`
+  - 补充上述 RAG/embedding 示例配置。
+
+### 内置案例资料源和公开案例 API
+
+- 新增 `truthseeker-api/app/services/builtin_cases.py`
+  - 4 个内置案例：
+    - `builtin-audio-scam`
+    - `builtin-video-faceswap`
+    - `builtin-mixed-phishing`
+    - `builtin-text-news`
+  - 每个内置案例都有 Markdown 研判报告。
+- 修改 `truthseeker-api/app/api/v1/cases.py`
+  - `GET /api/v1/cases/{case_id}` 支持 `builtin-*` 内置案例详情。
+- 修改 `truthseeker-api/app/services/case_library.py`
+  - API 响应新增 `source_kind`，真实公开案例默认为 `public`。
+
+### Agent 接入
+
+- 修改 `truthseeker-api/app/agents/nodes/forensics.py`
+  - 调用 `case_rag_search`
+  - RAG 结果写入 `tool_results`
+  - RAG 状态写入 `tool_summary.case_rag_status` 和 `tool_summary.case_rag_matches`
+  - 写入 `forensics_result.case_rag`
+  - RAG 不参与取证降级分数统计
+  - 记录 `case_rag.<status>` audit event
+- 修改 `truthseeker-api/app/agents/nodes/osint.py`
+  - 同样接入 `case_rag_search`
+  - 写入 `osint_result.case_rag`
+  - RAG 不参与 OSINT 工具降级分数统计
+  - 记录 `case_rag.<status>` audit event
+- 修改 `truthseeker-api/app/agents/tools/llm_client.py`
+  - Forensics、OSINT、Commander prompt 都明确：相似案例只作类案参考，不能当作当前任务事实或强证据。
+
+### 持久化与报告
+
+- 修改 `truthseeker-api/app/services/analysis_persistence.py`
+  - 新增公开案例创建后自动尝试索引 RAG chunk。
+  - 失败只 warning，不阻断检测/报告。
+- 修改 `truthseeker-api/app/services/report_generator.py`
+  - 新增“公开案例 RAG 调用情况”章节。
+  - 显示 Forensics / OSINT 调用状态、命中案例、相似度、可借鉴点和边界说明。
+  - 降级或无命中也会写清楚。
+  - `_dict_to_markdown` 跳过 `case_rag` 原始对象，避免报告重复 dump。
 
 ### 前端
 
-新增/修改：
+- 修改 `truthseeker-web/lib/cases.ts`
+  - 增加 `sourceKind`
+  - 增加 `normalizeCaseDetail`
+- 修改 `truthseeker-web/components/cases/CaseLibraryClient.tsx`
+  - 4 个内置展示案例 ID 改为 `builtin-*`
+  - 内置卡片从不可点击展示改为链接到 `/cases/{id}`
+- 修改 `truthseeker-web/components/cases/CaseDetailClient.tsx`
+  - 内置案例不显示删除按钮。
+  - 内置案例不显示短期预览按钮。
+- 修改 `truthseeker-web/lib/cases.test.ts`
+  - 覆盖内置案例 `source_kind` 映射。
 
-- `truthseeker-web/lib/cases.ts`
-  - 公开案例 API client。
-  - 分类枚举和标签。
-  - 列表/详情响应归一化。
-  - 预览 URL 请求。
-- `truthseeker-web/lib/cases.test.ts`
-  - 覆盖分类标签、列表归一化、API 请求形状。
-- `truthseeker-web/components/cases/CaseLibraryClient.tsx`
-  - `/cases` 客户端主体。
-  - 支持分类筛选、分页、真实公开案例卡片、4 个内置展示案例。
-  - 内置展示案例不可点击。
-- `truthseeker-web/components/cases/CaseDetailClient.tsx`
-  - `/cases/[caseId]` 详情页主体。
-  - 渲染脱敏 Markdown 报告。
-  - 文件列表支持请求短期预览 URL。
-  - 音频/视频/图片按类型预览。
-- `truthseeker-web/app/cases/page.tsx`
-  - 页面标题从演示案例库改为公开案例库。
-  - 使用 `CaseLibraryClient`。
-- `truthseeker-web/app/cases/[caseId]/page.tsx`
-  - 新增公开案例详情页路由。
-- `truthseeker-web/middleware.ts`
-  - 放行匿名访问 `/cases` 和 `/cases/*`。
-- `truthseeker-web/components/layout/HeaderClient.tsx`
-  - 导航文案改为“公开案例库”。
-- `truthseeker-web/components/upload/FileUploader.tsx`
-  - 勾选公开案例库时，前端先检查 50MB 上限。
-  - 上传 `FormData` 传 `share_to_casebase`。
-  - 保留后端返回的 `sha256` 并提交到任务 metadata / storage paths。
-  - 如果后端返回 `metadata.casebase_duplicate`，跳转检测页时带 `casebase=duplicate`。
-- `truthseeker-web/components/upload/FileUploader.test.ts`
-  - 覆盖公开案例库 50MB 前端限制。
-- `truthseeker-web/components/detect/DetectConsole.tsx`
-  - 如果 URL 包含 `casebase=duplicate`，显示“检测照常进行但不会重复入库”的提示。
+### 测试
 
-### 文档
+- 新增 `truthseeker-api/tests/test_case_rag.py`
+- 新增 `truthseeker-api/tests/test_agent_case_rag.py`
+- 新增 `truthseeker-api/tests/test_case_rag_report.py`
+- 已有 `truthseeker-api/tests/test_case_library.py` 仍通过。
 
-已更新：
+### 文档和项目状态
 
-- `task.md`
-  - 将“案例库真实加载功能暂不实现”更新为已完成公开案例库真实加载。
-- `docs/APP_FLOW.md`
-  - 补充公开案例库上传限制、去重、入库、公开 API、短期预览和暂不实现项。
-- `docs/PRD.md`
-  - 将“案例库”定位更新为“公开案例库”。
-- `lessons.md`
-  - 记录 Supabase 免费层、不要复制音视频大文件、重复公开不阻断正常检测等经验。
-- `CLAUDE_CODE_HANDOFF_PROMPT.md`
-  - 本交接文档。
+- 修改 `docs/APP_FLOW.md`
+  - 写入公开案例 RAG 数据流、内置案例详情、回填脚本和 pgvector 状态。
+- 修改 `docs/BACKEND_STRUCTURE.md`
+  - 写入 `case_rag.py`、`builtin_cases.py`、pgvector 和 SiliconFlow embedding 配置。
+- 修改 `docs/TECH_STACK.md`
+  - 写入 pgvector 和 embedding 环境变量。
+- 修改 `task.md`
+  - 将“pgvector/向量库暂不实现”更新为公开案例库 RAG 工具化已实现。
+- 修改 `lessons.md`
+  - 记录 RAG 只能做类案参考、不可作为当前事实证据。
 
-## Codex 已运行并通过的验证
+## Codex 已完成且验证通过的内容
 
-这些结果来自 Codex 当前会话，Claude Code 可轻量复核，不必重复实现：
-
-后端：
+已通过：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-python -m pytest tests/test_case_library.py
-# 5 passed
+.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_case_library.py tests/test_case_rag.py tests/test_agent_case_rag.py tests/test_case_rag_report.py -q
+```
 
-python -m pytest tests/test_case_library.py tests/test_analysis_persistence.py tests/test_report_and_consultation_api.py
-# 21 passed, 2 warnings
+结果：`14 passed in 4.79s`
 
-python -m pytest tests
-# 117 passed, 2 warnings
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
+npm run test:unit -- lib/cases.test.ts
+```
 
-python -m compileall app
-# passed
+结果：`4 passed`
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
+npm run typecheck
+```
+
+结果：通过。
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
+python -c "import ast, pathlib; files=[...]; [ast.parse(pathlib.Path(f).read_text(encoding='utf-8'), filename=f) for f in files]; print('ast-parse-ok', len(files))"
+```
+
+结果：`ast-parse-ok 14`
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安
+git diff --check
+```
+
+结果：退出码 0，无 whitespace 错误；只有 Git 的 CRLF 提示。
+
+## Codex 尝试过但失败或受限的内容
+
+- 普通全局 `python -m pytest ...` 失败：`C:\Python313\python.exe: No module named pytest`
+- `python -m pip install pytest` 在普通沙盒里失败过：用户 site-packages 权限问题。
+- 后来使用宿主/已批准方式确认用户目录里有 pytest，但全局 `python` 的 `sys.path` 仍不包含用户 site-packages。
+- 正确可用测试入口是项目虚拟环境：`truthseeker-api\venv_new\Scripts\python.exe`
+- `python -m compileall app tests scripts` 失败过，原因是写 `tests\__pycache__` 权限被拒绝。Codex 改用 AST parse 做语法检查并通过。
+- 没有执行真实 Supabase 迁移。
+- 没有真实调用 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding API，因为用户还没填 API key。
+- 没有做浏览器端真实页面验证。
+- 没有运行完整后端测试全集，也没有跑前端生产 build。
+
+## Claude Code 需要继续做的任务，按优先级排序
+
+### P0：复核当前代码并确认没有明显实现问题
+
+1. 先运行：
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安
+git status --short --branch
+git diff --check
+```
+
+2. 快速审查以下关键文件：
+
+```text
+truthseeker-api/app/services/case_rag.py
+truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
+truthseeker-api/app/agents/nodes/forensics.py
+truthseeker-api/app/agents/nodes/osint.py
+truthseeker-api/app/services/report_generator.py
+truthseeker-web/components/cases/CaseLibraryClient.tsx
+truthseeker-web/components/cases/CaseDetailClient.tsx
+truthseeker-web/lib/cases.ts
+```
+
+重点确认：
+
+- RAG 结果不直接改变裁决分数。
+- RAG 失败不会阻断检测。
+- prompt 没把相似案例当当前事实。
+- 内置案例没有删除/短期预览按钮。
+- `source_kind` 不破坏真实公开案例列表。
+
+### P1：运行更完整的本地验证
+
+优先使用项目虚拟环境，不要用全局 Python：
+
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
+.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_case_library.py tests/test_case_rag.py tests/test_agent_case_rag.py tests/test_case_rag_report.py -q
+```
+
+如果环境允许，再跑：
+
+```powershell
+.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests -q
 ```
 
 前端：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npx vitest run lib/cases.test.ts components/upload/FileUploader.test.ts
-# 5 passed
-
-npm run test:unit
-# 44 passed
-
+npm run test:unit -- lib/cases.test.ts
 npm run typecheck
-# passed
-
 npm run lint
-# exit 0; 0 errors, 7 existing warnings
-
 npm run build
-# passed
 ```
 
-其他：
+如果完整测试/build 失败，先区分是代码问题还是 Windows/依赖/网络/权限问题，不要直接归咎代码。
 
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安
-git diff --check
-# passed
-```
+### P2：真实 Supabase 迁移和 pgvector 验证
 
-说明：
-
-- `npm run lint` 剩余 warning 来自既有文件：
-  - `components/collaboration/ExpertPanel.test.tsx` 的 `<img>` warning。
-  - `components/dashboard/DashboardClient.tsx` 的未使用变量 warning。
-  - `components/landing/AgentShowcase.tsx` 的 `<img>` warning。
-  - Codex 未处理这些旧 warning，避免扩大范围。
-- 后端 Supabase 依赖 warnings 是 supabase Python SDK 的 deprecation warning，不是本功能失败。
-
-## Codex 未完成或未真实验证的内容
-
-P0 - 必须由 Claude Code 继续完成：
-
-1. **把新增迁移应用到真实 Supabase**
-   - 文件：`truthseeker-api/sql/migrations/20260528_case_library_entries.sql`
-   - 必须确认远端存在 `case_library_entries` 表、索引、RLS policy。
-   - Codex 没有连接真实 Supabase 执行迁移。
-
-2. **做真实端到端公开案例验证**
-   - 用小型文本或图片文件，登录后勾选“愿意脱敏后公开至案例库”。
-   - 完整跑一次检测直到报告生成。
-   - 确认 `/cases` 出现真实公开案例卡片。
-   - 点进 `/cases/[caseId]`，确认 Markdown 报告渲染。
-   - 点击短期预览，确认签名 URL 可访问原检材。
-   - 用同一文件和同一提示词再次检测，确认检测继续但不重复入库，并在检测页显示重复提示。
-
-3. **合并主分支后的最终复核**
-   - 用户要求合并回 `main`，Codex 正在执行/已执行本交接时应确认最终状态。
-   - 如果合并后未 push，向用户说明本地已合并但未推送。
-
-P1 - 建议检查：
-
-1. **API 权限边界**
-   - 匿名只能读 `status='published'`。
-   - 列表和详情不返回 `storage_path`。
-   - 只有 preview 接口内部使用 `storage_path` 生成短期 signed URL。
-
-2. **报告 Markdown 完整性**
-   - 入库优先调用 `generate_markdown_report(task_id)`。
-   - 如果真实 Supabase 数据缺字段导致 canonical Markdown 生成失败，会回退为简版 Markdown。
-   - 端到端验证时要确认 `case_library_entries.report_markdown` 是否是完整报告。
-
-3. **Free 层容量风险**
-   - 勾选公开案例库时单文件限制 50MB。
-   - 普通检测仍保留原有分类型限制。
-   - 数据库不写音视频二进制，只写 Storage 引用。
-
-## 当前工作区状态（Codex 交接时）
-
-Codex 交接前 `git status --short --branch` 显示：
+需要在真实 Supabase 项目执行：
 
 ```text
-## codex/public-case-library
- M docs/APP_FLOW.md
- M docs/PRD.md
- M lessons.md
- M task.md
- M truthseeker-api/app/api/v1/detect.py
- M truthseeker-api/app/api/v1/router.py
- M truthseeker-api/app/api/v1/share.py
- M truthseeker-api/app/api/v1/tasks.py
- M truthseeker-api/app/api/v1/upload.py
- M truthseeker-api/app/middleware/auth.py
- M truthseeker-api/app/services/analysis_persistence.py
- M truthseeker-api/app/services/evidence_files.py
- M truthseeker-web/app/cases/page.tsx
- M truthseeker-web/components/detect/DetectConsole.tsx
- M truthseeker-web/components/layout/HeaderClient.tsx
- M truthseeker-web/components/upload/FileUploader.test.ts
- M truthseeker-web/components/upload/FileUploader.tsx
- M truthseeker-web/middleware.ts
-?? truthseeker-api/app/api/v1/cases.py
-?? truthseeker-api/app/services/case_library.py
-?? truthseeker-api/sql/migrations/20260528_case_library_entries.sql
-?? truthseeker-api/tests/test_case_library.py
-?? truthseeker-web/app/cases/[caseId]/
-?? truthseeker-web/components/cases/
-?? truthseeker-web/lib/cases.test.ts
-?? truthseeker-web/lib/cases.ts
-?? CLAUDE_CODE_HANDOFF_PROMPT.md
+truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
 ```
 
-没有发现明显无关改动。请仍然在你接手时重新运行：
+执行后验证：
+
+```sql
+select extname from pg_extension where extname = 'vector';
+select count(*) from public.case_library_rag_chunks;
+select indexname from pg_indexes where tablename = 'case_library_rag_chunks';
+select proname from pg_proc where proname = 'match_case_library_rag_chunks';
+```
+
+注意：不要把 service role key 或 JWT secret 输出到聊天。
+
+### P3：接入 SiliconFlow embedding API 并回填索引
+
+用户计划使用 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`。
+
+后端 `.env` 至少需要：
+
+```env
+CASE_RAG_ENABLED=true
+CASE_RAG_TOP_K=5
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_API_KEY=<用户真实 key>
+EMBEDDING_MODEL=Qwen/Qwen3-VL-Embedding-8B
+EMBEDDING_DIMENSIONS=1024
+```
+
+回填命令：
 
 ```powershell
-git status --short --branch
-git diff --stat
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
+.\venv_new\Scripts\python.exe scripts\rebuild_case_rag_index.py --include-builtin --include-public
+```
+
+预期：
+
+- 至少 4 个内置案例被索引。
+- 如果 Supabase 里已有 `case_library_entries` 且含 `report_markdown`，真实公开案例也应被索引。
+- 如果 embedding API key 不对、额度不足、网络失败，脚本应报告错误而不是伪装成功。
+
+### P4：真实检测流验证
+
+建议最小真实验证：
+
+1. 启动后端。
+2. 启动前端。
+3. 打开 `/cases`。
+4. 点击 4 个内置案例任意一个，确认进入 `/cases/builtin-*` 并渲染 Markdown 报告。
+5. 创建一个小型检测任务，触发 Forensics/OSINT。
+6. 确认 agent log 或 audit log 有 `case_rag.<status>`。
+7. 下载 Markdown 报告，确认出现“公开案例 RAG 调用情况”章节。
+8. 确认 RAG 命中只作为类案参考，没有直接改最终裁决分数。
+
+### P5：提交、推送或交给用户决策
+
+只有在你完成必要验证并确认无严重问题后再提交。
+
+提交信息必须用 Angular 风格且 subject 用中文，例如：
+
+```text
+feat: 实现公开案例库 RAG 工具化
+```
+
+提交前：
+
+```powershell
+git status --short
 git diff --check
 ```
 
-## Claude Code 应优先执行的下一步
-
-### 1. 确认 Git 状态和合并结果
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安
-git status --short --branch
-git log --oneline -5
-```
-
-如果 Codex 已提交并合并到 `main`，确认 `main` 包含公开案例库改动。
-
-如果 Codex 没有完成合并：
-
-```powershell
-git add docs/APP_FLOW.md docs/PRD.md lessons.md task.md CLAUDE_CODE_HANDOFF_PROMPT.md `
-  truthseeker-api/app/api/v1/detect.py `
-  truthseeker-api/app/api/v1/router.py `
-  truthseeker-api/app/api/v1/share.py `
-  truthseeker-api/app/api/v1/tasks.py `
-  truthseeker-api/app/api/v1/upload.py `
-  truthseeker-api/app/middleware/auth.py `
-  truthseeker-api/app/services/analysis_persistence.py `
-  truthseeker-api/app/services/evidence_files.py `
-  truthseeker-api/app/api/v1/cases.py `
-  truthseeker-api/app/services/case_library.py `
-  truthseeker-api/sql/migrations/20260528_case_library_entries.sql `
-  truthseeker-api/tests/test_case_library.py `
-  truthseeker-web/app/cases/page.tsx `
-  truthseeker-web/app/cases/[caseId]/page.tsx `
-  truthseeker-web/components/cases/CaseLibraryClient.tsx `
-  truthseeker-web/components/cases/CaseDetailClient.tsx `
-  truthseeker-web/components/detect/DetectConsole.tsx `
-  truthseeker-web/components/layout/HeaderClient.tsx `
-  truthseeker-web/components/upload/FileUploader.test.ts `
-  truthseeker-web/components/upload/FileUploader.tsx `
-  truthseeker-web/lib/cases.ts `
-  truthseeker-web/lib/cases.test.ts `
-  truthseeker-web/middleware.ts
-
-git commit -m "feat: 实现公开案例库真实闭环"
-git switch main
-git merge --no-ff codex/public-case-library
-```
-
-如果用户要求推送：
-
-```powershell
-git push origin main
-```
-
-注意：提交信息必须使用 Angular 规范，包含 type 和中文 subject。
-
-### 2. 重新跑最小验证
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-python -m pytest tests/test_case_library.py tests/test_analysis_persistence.py tests/test_report_and_consultation_api.py
-python -m pytest tests
-python -m compileall app
-
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm run test:unit
-npm run typecheck
-npm run lint
-npm run build
-```
-
-### 3. 应用 Supabase 迁移
-
-选择项目现有方式执行 `truthseeker-api/sql/migrations/20260528_case_library_entries.sql`。
-
-如果项目使用 Supabase CLI，可尝试：
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-supabase db push
-```
-
-如果没有 CLI 或项目未链接，请在 Supabase SQL Editor 中执行迁移文件内容。执行后检查：
-
-```sql
-select count(*) from public.case_library_entries;
-select policyname from pg_policies where tablename = 'case_library_entries';
-```
-
-### 4. 做真实端到端验证
-
-建议用一个小 `.txt` 或小 `.png`：
-
-1. 启动后端：
-   ```powershell
-   cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-   python -m uvicorn app.main:app --reload
-   ```
-2. 启动前端：
-   ```powershell
-   cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-   npm run dev
-   ```
-3. 浏览器打开前端，登录。
-4. 上传小文件，填写固定 `case_prompt`，勾选“愿意脱敏后公开至案例库”。
-5. 等检测完成并生成报告。
-6. 打开 `/cases`，确认真实卡片出现。
-7. 打开详情页，确认报告 Markdown 和短期预览可用。
-8. 重复相同文件和相同提示词，确认不会重复新增公开案例，但检测正常继续。
-
-如果外部 Kimi、Reality Defender、VirusTotal、Exa 不可用，系统可能走降级路径；不要把外部 API/网络失败说成案例库代码失败。要基于后端日志和测试结果判断。
+选择性 staging，不要混入无关文件。
 
 ## 需要避免的事项
 
-- 不要把 `.env`、`.env.local`、`.mcp.json` 或任何真实密钥贴到聊天或提交里。
-- 不要把未验证的 Supabase 迁移说成已经上线。
-- 不要把 Codex 只做过本地测试的内容说成已经端到端可用。
-- 不要把旧 lint warning 当作本次新增错误；但如果有新增 error 必须修。
-- 不要把 4 个内置展示案例改成可点击详情，它们按用户要求只是表面卡片。
-- 不要把原始音视频复制进数据库或新 bucket；本轮设计是复用私有 `media` bucket 的 `storage_path`。
-- 不要阻断重复案例的正常检测；重复只影响公开案例入库。
+- 不要把历史相似案例写成当前检材事实。
+- 不要让 RAG 命中直接改变 `confidence`、`deepfake_score`、`risk_score` 或最终 verdict。
+- 不要在 `.env.example` 之外提交真实 API key。
+- 不要把完整 signed URL、token、service role key、JWT secret 写进报告、日志或测试输出。
+- 不要在未执行 Supabase 迁移前宣称 RAG 远端可用。
+- 不要在未填 `EMBEDDING_API_KEY` 前宣称 SiliconFlow embedding 已真实可用。
+- 不要覆盖旧的公开案例库真实化能力；本轮是在其基础上新增 RAG。
+- 不要把 Codex 沙盒里的网络/权限失败误判为项目代码失败。
 
-## 预期交付物
+## 预期最终交付
 
-1. 本地 `main` 分支包含公开案例库真实化改动。
-2. 新增 Supabase 迁移已在远端成功执行，或明确说明用户需要手动执行。
-3. 前后端测试、typecheck、lint、build 的实际结果。
-4. 至少一次真实端到端公开案例入库验证，或明确说明阻塞原因。
-5. 最终中文汇报：完成了什么、是否可用、验证证据、残留风险、是否需要用户介入。
+你完成后请用中文简洁汇报：
+
+1. 做了什么。
+2. 当前结果是否可直接使用。
+3. 实际验证命令和结果。
+4. 未验证或失败的内容及原因。
+5. 是否需要用户提供 SiliconFlow key、Supabase 权限或其他外部资源。
+6. 如已提交/推送，说明 commit SHA 和分支。

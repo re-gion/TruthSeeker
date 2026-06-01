@@ -342,7 +342,7 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
     task = _fetch_task_or_404(task_id, "id,user_id")
     _assert_task_owner(task, request)
     session = _fetch_session_or_404(task_id, session_id)
-    if session.get("status") not in {"active", "requested", "waiting_user_approval"}:
+    if session.get("status") not in {"active", "requested", "waiting_user_approval", "summary_pending"}:
         raise HTTPException(status_code=400, detail="当前会诊状态不能结束")
     messages = _session_messages(task_id, session_id)
     summary_payload = build_moderator_summary(messages=messages)
@@ -390,6 +390,14 @@ async def confirm_consultation_summary(
         "summary_payload": summary_payload,
         "updated_at": utc_now_iso(),
     })
+    # 把任务状态改回 waiting_consultation，让前端 resume 能正确触发后端恢复流程
+    try:
+        supabase.table("tasks").update({
+            "status": "waiting_consultation",
+            "updated_at": utc_now_iso(),
+        }).eq("id", task_id).execute()
+    except Exception as exc:
+        logger.error("Failed to mark task waiting_consultation after summary confirmed: %s", exc)
     _insert_commander_message(task_id, session_id, req.summary, "summary_confirmed")
     record_audit_event(
         action="consultation_summary_confirmed",

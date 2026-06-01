@@ -240,18 +240,20 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
 
     # ---- OSINT 情报 ----
+    lines.append("## 四、OSINT 开源情报溯源")
+    lines.append("")
     if osint:
-        lines.append("## 四、OSINT 开源情报")
-        lines.append("")
         lines.extend(_dict_to_markdown(osint).splitlines())
-        lines.append("")
+    else:
+        lines.append("- 暂无 OSINT 情报溯源数据（Agent 未运行或结果未入库）。")
+    lines.append("")
 
     # ---- 公开案例 RAG ----
     case_rag_sections = _build_case_rag_sections(
         (forensics or {}).get("case_rag") if forensics else None,
         (osint or {}).get("case_rag") if osint else None,
     )
-    lines.append("## 五、公开案例 RAG 调用情况")
+    lines.append("## 五、公开案例 RAG 检索情况")
     lines.append("")
     lines.extend(case_rag_sections)
     lines.append("")
@@ -715,16 +717,32 @@ def _build_case_rag_sections(forensics_rag: dict | None, osint_rag: dict | None)
         if result.get("degraded"):
             sections.append("- 影响说明：公开案例 RAG 不可用，不影响当前检材的独立鉴伪与溯源流程。")
         if matches:
-            sections.append("- 命中案例：")
-            for item in matches[:5]:
-                score = item.get("score", item.get("similarity"))
-                score_text = f"{float(score):.2f}" if isinstance(score, (int, float)) else "N/A"
-                source_kind = item.get("source_kind") or "public"
+            # 按案例标题/ID 分组，同一案例的多个片段合并展示
+            case_groups: dict[str, list[dict]] = {}
+            for item in matches:
                 title = item.get("title") or item.get("case_id") or "未命名案例"
-                snippet = str(item.get("snippet") or item.get("chunk_text") or "").strip()
-                sections.append(f"  - {title}（{source_kind}，相似度 {score_text}）")
-                if snippet:
-                    sections.append(f"    - 可借鉴点：{snippet[:220]}")
+                case_groups.setdefault(title, []).append(item)
+            sections.append("- 命中案例：")
+            for case_title, chunks in list(case_groups.items())[:5]:
+                # 取该案例所有片段中最高相似度作为代表分
+                best_score = max(
+                    (c.get("score", c.get("similarity")) for c in chunks
+                     if isinstance(c.get("score", c.get("similarity")), (int, float))),
+                    default=None,
+                )
+                score_text = f"{float(best_score):.2f}" if best_score is not None else "N/A"
+                source_kind = chunks[0].get("source_kind") or "public"
+                sections.append(f"  - **{case_title}**（{source_kind}，最高相似度 {score_text}，共 {len(chunks)} 个片段）")
+                for chunk in chunks[:4]:
+                    snippet = str(chunk.get("snippet") or chunk.get("chunk_text") or "").strip()
+                    chunk_score = chunk.get("score", chunk.get("similarity"))
+                    chunk_score_text = f"{float(chunk_score):.2f}" if isinstance(chunk_score, (int, float)) else "N/A"
+                    if snippet:
+                        sections.append(f"    - 片段（相似度 {chunk_score_text}）：{snippet[:200]}")
+                if len(chunks) > 4:
+                    sections.append(f"    - ... 及其他 {len(chunks) - 4} 个片段")
+            if len(case_groups) > 5:
+                sections.append(f"  - ... 及其他 {len(case_groups) - 5} 个案例")
         else:
             sections.append("- 未命中相似公开案例。")
         sections.append("- 边界说明：以上命中只提示可复核方向，不能替代当前样本证据、外部工具结果或人工判断。")
