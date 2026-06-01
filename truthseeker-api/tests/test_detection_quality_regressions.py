@@ -65,7 +65,7 @@ class ChallengerTimelineSourceTests(unittest.TestCase):
 
         self.assertIn("Challenger ↔", source)
         self.assertIn("_build_challenger_timeline_sections", source)
-        self.assertIn("## 六、质询时间线", source)
+        self.assertIn("## 七、质询时间线", source)
         self.assertNotIn("证据时间线（按轮次）", source)
         self.assertNotIn("证据时间线（按质询阶段）", source)
 
@@ -93,10 +93,10 @@ class ChallengerTimelineSourceTests(unittest.TestCase):
     def test_report_sections_and_markdown_fields_are_readable(self):
         source = read_source("app/services/report_generator.py")
 
-        self.assertIn("## 五、Challenger 逻辑质询", source)
-        self.assertIn("## 六、质询时间线", source)
-        self.assertIn("## 七、全程审计日志", source)
-        self.assertIn("## 九、建议与说明", source)
+        self.assertIn("## 六、Challenger 逻辑质询", source)
+        self.assertIn("## 七、质询时间线", source)
+        self.assertIn("## 八、全程审计日志", source)
+        self.assertIn("## 十、建议与说明", source)
         self.assertIn("_build_full_audit_log_sections", source)
         self.assertIn("_render_markdown_field", source)
         self.assertIn("llm_cross_validation", source)

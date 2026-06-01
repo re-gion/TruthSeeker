@@ -53,6 +53,7 @@
 | filetype | >=1.2.0 | 文件类型魔数校验 |
 | pydantic-settings | >=2.8.0 | 环境变量配置管理 |
 | python-dotenv | >=1.0.0 | .env 文件加载 |
+| pgvector | Supabase 扩展 | 公开案例库 RAG 向量检索 |
 
 ## 环境变量
 
@@ -83,6 +84,12 @@ KIMI_MODEL=kimi-k2.5
 KIMI_CODING_API_KEY=
 KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
 KIMI_CODING_MODEL=kimi-k2.5
+CASE_RAG_ENABLED=true
+CASE_RAG_TOP_K=5
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=Qwen/Qwen3-VL-Embedding-8B
+EMBEDDING_DIMENSIONS=1024
 # 以下当前未被代码直接使用，保留用于未来 LLM 提供商切换
 OPENAI_API_KEY=
 QWEN_API_KEY=
@@ -105,5 +112,6 @@ CONVERGENCE_THRESHOLD=0.08
 ## 备注
 
 - 四个 Agent 共享 Kimi 2.5 原生多模态推理基座，调用时禁用 thinking；运行时可通过 `KIMI_PROVIDER=official|coding` 在官方 API 与 Kimi coding plan 之间切换；两种方式都只配置 Kimi 2.5，不再配置 `moonshot-v1-128k` 模型回退。
+- 公开案例库 RAG 使用独立 embedding 配置，默认接入 SiliconFlow OpenAI-compatible `POST /v1/embeddings`，模型为 `Qwen/Qwen3-VL-Embedding-8B`，维度固定 1024。只需在本地 `.env` 填入 `EMBEDDING_API_KEY` 并运行迁移/回填脚本即可启用。
 - 当前运行时是 Kimi 2.5 自主推理 + 外部检测 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
 - 不要把真实密钥提交到仓库，只保留示例文件和本地 `.env` / `.env.local`。

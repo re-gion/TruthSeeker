@@ -15,6 +15,7 @@ from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
 from app.agents.tools.threat_intel import analyze_urls
 from app.services.audit_log import record_audit_event
+from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
 from app.services.text_validation import decode_text_bytes
 
@@ -309,10 +310,31 @@ async def osint_node(state: TruthSeekerState) -> dict:
     if not threat_indicators:
         threat_indicators.append("未发现明确外部威胁或溯源线索")
 
-    degraded = any(item.get("status") in {"degraded", "failed"} for item in tool_results)
+    rag_query = build_rag_query(
+        agent="osint",
+        case_prompt=case_prompt,
+        input_type=input_type,
+        evidence_files=files,
+        tool_summaries=threat_indicators[:8] + queries[:4],
+    )
+    case_rag = await case_rag_search(query=rag_query, agent="osint")
+    tool_results.append(case_rag)
+    log("action", f"公开案例 RAG 检索完成: {case_rag.get('summary', '无摘要')}")
+    record_audit_event(
+        action=f"case_rag.{case_rag.get('status', 'unknown')}",
+        task_id=task_id,
+        agent="osint",
+        metadata={
+            "match_count": len(case_rag.get("matches") or []),
+            "degraded": bool(case_rag.get("degraded")),
+        },
+    )
+
+    scoring_tools = [item for item in tool_results if item.get("tool") != "case_rag_search"]
+    degraded = any(item.get("status") in {"degraded", "failed"} for item in scoring_tools)
     if degraded:
-        failed_count = sum(1 for item in tool_results if item.get("status") == "failed")
-        degraded_count = sum(1 for item in tool_results if item.get("status") == "degraded")
+        failed_count = sum(1 for item in scoring_tools if item.get("status") == "failed")
+        degraded_count = sum(1 for item in scoring_tools if item.get("status") == "degraded")
         record_audit_event(
             action="osint.degraded",
             task_id=task_id,
@@ -341,10 +363,13 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "tool_summary": {
             "total": len(tool_results),
             "success": sum(1 for item in tool_results if item.get("status") == "success"),
-            "degraded": sum(1 for item in tool_results if item.get("status") == "degraded"),
-            "failed": sum(1 for item in tool_results if item.get("status") == "failed"),
+            "degraded": sum(1 for item in scoring_tools if item.get("status") == "degraded"),
+            "failed": sum(1 for item in scoring_tools if item.get("status") == "failed"),
             "reused": sum(1 for item in tool_results if item.get("reused")),
+            "case_rag_status": case_rag.get("status"),
+            "case_rag_matches": len(case_rag.get("matches") or []),
         },
+        "case_rag": case_rag,
         "degraded": degraded,
         "timestamp": _now(),
     }

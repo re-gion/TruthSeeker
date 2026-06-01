@@ -15,6 +15,7 @@ from app.agents.tools.llm_client import build_sample_references, forensics_inter
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
 from app.config import settings
 from app.services.audit_log import record_audit_event
+from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
 from app.services.text_validation import decode_text_bytes
 
@@ -293,9 +294,37 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         confidence = max(0.2, min(0.95, max(rd_conf, 0.55 + vt_threat * 0.25)))
     else:
         confidence = max(0.2, min(0.55, max(rd_conf, 0.35 + vt_threat * 0.30)))
-    degraded = any(item.get("status") in {"degraded", "failed"} for item in settled_results)
-    failed_count = sum(1 for item in settled_results if item.get("status") == "failed")
-    degraded_count = sum(1 for item in settled_results if item.get("status") == "degraded")
+    indicators: list[str] = []
+    for item in settled_results:
+        if item.get("summary"):
+            indicators.append(str(item["summary"]))
+    if is_suspicious_ioc:
+        indicators.append("VirusTotal/IOC 结果提示潜在威胁线索")
+
+    rag_query = build_rag_query(
+        agent="forensics",
+        case_prompt=case_prompt,
+        input_type=input_type,
+        evidence_files=files,
+        tool_summaries=indicators[:8],
+    )
+    case_rag = await case_rag_search(query=rag_query, agent="forensics", top_k=settings.CASE_RAG_TOP_K)
+    settled_results.append(case_rag)
+    log("action", f"公开案例 RAG 检索完成: {case_rag.get('summary', '无摘要')}")
+    record_audit_event(
+        action=f"case_rag.{case_rag.get('status', 'unknown')}",
+        task_id=task_id,
+        agent="forensics",
+        metadata={
+            "match_count": len(case_rag.get("matches") or []),
+            "degraded": bool(case_rag.get("degraded")),
+        },
+    )
+
+    scoring_tools = [item for item in settled_results if item.get("tool") != "case_rag_search"]
+    degraded = any(item.get("status") in {"degraded", "failed"} for item in scoring_tools)
+    failed_count = sum(1 for item in scoring_tools if item.get("status") == "failed")
+    degraded_count = sum(1 for item in scoring_tools if item.get("status") == "degraded")
     degradation_level = "failed" if failed_count else "degraded" if degraded_count else "ok"
     if degraded:
         degradation_details = [
@@ -306,7 +335,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
                 "error": str(item.get("error", ""))[:120] if item.get("error") else None,
                 "summary": str(item.get("summary", ""))[:120],
             }
-            for item in settled_results
+            for item in scoring_tools
             if item.get("status") in {"degraded", "failed"}
         ]
         record_audit_event(
@@ -321,13 +350,6 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             },
         )
 
-    indicators: list[str] = []
-    for item in settled_results:
-        if item.get("summary"):
-            indicators.append(str(item["summary"]))
-    if is_suspicious_ioc:
-        indicators.append("VirusTotal/IOC 结果提示潜在威胁线索")
-
     raw_forensics = {
         "tool_matrix": settled_results,
         "is_deepfake": is_deepfake,
@@ -338,6 +360,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "sample_refs": sample_refs,
         "degraded": degraded,
         "text_samples": text_contents,
+        "case_rag": case_rag,
     }
 
     log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
@@ -363,7 +386,10 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             "degraded": degraded_count,
             "failed": failed_count,
             "reused": sum(1 for item in settled_results if item.get("reused")),
+            "case_rag_status": case_rag.get("status"),
+            "case_rag_matches": len(case_rag.get("matches") or []),
         },
+        "case_rag": case_rag,
         "sample_refs": sample_refs,
         "degraded": degraded,
         "degradation_status": degradation_level,

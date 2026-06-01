@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 MAX_REPORT_FIELD_CHARS = 1200
 MAX_SEARCH_SUMMARY_CHARS = 280
-SKIP_REPORT_KEYS = {"signed_url", "raw_response"}
+SKIP_REPORT_KEYS = {"signed_url", "raw_response", "case_rag"}
 MARKDOWN_REPORT_FIELDS = {
     "llm_analysis": "LLM 分析",
     "llm_cross_validation": "LLM 逻辑质询",
@@ -246,17 +246,27 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.extend(_dict_to_markdown(osint).splitlines())
         lines.append("")
 
+    # ---- 公开案例 RAG ----
+    case_rag_sections = _build_case_rag_sections(
+        (forensics or {}).get("case_rag") if forensics else None,
+        (osint or {}).get("case_rag") if osint else None,
+    )
+    lines.append("## 五、公开案例 RAG 调用情况")
+    lines.append("")
+    lines.extend(case_rag_sections)
+    lines.append("")
+
     # ---- Challenger 逻辑质询 ----
     challenger = _extract_agent_result(analysis_states, "challenger")
     if challenger:
-        lines.append("## 五、Challenger 逻辑质询")
+        lines.append("## 六、Challenger 逻辑质询")
         lines.append("")
         lines.extend(_dict_to_markdown(challenger).splitlines())
         lines.append("")
 
     # ---- 质询时间线 ----
     timeline_sections = _build_challenger_timeline_sections(analysis_states, agent_logs)
-    lines.append("## 六、质询时间线")
+    lines.append("## 七、质询时间线")
     lines.append("")
     if timeline_sections:
         lines.extend(timeline_sections)
@@ -266,7 +276,7 @@ async def generate_markdown_report(task_id: str) -> str:
 
     # ---- 全程审计日志 ----
     audit_sections = _build_full_audit_log_sections(agent_logs, analysis_states, audit_logs)
-    lines.append("## 七、全程审计日志")
+    lines.append("## 八、全程审计日志")
     lines.append("")
     if audit_sections:
         lines.extend(audit_sections)
@@ -276,7 +286,7 @@ async def generate_markdown_report(task_id: str) -> str:
 
     # ---- 人机协同专家会诊 ----
     consultation_sections = _build_consultation_sections(consultation_sessions, consultation_messages, result or {})
-    lines.append("## 八、人机协同专家会诊")
+    lines.append("## 九、人机协同专家会诊")
     lines.append("")
     if consultation_sections:
         lines.extend(consultation_sections)
@@ -285,7 +295,7 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
 
     # ---- 建议 ----
-    lines.append("## 九、建议与说明")
+    lines.append("## 十、建议与说明")
     lines.append("")
     if result:
         recommendations = result.get("recommendations", [])
@@ -681,6 +691,47 @@ def _dict_to_markdown(data: dict, indent: int = 0) -> str:
                 rendered = _truncate_text(rendered)
             lines.append(f"{prefix}- **{key}**: {rendered}")
     return "\n".join(lines)
+
+
+def _build_case_rag_sections(forensics_rag: dict | None, osint_rag: dict | None) -> list[str]:
+    sections = [
+        "> 公开案例 RAG 仅作类案参考，用于提示相似手法、攻击链和复核方向；不得作为当前检材的直接事实证据。",
+        "",
+    ]
+    items = [("Forensics 电子取证", forensics_rag), ("OSINT 情报溯源", osint_rag)]
+    rendered_any = False
+    for label, result in items:
+        sections.append(f"### {label}")
+        if not result:
+            sections.append("- 未记录公开案例 RAG 调用。")
+            sections.append("")
+            continue
+        rendered_any = True
+        status = result.get("status", "unknown")
+        summary = result.get("summary") or "无摘要"
+        matches = [item for item in (result.get("matches") or []) if isinstance(item, dict)]
+        sections.append(f"- 调用状态：{status}")
+        sections.append(f"- 调用摘要：{summary}")
+        if result.get("degraded"):
+            sections.append("- 影响说明：公开案例 RAG 不可用，不影响当前检材的独立鉴伪与溯源流程。")
+        if matches:
+            sections.append("- 命中案例：")
+            for item in matches[:5]:
+                score = item.get("score", item.get("similarity"))
+                score_text = f"{float(score):.2f}" if isinstance(score, (int, float)) else "N/A"
+                source_kind = item.get("source_kind") or "public"
+                title = item.get("title") or item.get("case_id") or "未命名案例"
+                snippet = str(item.get("snippet") or item.get("chunk_text") or "").strip()
+                sections.append(f"  - {title}（{source_kind}，相似度 {score_text}）")
+                if snippet:
+                    sections.append(f"    - 可借鉴点：{snippet[:220]}")
+        else:
+            sections.append("- 未命中相似公开案例。")
+        sections.append("- 边界说明：以上命中只提示可复核方向，不能替代当前样本证据、外部工具结果或人工判断。")
+        sections.append("")
+    if not rendered_any:
+        sections.append("- 本任务未启用或未记录公开案例 RAG。")
+    return sections
 
 
 def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list) -> list[str]:

@@ -17,6 +17,8 @@ def _read_kimi_env() -> dict[str, str]:
         "KIMI_PROVIDER", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_MODEL",
         "KIMI_CODING_API_KEY", "KIMI_CODING_BASE_URL", "KIMI_CODING_MODEL",
         "KIMI_SILICONFLOW_API_KEY", "KIMI_SILICONFLOW_BASE_URL", "KIMI_SILICONFLOW_MODEL",
+        "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
+        "EMBEDDING_DIMENSIONS", "CASE_RAG_ENABLED", "CASE_RAG_TOP_K",
     ):
         value = raw.get(key)
         if value is not None:
@@ -93,6 +95,20 @@ class Settings(BaseSettings):
         default="https://api.exa.ai",
         validation_alias=AliasChoices("EXA_BASE_URL", "Exa_Base_URL"),
     )
+
+    # Public case RAG embeddings. Defaults target SiliconFlow's OpenAI-compatible embeddings API.
+    EMBEDDING_BASE_URL: str = Field(
+        default="https://api.siliconflow.cn/v1",
+        validation_alias=AliasChoices("EMBEDDING_BASE_URL", "Embedding_Base_URL"),
+    )
+    EMBEDDING_API_KEY: str = Field(default="", validation_alias=AliasChoices("EMBEDDING_API_KEY", "Embedding_API_KEY"))
+    EMBEDDING_MODEL: str = Field(
+        default="Qwen/Qwen3-VL-Embedding-8B",
+        validation_alias=AliasChoices("EMBEDDING_MODEL", "Embedding_Model"),
+    )
+    EMBEDDING_DIMENSIONS: int = Field(default=1024, validation_alias=AliasChoices("EMBEDDING_DIMENSIONS", "Embedding_Dimensions"))
+    CASE_RAG_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("CASE_RAG_ENABLED", "Case_RAG_Enabled"))
+    CASE_RAG_TOP_K: int = Field(default=5, validation_alias=AliasChoices("CASE_RAG_TOP_K", "Case_RAG_Top_K"))
 
     # App
     APP_ENV: str = "development"
