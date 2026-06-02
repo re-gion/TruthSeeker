@@ -150,6 +150,36 @@ describe("mapAgentHistoryToStreamState", () => {
       timestamp: "2026-04-21T08:00:00.000Z",
     })
   })
+
+  it("derives caseImportStatus from audit_logs instead of hardcoding skipped", () => {
+    const mappedCreated = mapAgentHistoryToStreamState({
+      task: { status: "completed" },
+      audit_logs: [
+        { action: "case_import_created", agent: "system", created_at: "2026-06-02T10:00:00.000Z", metadata: { import_status: "created" } },
+      ],
+    })
+    expect(mappedCreated.caseImportStatus).toBe("created")
+
+    const mappedDuplicate = mapAgentHistoryToStreamState({
+      task: { status: "completed" },
+      audit_logs: [
+        { action: "case_import_duplicate", agent: "system", created_at: "2026-06-02T10:00:00.000Z" },
+      ],
+    })
+    expect(mappedDuplicate.caseImportStatus).toBe("duplicate")
+
+    const mappedNoAudit = mapAgentHistoryToStreamState({
+      task: { status: "completed" },
+      audit_logs: [],
+    })
+    expect(mappedNoAudit.caseImportStatus).toBe("skipped")
+
+    const mappedRunning = mapAgentHistoryToStreamState({
+      task: { status: "running" },
+      audit_logs: [],
+    })
+    expect(mappedRunning.caseImportStatus).toBe("idle")
+  })
 })
 
 describe("consultation event helpers", () => {

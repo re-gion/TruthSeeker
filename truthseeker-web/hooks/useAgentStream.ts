@@ -485,6 +485,25 @@ function consultationStatusFromSession(session: Record<string, unknown> | null, 
     return "idle"
 }
 
+function deriveCaseImportStatusFromHistory(
+    auditLogs: unknown[],
+    taskStatus: string,
+): CaseImportStatus {
+    const IMPORT_ACTIONS: Record<string, CaseImportStatus> = {
+        case_import_created: "created",
+        case_import_duplicate: "duplicate",
+        case_import_skipped: "skipped",
+        case_import_error: "error",
+    }
+    for (const log of auditLogs) {
+        if (!isObject(log)) continue
+        const action = readString(log.action)
+        if (!action) continue
+        if (action in IMPORT_ACTIONS) return IMPORT_ACTIONS[action]
+    }
+    return taskStatus === "completed" ? "skipped" : "idle"
+}
+
 function isConsultationWaiting(status: string, consultationStatus: ConsultationStatus) {
     return status === "waiting_consultation"
         || status === "waiting_consultation_approval"
@@ -554,7 +573,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
         finalVerdict,
         currentRound,
         isComplete: status === "completed" || Boolean(finalVerdict),
-        caseImportStatus: status === "completed" || Boolean(finalVerdict) ? "skipped" : "idle",
+        caseImportStatus: deriveCaseImportStatusFromHistory(history.audit_logs ?? [], status),
         isWaitingConsultation: isConsultationWaiting(status, consultationStatus),
         consultationState,
     }
