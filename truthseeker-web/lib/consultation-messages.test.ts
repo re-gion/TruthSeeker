@@ -57,4 +57,41 @@ describe("consultation message helpers", () => {
     expect(filtered).toHaveLength(1)
     expect(filtered[0].messageType).toBe("summary_confirmed")
   })
+
+  it("filterDisplayComments only hides summary from the matching session when sessionIds are present", () => {
+    const draftA: ConsultationComment = {
+      id: "draft-a",
+      authorId: "commander",
+      role: "commander",
+      text: "session A 草稿",
+      timestamp: "2026-06-02T10:00:00.000Z",
+      messageType: "summary",
+      sessionId: "session-a",
+    }
+    const confirmedA: ConsultationComment = {
+      id: "confirmed-a",
+      authorId: "commander",
+      role: "commander",
+      text: "session A 确认",
+      timestamp: "2026-06-02T10:01:00.000Z",
+      messageType: "summary_confirmed",
+      sessionId: "session-a",
+    }
+    const draftB: ConsultationComment = {
+      id: "draft-b",
+      authorId: "commander",
+      role: "commander",
+      text: "session B 草稿",
+      timestamp: "2026-06-02T10:02:00.000Z",
+      messageType: "summary",
+      sessionId: "session-b",
+    }
+
+    // confirmed of session-a 只过滤 session-a 的草稿，保留 session-b
+    const filtered = filterDisplayComments([draftA, confirmedA, draftB])
+    expect(filtered).toHaveLength(2)
+    expect(filtered.some(c => c.id === "draft-a")).toBe(false)
+    expect(filtered.some(c => c.id === "confirmed-a")).toBe(true)
+    expect(filtered.some(c => c.id === "draft-b")).toBe(true)
+  })
 })

@@ -111,11 +111,14 @@ export function filterDisplayComments(comments: ConsultationComment[]): Consulta
             else confirmedSessionIds.add("__any__")
         }
     }
-    if (confirmedSessionIds.size === 0) return comments
+    if (confirmedSessionIds.size === 0) return [...comments]
 
     return comments.filter(c => {
         if (c.messageType !== "summary") return true
-        if (confirmedSessionIds.has("__any__")) return false
-        return c.sessionId ? !confirmedSessionIds.has(c.sessionId) : false
+        if (c.sessionId) {
+            return !confirmedSessionIds.has(c.sessionId)
+        } else {
+            return !confirmedSessionIds.has("__any__")
+        }
     })
 }
