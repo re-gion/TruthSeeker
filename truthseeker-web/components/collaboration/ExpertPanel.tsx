@@ -7,6 +7,7 @@ import { getAuthToken } from "@/lib/auth"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import { canModerateConsultation, ConsultationState } from "@/hooks/useAgentStream"
 import {
+    filterDisplayComments,
     mergeConsultationComments,
     normalizeConsultationMessage,
     type ConsultationComment,
@@ -540,7 +541,7 @@ export function ExpertPanel({
             {/* 消息列表 */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
                 <AnimatePresence>
-                    {comments.map(comment => {
+                    {filterDisplayComments(comments).map(comment => {
                         const isMe = comment.role === currentRole &&
                             comment.authorId === getTempUserId()
                         const cfg = ROLE_CONFIG[comment.role] || ROLE_CONFIG.expert
@@ -579,7 +580,10 @@ export function ExpertPanel({
                                     </div>
 
                                     {/* 气泡 */}
-                                    <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed border ${cfg.bubbleBg} ${cfg.bubbleBorder} ${cfg.bubbleText} ${isMe ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
+                                    <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed border ${comment.messageType === "summary" ? "border-dashed opacity-70" : ""} ${cfg.bubbleBg} ${cfg.bubbleBorder} ${cfg.bubbleText} ${isMe ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}>
+                                        {comment.messageType === "summary" && (
+                                            <span className="block text-[10px] text-[#F59E0B]/80 mb-1">待确认摘要草稿</span>
+                                        )}
                                         {comment.text}
                                     </div>
                                 </div>
