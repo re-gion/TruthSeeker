@@ -572,7 +572,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
         agentWeights: agentWeights ?? {},
         finalVerdict,
         currentRound,
-        isComplete: status === "completed" || Boolean(finalVerdict),
+        isComplete: (status === "completed" || Boolean(finalVerdict)) && !isConsultationWaiting(status, consultationStatus),
         caseImportStatus: deriveCaseImportStatusFromHistory(history.audit_logs ?? [], status),
         isWaitingConsultation: isConsultationWaiting(status, consultationStatus),
         consultationState,

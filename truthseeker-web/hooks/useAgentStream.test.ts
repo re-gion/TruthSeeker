@@ -180,6 +180,31 @@ describe("mapAgentHistoryToStreamState", () => {
     })
     expect(mappedRunning.caseImportStatus).toBe("idle")
   })
+
+  it("isComplete is false when task is waiting for consultation even if finalVerdict exists", () => {
+    const mapped = mapAgentHistoryToStreamState({
+      task: { status: "waiting_consultation" },
+      analysis_states: [
+        {
+          round_number: 1,
+          result_snapshot: {
+            final_verdict: { verdict: "suspicious", confidence: 0.8 },
+          },
+        },
+      ],
+    })
+    expect(mapped.isComplete).toBe(false)
+    expect(mapped.isWaitingConsultation).toBe(true)
+  })
+
+  it("isComplete is true for completed task with finalVerdict from report", () => {
+    const mapped = mapAgentHistoryToStreamState({
+      task: { status: "completed" },
+      report: { verdict_payload: { verdict: "authentic", confidence: 0.9 } },
+    })
+    expect(mapped.isComplete).toBe(true)
+    expect(mapped.caseImportStatus).not.toBe("idle")
+  })
 })
 
 describe("consultation event helpers", () => {
