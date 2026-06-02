@@ -203,7 +203,7 @@ describe("mapAgentHistoryToStreamState", () => {
       report: { verdict_payload: { verdict: "authentic", confidence: 0.9 } },
     })
     expect(mapped.isComplete).toBe(true)
-    expect(mapped.caseImportStatus).not.toBe("idle")
+    expect(mapped.caseImportStatus).toBe("skipped")
   })
 })
 

@@ -485,6 +485,7 @@ function consultationStatusFromSession(session: Record<string, unknown> | null, 
     return "idle"
 }
 
+// Reads raw audit_log rows (not mapped AgentLogEntry[]) to preserve the original `action` field.
 function deriveCaseImportStatusFromHistory(
     auditLogs: unknown[],
     taskStatus: string,
