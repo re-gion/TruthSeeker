@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { mergeConsultationComments, normalizeConsultationMessage } from "./consultation-messages"
+import { filterDisplayComments, mergeConsultationComments, normalizeConsultationMessage, type ConsultationComment } from "./consultation-messages"
 
 describe("consultation message helpers", () => {
   it("deduplicates messages by id and lets the backend row replace a matching optimistic message", () => {
@@ -31,5 +31,30 @@ describe("consultation message helpers", () => {
       role: "host",
       text: "请看这条会诊意见",
     })
+  })
+
+  it("filterDisplayComments hides summary draft once summary_confirmed arrives", () => {
+    const draftMsg: ConsultationComment = {
+      id: "msg-1",
+      authorId: "commander",
+      role: "commander",
+      text: "草稿摘要",
+      timestamp: "2026-06-02T10:00:00.000Z",
+      messageType: "summary",
+    }
+    const confirmedMsg: ConsultationComment = {
+      id: "msg-2",
+      authorId: "commander",
+      role: "commander",
+      text: "确认后摘要",
+      timestamp: "2026-06-02T10:01:00.000Z",
+      messageType: "summary_confirmed",
+    }
+
+    expect(filterDisplayComments([draftMsg])).toHaveLength(1)
+
+    const filtered = filterDisplayComments([draftMsg, confirmedMsg])
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0].messageType).toBe("summary_confirmed")
   })
 })

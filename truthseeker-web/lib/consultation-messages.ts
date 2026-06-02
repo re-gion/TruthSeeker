@@ -8,6 +8,7 @@ export interface ConsultationComment {
     text: string
     timestamp: string
     messageType?: string
+    sessionId?: string
     anchorAgent?: string
     phase?: string
     confidence?: number
@@ -51,6 +52,7 @@ export function normalizeConsultationMessage(item: Record<string, unknown>): Con
         text: readString(item.text) ?? readString(item.message) ?? "",
         timestamp: readString(item.timestamp) ?? readString(item.created_at) ?? new Date().toISOString(),
         messageType: readString(item.messageType) ?? readString(item.message_type),
+        sessionId: readString(item.sessionId) ?? readString(item.session_id),
         anchorAgent: readString(item.anchorAgent) ?? readString(item.anchor_agent),
         phase: readString(item.phase) ?? readString(item.anchor_phase),
         confidence: readNumber(item.confidence),
@@ -99,4 +101,21 @@ export function mergeConsultationComments(
     }
 
     return merged.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+}
+
+export function filterDisplayComments(comments: ConsultationComment[]): ConsultationComment[] {
+    const confirmedSessionIds = new Set<string>()
+    for (const c of comments) {
+        if (c.messageType === "summary_confirmed") {
+            if (c.sessionId) confirmedSessionIds.add(c.sessionId)
+            else confirmedSessionIds.add("__any__")
+        }
+    }
+    if (confirmedSessionIds.size === 0) return comments
+
+    return comments.filter(c => {
+        if (c.messageType !== "summary") return true
+        if (confirmedSessionIds.has("__any__")) return false
+        return c.sessionId ? !confirmedSessionIds.has(c.sessionId) : false
+    })
 }
