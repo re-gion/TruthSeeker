@@ -134,6 +134,40 @@ def _fetch_report(task_id: str) -> dict[str, Any] | None:
     return resp.data[0] if resp.data else None
 
 
+def _recover_persisted_final_verdict(task_id: str, task: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Recover a Commander verdict persisted by an earlier SSE stream.
+
+    A post-Commander consultation interrupt can split one logical detection
+    across two HTTP streams. The resumed stream may finish from Challenger and
+    therefore not emit another final_verdict update.
+    """
+    try:
+        report = _fetch_report(task_id)
+    except Exception as exc:
+        logger.warning("Failed to recover report verdict for %s: %s", task_id, exc)
+        report = None
+    report_payload = report.get("verdict_payload") if isinstance(report, dict) else None
+    if isinstance(report_payload, dict) and report_payload.get("verdict"):
+        return normalize_final_verdict(report_payload)
+
+    try:
+        fresh_task = task or _fetch_task(task_id)
+    except Exception as exc:
+        logger.warning("Failed to recover task verdict for %s: %s", task_id, exc)
+        fresh_task = task
+    task_result = fresh_task.get("result") if isinstance(fresh_task, dict) else None
+    if isinstance(task_result, dict) and task_result.get("verdict") and task_result.get("verdict") != "failed":
+        return normalize_final_verdict(task_result)
+
+    for row in reversed(_fetch_analysis_state_rows(task_id)):
+        snapshot = row.get("result_snapshot") if isinstance(row, dict) else None
+        final_verdict = snapshot.get("final_verdict") if isinstance(snapshot, dict) else None
+        if isinstance(final_verdict, dict) and final_verdict.get("verdict"):
+            return normalize_final_verdict(final_verdict)
+
+    return None
+
+
 def _insert_report(task_id: str, final_verdict_data: dict[str, Any]) -> dict[str, Any]:
     from app.services.analysis_persistence import build_report_row
 
@@ -554,7 +588,15 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     raise RuntimeError("当前 LangGraph 版本不支持 Command resume")
                 resume_payload = _resume_payload_from_consultations(task_id, user_id)
                 expert_messages = resume_payload["expert_messages"]
-                graph_input = Command(resume=resume_payload)
+                graph_input = Command(
+                    resume=resume_payload,
+                    update={
+                        "consultation_resume": resume_payload,
+                        "expert_messages": expert_messages,
+                        "consultation_sessions": resume_payload.get("consultation_sessions") or [],
+                        "confirmed_consultation_summary": resume_payload.get("confirmed_consultation_summary"),
+                    },
+                )
                 persistence.mark_task_started(
                     task_id,
                     input_files={"files": _task_storage_files(evidence_files)},
@@ -750,7 +792,13 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         )],
                     }))
 
-            if final_verdict_data:
+            completion_verdict_data = final_verdict_data
+            if completion_verdict_data is None and request.resume:
+                completion_verdict_data = _recover_persisted_final_verdict(task_id, task)
+            if completion_verdict_data:
+                if final_verdict_data is None:
+                    final_verdict_data = completion_verdict_data
+                    await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
                 persistence.mark_task_completed(task_id, final_verdict_data)
                 record_audit_event(
                     action="detect_completed",

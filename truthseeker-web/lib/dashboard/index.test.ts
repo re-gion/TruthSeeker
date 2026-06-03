@@ -31,6 +31,8 @@ describe("high-risk verdict normalization", () => {
   it("recognizes the approved alias set and ignores safe verdicts", () => {
     expect(isHighRiskVerdictAlias("forged")).toBe(true)
     expect(isHighRiskVerdictAlias("deepfake")).toBe(true)
+    expect(isHighRiskVerdictAlias("AI_GENERATED")).toBe(true)
+    expect(isHighRiskVerdictAlias("aigc")).toBe(true)
     expect(isHighRiskVerdictAlias("疑似")).toBe(true)
     expect(isHighRiskVerdictAlias("高风险")).toBe(true)
     expect(isHighRiskVerdictAlias("authentic")).toBe(false)
@@ -116,6 +118,23 @@ describe("dashboard response normalization", () => {
       "reports-generated",
       "consultation-triggered",
       "reports-covered",
+    ])
+  })
+
+  it("preserves sankey link colors so high-cardinality input types remain distinguishable", () => {
+    const viewModel = normalizeDashboardResponse({
+      flow_sankey: {
+        nodes: [{ name: "图文混合" }, { name: "取证分析" }, { name: "高风险结论" }],
+        links: [
+          { source: "图文混合", target: "取证分析", value: 5, color: "#0EA5E9" },
+          { source: "取证分析", target: "高风险结论", value: 5, color: "#F43F5E" },
+        ],
+      },
+    })
+
+    expect(viewModel.flowSankey.links).toEqual([
+      { source: "图文混合", target: "取证分析", value: 5, color: "#0EA5E9" },
+      { source: "取证分析", target: "高风险结论", value: 5, color: "#F43F5E" },
     ])
   })
 

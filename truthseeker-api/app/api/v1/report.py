@@ -5,7 +5,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.services.audit_log import record_audit_event
-from app.services.report_generator import generate_markdown_report, generate_pdf_report
+from app.services.report_generator import (
+    _execute_supabase_query,
+    generate_audit_log_markdown,
+    generate_markdown_report,
+    generate_pdf_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +25,7 @@ def _assert_task_owner(task_id: str, request: Request) -> None:
     try:
         from app.utils.supabase_client import supabase
 
-        resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+        resp = _execute_supabase_query(lambda: supabase.table("tasks").select("id,user_id").eq("id", task_id).execute())
     except Exception as exc:
         logger.warning("Failed to verify report owner for %s: %s", task_id, exc)
         raise HTTPException(status_code=403, detail="无法验证任务归属")
@@ -86,5 +91,33 @@ async def download_pdf_report(task_id: str, request: Request):
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="truthseeker-report-{task_id}.pdf"',
+        },
+    )
+
+
+@router.get("/{task_id}/audit-log.md")
+async def download_audit_log_markdown(task_id: str, request: Request):
+    """下载完整 Markdown 审计日志"""
+    _assert_task_owner(task_id, request)
+    try:
+        md_content = await generate_audit_log_markdown(task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to generate audit log markdown for %s: %s", task_id, e)
+        raise HTTPException(status_code=500, detail="审计日志生成失败")
+
+    record_audit_event(
+        action="audit_log_downloaded",
+        task_id=task_id,
+        user_id=getattr(request.state, "user_id", None),
+        metadata={"format": "md"},
+    )
+
+    return StreamingResponse(
+        iter([md_content.encode("utf-8")]),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="truthseeker-audit-log-{task_id}.md"',
         },
     )

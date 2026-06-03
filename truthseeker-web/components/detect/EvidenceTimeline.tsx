@@ -31,7 +31,7 @@ const AGENT_CONFIG: Record<string, { color: string; label: string; icon: string 
   forensics:  { color: "#6366F1", label: "取证Agent",  icon: "🔍" },
   osint:      { color: "#10B981", label: "溯源Agent",  icon: "🕵️" },
   challenger: { color: "#F59E0B", label: "质询Agent",  icon: "⚖️" },
-  commander:  { color: "#06B6D4", label: "Commander 主持",  icon: "◇" },
+  commander:  { color: "#06B6D4", label: "研判Agent",  icon: "◇" },
   system:     { color: "#94A3B8", label: "系统审计",  icon: "•" },
   audit:      { color: "#94A3B8", label: "系统审计",  icon: "•" },
 }

@@ -968,7 +968,7 @@ function buildSankeyOption(flowSankey: DashboardViewModel["flowSankey"]): EChart
     source: nameMap[l.source] ?? l.source,
     target: nameMap[l.target] ?? l.target,
     lineStyle: {
-      color: "source",
+      color: l.color ?? "source",
       opacity: 0.35,
     },
   }))

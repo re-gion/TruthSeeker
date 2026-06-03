@@ -15,7 +15,7 @@ import { ProvenanceGraphView } from "@/components/detect/ProvenanceGraphView"
 import { BrandLogo } from "@/components/logo/BrandLogo"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
-import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReport, downloadPdfReport } from "@/lib/report"
+import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReportWithAuditLog, downloadPdfReportWithAuditLog } from "@/lib/report"
 import type { ProvenanceGraph } from "@/lib/provenance-graph"
 
 import Link from "next/link"
@@ -646,18 +646,18 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         )}
                         {isReportReady && (
                             <button
-                                onClick={async () => downloadCanonicalMarkdownReport(taskId, await getAuthToken())}
+                                onClick={async () => downloadCanonicalMarkdownReportWithAuditLog(taskId, await getAuthToken())}
                                 className="text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors"
                             >
-                                MD 报告
+                                MD 报告与审计日志
                             </button>
                         )}
                         {isReportReady && (
                             <button
-                                onClick={async () => downloadPdfReport(taskId, await getAuthToken())}
+                                onClick={async () => downloadPdfReportWithAuditLog(taskId, await getAuthToken())}
                                 className="text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors"
                             >
-                                PDF 报告
+                                PDF 报告与审计日志
                             </button>
                         )}
                         {isReportReady && (

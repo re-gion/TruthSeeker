@@ -70,14 +70,17 @@ interface UploadedEvidenceFile {
     file_url?: string
 }
 
+const MODALITY_ORDER: UploadedEvidenceFile["modality"][] = ["text", "image", "audio", "video"]
+
 function formatSize(bytes: number): string {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function deriveInputType(files: UploadedEvidenceFile[]) {
-    const modalities = Array.from(new Set(files.map((file) => file.modality))).sort()
-    return modalities.length === 1 ? modalities[0] : modalities.join("_")
+export function deriveInputType(files: UploadedEvidenceFile[]) {
+    const present = new Set(files.map((file) => file.modality))
+    const modalities = MODALITY_ORDER.filter((modality) => present.has(modality))
+    return modalities.length > 0 ? modalities.join("_") : "text"
 }
 
 export function getUploadErrorMessage(err: unknown, apiBase: string): string {
@@ -445,7 +448,6 @@ export function FileUploader() {
                                 <input type="checkbox" checked={shareToCasebase} onChange={(event) => setShareToCasebase(event.target.checked)} className="h-4 w-4 rounded border-black/20 bg-transparent accent-[#D4FF12] dark:border-white/20" />
                                 <div>
                                     <div className="text-sm font-medium text-[#1F1F23] dark:text-white">愿意脱敏后公开至案例库</div>
-                                    <div className="text-xs text-black/45 mt-0.5 dark:text-white/40">本次只记录意向，案例库真实加载后续升级</div>
                                 </div>
                             </label>
                         </div>

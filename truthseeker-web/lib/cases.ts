@@ -89,6 +89,33 @@ const VERDICT_LABELS: Record<string, string> = {
   inconclusive: "无法判定",
 }
 
+const VERDICT_ALIASES: Record<string, { verdict: CaseVerdict; label: string }> = {
+  authentic: { verdict: "authentic", label: "内容真实" },
+  real: { verdict: "authentic", label: "内容真实" },
+  suspicious: { verdict: "suspicious", label: "高度可疑" },
+  aigc: { verdict: "suspicious", label: "疑似 AIGC" },
+  ai_generated: { verdict: "suspicious", label: "疑似 AIGC" },
+  "ai-generated": { verdict: "suspicious", label: "疑似 AIGC" },
+  synthetic: { verdict: "suspicious", label: "疑似 AIGC" },
+  manipulated: { verdict: "suspicious", label: "疑似 AIGC" },
+  generated: { verdict: "suspicious", label: "疑似 AIGC" },
+  forged: { verdict: "forged", label: "确认伪造" },
+  fake: { verdict: "forged", label: "确认伪造" },
+  deepfake: { verdict: "forged", label: "确认伪造" },
+  "deep fake": { verdict: "forged", label: "确认伪造" },
+  inconclusive: { verdict: "inconclusive", label: "无法判定" },
+  unknown: { verdict: "inconclusive", label: "无法判定" },
+}
+
+function normalizeVerdict(value: CaseVerdict | null | undefined) {
+  const raw = String(value || "inconclusive")
+  const key = raw.trim().toLowerCase()
+  return VERDICT_ALIASES[key] || VERDICT_ALIASES[key.replace(/\s+/g, "_")] || {
+    verdict: raw,
+    label: VERDICT_LABELS[raw] || "无法判定",
+  }
+}
+
 function readCategory(value: unknown): CaseCategory {
   return CASE_CATEGORY_OPTIONS.some((option) => option.id === value) ? value as CaseCategory : "text_generation"
 }
@@ -102,6 +129,7 @@ export function formatCaseFileSize(bytes: number | null | undefined): string {
 function normalizeCase(row: BackendCase): PublicCaseCard {
   const mediaCategory = readCategory(row.media_category)
   const confidence = typeof row.confidence_overall === "number" ? row.confidence_overall : null
+  const verdict = normalizeVerdict(row.verdict)
   return {
     id: row.id || "",
     sourceKind: row.source_kind || "public",
@@ -110,8 +138,8 @@ function normalizeCase(row: BackendCase): PublicCaseCard {
     mediaCategory,
     categoryLabel: CASE_CATEGORY_LABELS[mediaCategory],
     summary: row.summary || "暂无摘要",
-    verdict: row.verdict || "inconclusive",
-    verdictLabel: VERDICT_LABELS[String(row.verdict || "inconclusive")] || "无法判定",
+    verdict: verdict.verdict,
+    verdictLabel: verdict.label,
     confidenceOverall: confidence,
     confidenceLabel: confidence == null ? "未标注" : `${(confidence * 100).toFixed(1)}%`,
     difficulty: row.difficulty || "Medium",
@@ -187,9 +215,23 @@ export async function requestCasePreviewUrl(caseId: string, fileId: string, fetc
     body: JSON.stringify({ file_id: fileId }),
   })
   if (!resp.ok) throw new Error("检材预览链接生成失败")
-  const payload = await resp.json() as { signed_url?: string; signedUrl?: string; expires_in?: number }
+  const payload = await resp.json() as {
+    signed_url?: string
+    signedUrl?: string
+    expires_in?: number
+    preview_kind?: string
+    text?: string
+    charset?: string
+    detected_encoding?: string
+    text_url?: string
+  }
   return {
     signedUrl: payload.signed_url || payload.signedUrl || "",
     expiresIn: payload.expires_in || 600,
+    previewKind: payload.preview_kind || "file",
+    text: payload.text || "",
+    charset: payload.charset || null,
+    detectedEncoding: payload.detected_encoding || null,
+    textUrl: payload.text_url ? `${API_BASE}${payload.text_url}` : null,
   }
 }

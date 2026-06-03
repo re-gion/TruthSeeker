@@ -11,6 +11,7 @@ import httpx
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.deepfake_api import analyze_media
+from app.agents.tools.internal_text_aigc import detect_ai_generated_text
 from app.agents.tools.llm_client import build_sample_references, forensics_interpret
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
 from app.config import settings
@@ -32,6 +33,56 @@ def _now() -> str:
 
 def _tool_key(result: dict[str, Any]) -> tuple[str, str]:
     return str(result.get("tool", "")), str(result.get("target", ""))
+
+
+def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_analysis: dict[str, Any]) -> dict[str, Any] | None:
+    feedback = state.get("challenger_feedback") or {}
+    consultation_summary = state.get("confirmed_consultation_summary")
+    feedback_phase = str(feedback.get("phase") or "")
+    target_agent = str(feedback.get("target_agent") or feedback_phase or "")
+    feedback_relevant = target_agent == agent or feedback_phase == agent
+    summary_target = ""
+    if isinstance(consultation_summary, dict):
+        summary_target = str(consultation_summary.get("target_agent") or consultation_summary.get("phase") or "")
+    summary_relevant = bool(consultation_summary) and (summary_target == agent or (not summary_target and feedback_relevant))
+    consultation_summary_text = (
+        consultation_summary.get("confirmed_summary")
+        if isinstance(consultation_summary, dict)
+        else consultation_summary
+    )
+    previous_analysis_text = (
+        previous_analysis.get("llm_analysis")
+        or previous_analysis.get("analysis_summary")
+        or previous_analysis.get("summary")
+        if isinstance(previous_analysis, dict)
+        else previous_analysis
+    )
+    issues = [issue for issue in (feedback.get("issues_found") or []) if isinstance(issue, dict)]
+    relevant_issues = [
+        issue for issue in issues
+        if not issue.get("agent") or issue.get("agent") == agent or target_agent == agent
+    ]
+    has_feedback = bool(
+        relevant_issues
+        or (feedback_relevant and feedback.get("llm_cross_validation"))
+        or (feedback_relevant and feedback.get("residual_risks"))
+        or summary_relevant
+    )
+    if not has_feedback:
+        return None
+    return {
+        "target_agent": agent,
+        "challenger_phase": feedback.get("phase"),
+        "challenger_confidence": feedback.get("confidence"),
+        "challenger_issues": relevant_issues or issues,
+        "llm_cross_validation": feedback.get("llm_cross_validation"),
+        "residual_risks": feedback.get("residual_risks") or [],
+        "consultation_summary": consultation_summary_text if summary_relevant else None,
+        "consultation_summary_payload": consultation_summary if summary_relevant else None,
+        "previous_analysis": previous_analysis_text,
+        "previous_analysis_payload": previous_analysis,
+        "instruction": "本轮只针对 Challenger 打回点和会诊摘要补强，不重复上一轮完整报告。",
+    }
 
 
 def _extract_urls_from_text(text: str) -> list[str]:
@@ -106,12 +157,21 @@ async def _settle_tool(
 
 
 def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
+    if tool == "aigc_image_detector":
+        if result.get("degraded") or not result.get("analysis_available", True):
+            reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
+            return f"AIGC 图片检测未取得真实结论，降级原因={reason}"
+        return (
+            f"provider={result.get('provider', result.get('model', 'unknown'))}, "
+            f"ai_generated_probability={_read_aigc_probability(result):.2f}, "
+            f"confidence={result.get('confidence', 0):.2f}"
+        )
     if tool == "reality_defender":
         if result.get("degraded") or not result.get("analysis_available", True):
             reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
             return f"Reality Defender 未取得真实检测结论，降级原因={reason}"
         return (
-            f"deepfake_probability={result.get('deepfake_probability', 0):.2f}, "
+            f"aigc_probability={_read_aigc_probability(result):.2f}, "
             f"confidence={result.get('confidence', 0):.2f}"
         )
     if tool == "virustotal_file_hash":
@@ -123,7 +183,27 @@ def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
     if tool == "virustotal_text_ioc":
         vt = result.get("virustotal") or {}
         return f"threat_score={result.get('threat_score', 0):.2f}, malicious={vt.get('malicious', 0)}"
+    if tool == "ai_text_detector":
+        provider = result.get("provider") or "external"
+        return result.get("summary") or f"{provider} AI probability={result.get('ai_probability', 0):.2f}"
     return "工具完成"
+
+
+def _read_aigc_probability(result: dict[str, Any]) -> float:
+    return float(
+        result.get(
+            "aigc_probability",
+            result.get("ai_generated_probability", result.get("deepfake_probability", 0.0)),
+        )
+        or 0.0
+    )
+
+
+def _read_is_aigc(result: dict[str, Any], probability: float) -> bool:
+    value = result.get("is_aigc", result.get("is_ai_generated", result.get("is_deepfake")))
+    if isinstance(value, bool):
+        return value
+    return probability > 0.5
 
 
 def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
@@ -210,9 +290,10 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         target = str(media.get("name") or media.get("file_url") or media.get("storage_path") or "media")
         url = str(media.get("file_url") or media.get("storage_path") or "")
         modality = str(media.get("modality") or input_type)
-        if url and not maybe_reuse("reality_defender", target):
+        tool_name = "aigc_image_detector" if modality == "image" else "reality_defender"
+        if url and not maybe_reuse(tool_name, target):
             tool_tasks.append(_settle_tool(
-                tool="reality_defender",
+                tool=tool_name,
                 target=target,
                 coro=analyze_media(url, modality),
             ))
@@ -253,6 +334,16 @@ async def forensics_node(state: TruthSeekerState) -> dict:
                 "completed_at": _now(),
             })
 
+    if text_contents:
+        combined_text = "\n\n".join(str(item.get("content") or "") for item in text_contents).strip()[:TEXT_MAX_CHARS]
+        if combined_text and not maybe_reuse("ai_text_detector", "uploaded_text"):
+            tool_tasks.append(_settle_tool(
+                tool="ai_text_detector",
+                target="uploaded_text",
+                coro=detect_ai_generated_text(combined_text, target="uploaded_text"),
+                timeout=45.0,
+            ))
+
     for url in list(dict.fromkeys(text_urls)):
         if not maybe_reuse("virustotal_text_ioc", url):
             tool_tasks.append(_settle_tool(
@@ -271,7 +362,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     rd_results = [
         item.get("result") or {}
         for item in settled_results
-        if item.get("tool") == "reality_defender"
+        if item.get("tool") in {"reality_defender", "aigc_image_detector"}
     ]
     rd_success_results = [
         item
@@ -283,15 +374,29 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         for item in settled_results
         if str(item.get("tool", "")).startswith("virustotal")
     ]
-    deepfake_prob = max([float(item.get("deepfake_probability", 0.0) or 0.0) for item in rd_success_results] or [0.0])
+    text_aigc_results = [
+        item.get("result") or {}
+        for item in settled_results
+        if item.get("tool") == "ai_text_detector"
+    ]
+    text_aigc_detection = next((item for item in text_aigc_results if item.get("status") == "success"), None)
+    media_aigc_prob = max([
+        _read_aigc_probability(item)
+        for item in rd_success_results
+    ] or [0.0])
+    text_aigc_prob = float((text_aigc_detection or {}).get("ai_probability", 0.0) or 0.0)
+    text_aigc_conf = float((text_aigc_detection or {}).get("confidence", 0.0) or 0.0)
+    aigc_prob = max(media_aigc_prob, text_aigc_prob)
     rd_conf = max([float(item.get("confidence", 0.0) or 0.0) for item in rd_success_results] or [0.2])
     vt_threat = max([float(item.get("threat_score", 0.0) or 0.0) for item in vt_results] or [0.0])
     vt_malicious = sum(int(item.get("malicious", 0) or 0) for item in vt_results)
 
-    is_deepfake = deepfake_prob > 0.5
+    is_aigc = any(_read_is_aigc(item, _read_aigc_probability(item)) for item in rd_success_results) or text_aigc_prob > 0.5
     is_suspicious_ioc = vt_threat > 0.4 or vt_malicious > 0
     if rd_success_results:
-        confidence = max(0.2, min(0.95, max(rd_conf, 0.55 + vt_threat * 0.25)))
+        confidence = max(0.2, min(0.95, max(rd_conf, text_aigc_conf, 0.55 + vt_threat * 0.25)))
+    elif text_aigc_detection:
+        confidence = max(0.2, min(0.85, max(text_aigc_conf, 0.45 + text_aigc_prob * 0.35, 0.35 + vt_threat * 0.30)))
     else:
         confidence = max(0.2, min(0.55, max(rd_conf, 0.35 + vt_threat * 0.30)))
     indicators: list[str] = []
@@ -352,16 +457,24 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
     raw_forensics = {
         "tool_matrix": settled_results,
-        "is_deepfake": is_deepfake,
-        "deepfake_probability": deepfake_prob,
+        "is_aigc": is_aigc,
+        "is_aigc_manipulated": is_aigc,
+        "aigc_probability": aigc_prob,
+        "media_aigc_probability": media_aigc_prob,
+        "text_aigc_probability": text_aigc_prob,
         "confidence": confidence,
         "vt_threat_score": vt_threat,
+        "text_aigc_detection": text_aigc_detection,
         "is_suspicious_ioc": is_suspicious_ioc,
         "sample_refs": sample_refs,
         "degraded": degraded,
         "text_samples": text_contents,
         "case_rag": case_rag,
     }
+    reinforcement_context = _build_reinforcement_context(state, "forensics", state.get("forensics_result") or {})
+    if reinforcement_context:
+        raw_forensics["reinforcement_context"] = reinforcement_context
+        log("thinking", "读取 Challenger/会诊反馈，按打回点补强电子取证分析")
 
     log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
     llm_analysis = await forensics_interpret(raw_forensics, input_type, case_prompt, sample_refs, text_contents=text_contents)
@@ -369,17 +482,21 @@ async def forensics_node(state: TruthSeekerState) -> dict:
 
     forensics_score = confidence
     result = {
-        "is_deepfake": is_deepfake,
-        "deepfake_probability": deepfake_prob,
+        "is_aigc": is_aigc,
+        "is_aigc_manipulated": is_aigc,
+        "aigc_probability": aigc_prob,
+        "media_aigc_probability": media_aigc_prob,
+        "text_aigc_probability": text_aigc_prob,
         "confidence": confidence,
         "forensics_score": forensics_score,
-        "model_used": "reality_defender+virustotal+kimi-k2.5",
+        "model_used": "sightengine_genai/reality_defender+virustotal+kimi-k2.5",
         "model_scores": rd_success_results[:5],
         "degraded_model_scores": [item for item in rd_results if item.get("degraded")][:5],
         "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_success_results),
         "audio_score": next((item.get("audio_score") for item in rd_success_results if item.get("audio_score") is not None), None),
         "indicators": indicators[:8],
         "tool_results": settled_results,
+        "text_aigc_detection": text_aigc_detection,
         "tool_summary": {
             "total": len(settled_results),
             "success": sum(1 for item in settled_results if item.get("status") == "success"),
@@ -401,12 +518,13 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "type": "forensics",
         "source": "forensics_agent",
         "description": (
-            f"电子取证：伪造概率 {deepfake_prob:.1%}，VT 威胁评分 {vt_threat:.1%}，"
+            f"电子取证：AIGC 风险 {aigc_prob:.1%}，VT 威胁评分 {vt_threat:.1%}，"
             f"工具成功 {result['tool_summary']['success']}/{len(settled_results)}"
         ),
         "confidence": confidence,
         "metadata": {
-            "is_deepfake": is_deepfake,
+            "is_aigc": is_aigc,
+            "aigc_probability": aigc_prob,
             "is_suspicious_ioc": is_suspicious_ioc,
             "tool_summary": result["tool_summary"],
             "indicators": indicators[:8],
@@ -423,14 +541,14 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         source_kind="agent",
         from_phase="forensics",
         target_agent="challenger",
-        content=f"电子取证完成: 伪造概率 {deepfake_prob:.1%}, 置信度 {confidence:.1%}",
+        content=f"电子取证完成: AIGC 风险 {aigc_prob:.1%}, 置信度 {confidence:.1%}",
     ))
     record_audit_event(
         action="forensics.complete",
         task_id=task_id,
         agent="forensics",
         metadata={
-            "deepfake_probability": deepfake_prob,
+            "aigc_probability": aigc_prob,
             "degraded": degraded,
             "tool_success": result["tool_summary"]["success"],
             "tool_total": len(settled_results),
@@ -449,6 +567,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "degradation_status": {
             "reality_defender": "degraded" if any(r.get("tool") == "reality_defender" and r.get("degraded") for r in settled_results) else "ok",
             "virustotal": "degraded" if any(str(r.get("tool", "")).startswith("virustotal") and r.get("degraded") for r in settled_results) else "ok",
+            "ai_text_detector": "degraded" if any(r.get("tool") == "ai_text_detector" and r.get("degraded") for r in settled_results) else "ok",
         },
         "tool_results": {"forensics": settled_results},
     }

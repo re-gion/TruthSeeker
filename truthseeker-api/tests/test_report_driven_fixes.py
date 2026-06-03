@@ -166,6 +166,72 @@ class PdfFallbackTests(unittest.TestCase):
         self.assertGreater(len(pdf_bytes), 1000)
 
 
+class MarkdownReportFallbackTests(unittest.TestCase):
+    def test_osint_section_uses_final_verdict_summary_when_agent_snapshot_is_missing(self):
+        report_generator = import_with_asyncio_fallback("app.services.report_generator")
+
+        original_fetch_task_data = report_generator._fetch_task_data
+        final_graph = {
+            "nodes": [{"id": "domain-1", "label": "malicious.example"}],
+            "edges": [],
+            "citations": [{"id": "c1", "url": "https://example.com/intel"}],
+        }
+
+        async def fake_fetch_task_data(_task_id):
+            return {
+                "task": {
+                    "id": "abd5f812-54ff-4450-a68c-1b26eca27d92",
+                    "title": "案例3-图片-客服通知.jpg 等 2 个检材",
+                    "status": "completed",
+                    "created_at": "2026-06-03T00:00:00+00:00",
+                    "updated_at": "2026-06-03T00:01:00+00:00",
+                    "result": {},
+                },
+                "report": {
+                    "generated_at": "2026-06-03T00:02:00+00:00",
+                    "verdict_payload": {
+                        "verdict": "suspicious",
+                        "confidence": 0.67,
+                        "osint_summary": {
+                            "threat_score": 0.88,
+                            "confidence": 0.75,
+                            "is_suspicious": True,
+                        },
+                        "provenance_summary": {
+                            "node_count": 1,
+                            "citation_count": 1,
+                        },
+                        "provenance_graph": final_graph,
+                    },
+                },
+                "analysis_states": [
+                    {
+                        "result_snapshot": {
+                            "final_verdict": {
+                                "verdict": "suspicious",
+                                "provenance_graph": final_graph,
+                            }
+                        }
+                    }
+                ],
+                "agent_logs": [],
+                "audit_logs": [],
+                "consultation_sessions": [],
+                "consultation_messages": [],
+            }
+
+        report_generator._fetch_task_data = fake_fetch_task_data
+        try:
+            markdown = run_sync_coroutine(report_generator.generate_markdown_report("task-1"))
+        finally:
+            report_generator._fetch_task_data = original_fetch_task_data
+
+        self.assertNotIn("暂无 OSINT 情报溯源数据", markdown)
+        self.assertIn("final_verdict_summary", markdown)
+        self.assertIn("threat_score", markdown)
+        self.assertIn("provenance_graph", markdown)
+
+
 class RealityDefenderDiagnosticsTests(unittest.TestCase):
     def test_mock_deepfake_result_records_fallback_reason_and_key_presence(self):
         deepfake_api = import_with_asyncio_fallback("app.agents.tools.deepfake_api")
@@ -180,6 +246,9 @@ class RealityDefenderDiagnosticsTests(unittest.TestCase):
         )
 
         self.assertTrue(result["degraded"])
+        self.assertFalse(result["is_aigc"])
+        self.assertIn("aigc_probability", result)
+        self.assertNotIn("deepfake_probability", result)
         self.assertEqual(result["details"]["fallback_reason"], "network_unavailable")
         self.assertTrue(result["details"]["api_key_configured"])
 

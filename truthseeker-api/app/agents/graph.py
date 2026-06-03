@@ -1,10 +1,10 @@
 """LangGraph State Machine Workflow - 阶段式四 Agent 拓扑。
 
 拓扑结构：
-START → Forensics → Challenger → OSINT → Challenger → Commander → Challenger → END
+START → Forensics → Challenger → OSINT → Challenger → Commander → END
 
-Challenger 可按当前 phase 打回同一阶段重跑；Commander 阶段只允许重写最终报告，
-不再重新打开取证或 OSINT 工具链。
+Challenger 可按当前 phase 打回 Forensics/OSINT 重跑；Commander 生成最终裁决后直接结束，
+不再进入 Challenger，避免最终报告阶段重复前序质询。
 """
 from langgraph.graph import StateGraph, START, END
 
@@ -40,7 +40,7 @@ def build_graph():
     graph.add_edge(START, "forensics")
     graph.add_edge("forensics", "challenger")
     graph.add_edge("osint", "challenger")
-    graph.add_edge("commander", "challenger")
+    graph.add_edge("commander", END)
 
     # Challenger → 条件路由。
     graph.add_conditional_edges(

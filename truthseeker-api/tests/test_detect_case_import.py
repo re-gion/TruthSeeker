@@ -19,6 +19,9 @@ class FakeQuery:
         self.filters[key] = value
         return self
 
+    def order(self, _key, desc=False):
+        return self
+
     def insert(self, payload):
         self.operation = "insert"
         self.payload = payload
@@ -107,3 +110,55 @@ async def test_run_case_import_phase_emits_skipped_when_not_requested(monkeypatc
 
     events = await _drain_queue(queue)
     assert events == [{"type": "case_import_skipped", "task_id": "task-2", "reason": "not_requested"}]
+
+
+def test_recover_final_verdict_prefers_persisted_report(monkeypatch):
+    from app.api.v1 import detect as detect_module
+
+    db = {
+        "reports": [
+            {
+                "task_id": "task-3",
+                "verdict_payload": {
+                    "verdict": "suspicious",
+                    "confidence": 0.42,
+                    "llm_ruling": "已持久化的 Commander 裁决",
+                },
+            }
+        ],
+        "tasks": [
+            {
+                "id": "task-3",
+                "result": {"verdict": "failed", "confidence": 0.0},
+            }
+        ],
+        "analysis_states": [],
+    }
+    monkeypatch.setattr(detect_module, "supabase", FakeSupabase(db))
+
+    recovered = detect_module._recover_persisted_final_verdict("task-3", None)
+
+    assert recovered["verdict"] == "suspicious"
+    assert recovered["confidence_overall"] == 0.42
+    assert recovered["analysis_summary"] == "已持久化的 Commander 裁决"
+
+
+def test_recover_final_verdict_falls_back_to_latest_analysis_state(monkeypatch):
+    from app.api.v1 import detect as detect_module
+
+    db = {
+        "reports": [],
+        "tasks": [{"id": "task-4", "result": None}],
+        "analysis_states": [
+            {
+                "task_id": "task-4",
+                "result_snapshot": {"final_verdict": {"verdict": "authentic", "confidence": 0.66}},
+            }
+        ],
+    }
+    monkeypatch.setattr(detect_module, "supabase", FakeSupabase(db))
+
+    recovered = detect_module._recover_persisted_final_verdict("task-4", None)
+
+    assert recovered["verdict"] == "authentic"
+    assert recovered["confidence_overall"] == 0.66

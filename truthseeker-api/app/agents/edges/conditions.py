@@ -19,8 +19,7 @@ def evaluate_phase_convergence(
 ) -> dict:
     """Evaluate the Challenger phase-stability gate.
 
-    Stable reasoning requires all three user-visible gates:
-    Δ(t) < threshold, confidence > 0.8, and round_count >= 2.
+    Stable reasoning requires Δ(t) < threshold and confidence > 0.8.
     round_count >= max_rounds is a hard guard to stop repeated retries.
     """
     if round_count >= max_rounds:
@@ -31,17 +30,15 @@ def evaluate_phase_convergence(
         }
 
     stable_delta = quality_delta is not None and quality_delta < threshold
-    enough_rounds = round_count >= 2
     high_confidence = confidence > 0.8
-    is_stable = bool(stable_delta and high_confidence and enough_rounds)
+    is_stable = bool(stable_delta and high_confidence)
     return {
         "is_stable": is_stable,
         "force_max_rounds": False,
         "stable_delta": stable_delta,
         "high_confidence": high_confidence,
-        "enough_rounds": enough_rounds,
         "reason": (
-            "满足 Δ(t)、置信度和最小轮次要求，推理趋于稳定"
+            "满足 Δ(t) 和置信度要求，推理趋于稳定"
             if is_stable
             else "未同时满足稳定收敛条件"
         ),
@@ -67,10 +64,6 @@ def should_converge(state: TruthSeekerState) -> str:
     # 最大轮数兜底
     if current_round >= max_rounds:
         return "converge"
-
-    # 强制至少运行 2 轮（如果质询官决定打回）
-    if current_round < 2 and state.get("challenger_feedback", {}).get("requires_more_evidence"):
-        return "continue"
 
     # 置信度历史收敛检查
     if len(confidence_history) >= 2:
@@ -103,7 +96,7 @@ def challenger_route(state: TruthSeekerState) -> str:
     质询官路由：按当前阶段决定下一步。
 
     外部协议 key 仍是 forensics/osint/challenger/commander，但拓扑已从旧并行
-    变为阶段式：forensics → challenger → osint → challenger → commander → challenger → end。
+    变为阶段式：forensics → challenger → osint → challenger → commander → end。
     """
     feedback = state.get("challenger_feedback") or {}
     phase = state.get("analysis_phase") or "forensics"

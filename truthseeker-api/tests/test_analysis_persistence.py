@@ -88,7 +88,7 @@ def test_build_analysis_state_row_collects_round_scores_and_results():
     now = datetime.now(timezone.utc).isoformat()
     updates = {
         "current_round": 2,
-        "forensics_result": {"confidence": 0.82, "deepfake_probability": 0.77},
+        "forensics_result": {"confidence": 0.82, "aigc_probability": 0.77},
         "osint_result": {"confidence": 0.61, "threat_score": 0.28},
         "challenger_feedback": {"quality_score": 0.73},
         "evidence_board": [{"type": "visual", "source": "forensics", "description": "异常", "confidence": 0.8, "metadata": {}}],

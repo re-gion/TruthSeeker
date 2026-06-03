@@ -110,21 +110,22 @@ async def fallback_metadata_analysis(file_url: str, file_type: str) -> dict:
     # Heuristic scoring based on metadata anomalies
     anomaly_count = len(manipulation_indicators) + len(exif_anomalies)
     if anomaly_count >= 3:
-        deepfake_probability = 0.45
-        is_deepfake = True
+        aigc_probability = 0.45
+        is_aigc = True
     elif anomaly_count >= 1:
-        deepfake_probability = 0.25
-        is_deepfake = False
+        aigc_probability = 0.25
+        is_aigc = False
     else:
-        deepfake_probability = 0.05
-        is_deepfake = False
+        aigc_probability = 0.05
+        is_aigc = False
 
     # Confidence is capped at 0.5
     confidence = min(0.5, 0.3 + anomaly_count * 0.1)
 
     return {
-        "is_deepfake": is_deepfake,
-        "deepfake_probability": deepfake_probability,
+        "is_aigc": is_aigc,
+        "is_aigc_manipulated": is_aigc,
+        "aigc_probability": aigc_probability,
         "confidence": confidence,
         "model": "metadata_heuristic",
         "degraded": True,
@@ -186,8 +187,9 @@ async def fallback_osint_analysis(file_url: str, file_type: str) -> dict:
 def minimal_forensics_result(input_type: str = "unknown") -> dict:
     """Minimal result when all APIs fail. Confidence = 0.2."""
     return {
-        "is_deepfake": False,
-        "deepfake_probability": 0.0,
+        "is_aigc": False,
+        "is_aigc_manipulated": False,
+        "aigc_probability": 0.0,
         "confidence": 0.2,
         "model": "minimal_fallback",
         "degraded": True,

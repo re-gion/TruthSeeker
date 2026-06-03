@@ -6,6 +6,7 @@ import Link from "next/link"
 import { motion } from "motion/react"
 import { BrandLogo } from "@/components/logo/BrandLogo"
 import StarBackground from "@/components/ui/StarBackground"
+import { displayInputType } from "@/lib/input-types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -136,7 +137,7 @@ export default function SharedReportPage() {
                     {/* Task info */}
                     <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap gap-4 text-xs text-[#6B7280]">
                         {data.task.title && <span>任务: {data.task.title}</span>}
-                        {data.task.input_type && <span>类型: {data.task.input_type}</span>}
+                        {data.task.input_type && <span>类型: {displayInputType(data.task.input_type)}</span>}
                         {data.report.generated_at && (
                             <span>
                                 裁决时间: {new Date(data.report.generated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}

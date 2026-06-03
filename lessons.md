@@ -28,6 +28,13 @@
 | 2026-04-29 | 文档/会诊机制 | 把专家会诊写成普通聊天或一次性自动暂停，会导致流程反复中断、专家意见不可计算、报告看不出人工介入边界 | 文档和实现必须区分首次自动会诊、重复触发审批、Commander 摘要、主持人确认/结束、邀请 TTL 和结构化消息 |
 | 2026-05-28 | 公开案例库/Supabase | 免费层不适合把音视频二进制复制进数据库或案例专用桶；重复公开案例也不能阻断用户正常检测 | 原始检材复用私有 `media` bucket 的 storage path，案例表只存脱敏展示字段、报告 Markdown、SHA-256 指纹和短期预览入口；勾选公开时单文件限制 50MB |
 | 2026-06-01 | 公开案例库/RAG | 相似公开案例容易被模型误写成当前任务事实，RAG 服务不可用也可能不应影响鉴伪分数 | 公开案例 RAG 只作为类案参考；Forensics/OSINT 可调用并写入报告/日志，但 Commander 不因命中直接改分。embedding 缺 key、pgvector 查询失败时必须结构化降级并继续检测 |
+| 2026-06-02 | 后端/SSE 会诊恢复 | Commander 已持久化最终裁决后，如果 post-Commander Challenger 触发会诊中断，新的 `resume=true` 流可能不会再次收到 `final_verdict`，导致误报“未生成最终裁决”并跳过公开案例导入 | Commander 完成后直接 END，不再进入 Challenger；resume 流仍保留从 `reports`、`tasks.result` 或 `analysis_states` 找回已持久化裁决的兜底 |
+| 2026-06-02 | 后端/公开案例报告 | 公开案例 Markdown 的“关键证据”章节容易展示内部结构化对象，和最终裁决摘要重复且对公众无解释价值 | 公开案例入库和详情 API 都过滤“关键证据”章节；检测台正式 Markdown/PDF 报告不受影响 |
+| 2026-06-02 | 后端/文本 AIGC 检测 | 文本 AIGC 检测如果依赖外部 API，key、编码、额度或网络失败会污染证据链 | 文本 AIGC 改为内部 `ai_text_detector` 工具，供 Forensics/OSINT 调用；输出概率性线索、结构化信号和限制说明，不作为单独定性证据 |
+| 2026-06-02 | 后端/VirusTotal URL 扫描 | VT URL 新提交扫描可能长时间 `queued`，短轮询结束后会出现 `analysis_queued` 且没有厂商统计 | queued 时不要把空统计当 0 检出；应补充回查 `/api/v3/urls/{url_id}` 的既有 `last_analysis_stats`，仍无结果才标记 `scan_available=false` |
+| 2026-06-03 | 后端/Challenger 会诊恢复 | `resume_after_consultation` 如果被当作自动放行，会导致仍需补证的阶段直接跳到下一 Agent；跨阶段复用 `consultation_trigger_history` 还会让 OSINT 阶段错误触发 forensics 会诊 | 会诊恢复载荷要先注入本轮 Challenger 上下文，只有 `skip_consultation` 才强制放行；会诊触发必须按当前 `phase == target_agent` 的连续记录计算 |
+| 2026-06-03 | 后端/文本 AIGC 与会诊上下文 | 同一问题连续三轮由 LLM 改写后会污染“需要帮助”字段；按某个案例写死 canonical 规则会过拟合 | Commander 在启动专家会诊时调用 LLM 对 `help_needed` 语义合并，LLM 不可用才用通用相似度兜底；不要按单个工具/API 错误写死关键词规则 |
+| 2026-06-03 | 后端/AIGC 字段命名 | 图片 `AI_GENERATED`、音视频合成篡改和旧 Deepfake provider 字段混用，会让报告把 AIGC 概率误写成 Deepfake 概率 | 新运行时主字段统一用 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_*` 只作为历史 JSONB 读取 fallback，不能进入新报告主字段或用户可见术语 |
 
 ---
 

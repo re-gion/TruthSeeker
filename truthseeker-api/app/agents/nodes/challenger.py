@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.edges.conditions import evaluate_phase_convergence
-from app.agents.tools.llm_client import build_sample_references, challenger_model_review
+from app.agents.tools.llm_client import (
+    build_sample_references,
+    challenger_model_review,
+    commander_dedupe_consultation_context,
+)
 from app.services.audit_log import record_audit_event
 from app.services.consultation_workflow import (
     build_timeline_event,
@@ -60,6 +65,49 @@ def _score_issues(issues: list[dict[str, Any]], base: float = 1.0) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _evidence_confidence_floor(forensics: dict[str, Any], osint: dict[str, Any], phase: str) -> float:
+    floor = 0.0
+    aigc_probability = float(forensics.get("aigc_probability", forensics.get("deepfake_probability", 0.0)) or 0.0)
+    forensics_confidence = float(forensics.get("confidence", 0.0) or 0.0)
+    if aigc_probability >= 0.9 and forensics_confidence >= 0.7:
+        floor = max(floor, 0.58)
+    elif aigc_probability >= 0.75 and forensics_confidence >= 0.6:
+        floor = max(floor, 0.48)
+
+    vt_score = float(forensics.get("vt_threat_score", osint.get("threat_score", 0.0)) or 0.0)
+    threat_score = float(osint.get("threat_score", 0.0) or 0.0)
+    if max(vt_score, threat_score) >= 0.75:
+        floor = max(floor, 0.58)
+
+    text_risk_score = float(osint.get("text_risk_score", 0.0) or 0.0)
+    social_engineering_score = float(osint.get("social_engineering_score", 0.0) or 0.0)
+    if max(text_risk_score, social_engineering_score) >= 0.7:
+        floor = max(floor, 0.50)
+
+    graph = osint.get("provenance_graph") or {}
+    if isinstance(graph, dict):
+        nodes = graph.get("nodes") or []
+        citations = graph.get("citations") or []
+        if len(nodes) >= 3 and citations:
+            floor = max(floor, 0.45)
+
+    if phase == "commander" and forensics_confidence >= 0.7 and threat_score >= 0.7:
+        floor = max(floor, 0.55)
+    return min(0.65, floor)
+
+
+def _apply_evidence_floor(
+    confidence: float,
+    evidence_floor: float,
+    high: list[dict[str, Any]],
+    medium: list[dict[str, Any]],
+) -> float:
+    if evidence_floor <= 0 or confidence >= evidence_floor:
+        return confidence
+    gap_penalty = min(0.14, len(high) * 0.06 + len(medium) * 0.03)
+    return max(confidence, evidence_floor - gap_penalty)
+
+
 def _phase_delta(history: list[float], current: float) -> float | None:
     if not history:
         return None
@@ -99,16 +147,49 @@ def _normalize_target_agent(value: Any, fallback: str) -> str:
 
 def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
     try:
-        resp = (
-            supabase.table("consultation_sessions")
-            .select("*")
-            .eq("task_id", task_id)
-            .order("created_at", desc=False)
-            .execute()
+        resp = _execute_supabase_query(
+            lambda: (
+                supabase.table("consultation_sessions")
+                .select("*")
+                .eq("task_id", task_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
         )
         return [item for item in (resp.data or []) if isinstance(item, dict)]
     except Exception:
         return []
+
+
+def _is_transient_read_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in ("readerror", "read error", "timeout", "connection reset", "server disconnected"))
+
+
+def _execute_supabase_query(factory, *, attempts: int = 3):
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return factory()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts or not _is_transient_read_error(exc):
+                raise
+            time.sleep(0.2 * attempt)
+    raise last_error or RuntimeError("Supabase query failed")
+
+
+def _resume_consultation_context(
+    expert_messages: list[dict[str, Any]],
+    confirmed_summary: Any,
+) -> dict[str, Any] | None:
+    if not expert_messages and not confirmed_summary:
+        return None
+    return {
+        "type": "human_consultation",
+        "expert_messages": expert_messages,
+        "confirmed_summary": confirmed_summary,
+    }
 
 
 def _forensics_issues(forensics: dict[str, Any]) -> list[dict[str, Any]]:
@@ -229,13 +310,32 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         metadata={"phase": phase, "phase_round": phase_round},
     )
 
+    resume_payload_from_state = state.get("consultation_resume")
+    if isinstance(resume_payload_from_state, dict):
+        resumed_messages = resume_payload_from_state.get("expert_messages")
+        if isinstance(resumed_messages, list):
+            expert_messages.extend(m for m in resumed_messages if isinstance(m, dict))
+            expert_messages = filter_human_consultation_messages(expert_messages)
+        resumed_sessions = resume_payload_from_state.get("consultation_sessions")
+        if isinstance(resumed_sessions, list):
+            consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
+        summary = resume_payload_from_state.get("confirmed_consultation_summary")
+        if isinstance(summary, dict):
+            summary.setdefault("phase", phase)
+            summary.setdefault("target_agent", phase)
+            confirmed_consultation_summary = summary
+        if expert_messages or confirmed_consultation_summary:
+            log("thinking", "已从恢复载荷纳入专家意见/会诊摘要")
+
     try:
         db_sessions = _fetch_consultation_sessions(task_id)
         if db_sessions:
             consultation_sessions = db_sessions
         known_ids = {m.get("id") for m in expert_messages if isinstance(m, dict) and m.get("id")}
         resp = await asyncio.to_thread(
-            lambda: supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
+            lambda: _execute_supabase_query(
+                lambda: supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
+            )
         )
         latest_messages = latest_human_consultation_messages(resp.data or [], consultation_sessions)
         new_messages = [m for m in latest_messages if m.get("id") not in known_ids]
@@ -244,7 +344,10 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             expert_messages = filter_human_consultation_messages(expert_messages)
             log("thinking", f"纳入 {len(new_messages)} 条新增专家意见")
     except Exception as exc:
-        log("action", f"读取专家意见失败，继续自动质询: {type(exc).__name__}")
+        if expert_messages or confirmed_consultation_summary:
+            log("action", f"读取专家意见补充失败，已使用恢复载荷继续质询: {type(exc).__name__}")
+        else:
+            log("action", f"读取专家意见失败，继续自动质询: {type(exc).__name__}")
 
     forensics = state.get("forensics_result") or {}
     osint = state.get("osint_result") or {}
@@ -268,12 +371,16 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     model_target_agent = phase
     model_issues: list[dict[str, Any]] = []
     model_residual_risks: list[dict[str, Any]] = []
+    review_challenges = list(state.get("challenges") or [])
+    human_context = _resume_consultation_context(expert_messages, confirmed_consultation_summary)
+    if human_context:
+        review_challenges.append(human_context)
     log("action", "调用 Kimi 多模态上下文进行逻辑交叉审查")
     try:
         model_review = await challenger_model_review(
             forensics,
             {**osint, "final_verdict": final_verdict if phase == "commander" else None},
-            state.get("challenges") or [],
+            review_challenges,
             case_prompt,
             sample_refs,
             phase=phase,
@@ -305,6 +412,12 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
     confidence = _score_issues(issues_found, base=model_confidence)
+    confidence = _apply_evidence_floor(
+        confidence,
+        _evidence_confidence_floor(forensics, osint, phase),
+        high,
+        medium,
+    )
     quality_score = confidence
     previous_scores = list(quality_history.get(phase) or [])
     delta = _phase_delta(previous_scores, confidence)
@@ -319,13 +432,10 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     )
     maxed = bool(convergence.get("force_max_rounds"))
     phase_stable = bool(convergence.get("is_stable"))
-    requires_more_evidence = (
-        not maxed
-        and (
-            phase_round < 2
-            or model_requires_more_evidence
-            or (bool(high) and not phase_stable)
-        )
+    first_round_high_confidence_pass = confidence > 0.8 and not high and not model_requires_more_evidence
+    requires_more_evidence = not maxed and not first_round_high_confidence_pass and (
+        model_requires_more_evidence
+        or (bool(high) and not phase_stable)
     )
     residual_risks: list[dict[str, Any]] = []
     if bool(high) and maxed:
@@ -343,10 +453,10 @@ async def challenger_node(state: TruthSeekerState) -> dict:
 
     if phase_stable and not high:
         log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，置信度 {confidence:.1%}，阶段收敛")
-    elif phase_round < 2 and not maxed:
-        log("challenge", f"最少质询轮次未满足，继续打回 {model_target_agent or phase} 阶段复核")
+    elif first_round_high_confidence_pass:
+        log("action", f"置信度 {confidence:.1%} 超过放行阈值且无阻断高危问题，阶段继续推进")
     elif requires_more_evidence:
-        log("challenge", f"模型建议或硬门槛要求补证，打回 {model_target_agent or phase} 阶段重审")
+        log("challenge", f"模型建议或硬门槛要求补证，打回 {phase} 阶段重审")
     elif high and maxed:
         log("challenge", f"{phase} 阶段达到最大轮次，保留 {len(high)} 个高风险问题并继续推进")
     elif issues_found:
@@ -370,9 +480,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             },
         )
 
-    target_agent = model_target_agent if requires_more_evidence else None
-    if requires_more_evidence and phase_round < 2:
-        target_agent = phase
+    target_agent = phase if requires_more_evidence else None
     if phase == "commander" and requires_more_evidence:
         target_agent = "commander"
 
@@ -412,6 +520,12 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             challenger_feedback={"confidence": confidence, "issues_found": issues_found},
             trigger=consultation_trigger,
         )
+        context_payload = await commander_dedupe_consultation_context(
+            context_payload,
+            case_prompt=case_prompt,
+            sample_refs=sample_refs,
+        )
+        log("thinking", "Commander 主持已整理会诊需要帮助字段")
         payload = {
             "type": event_type,
             "task_id": task_id,
@@ -439,6 +553,8 @@ async def challenger_node(state: TruthSeekerState) -> dict:
                 consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
             summary = consultation_resume_payload.get("confirmed_consultation_summary")
             if isinstance(summary, dict):
+                summary.setdefault("phase", phase)
+                summary.setdefault("target_agent", phase)
                 confirmed_consultation_summary = summary
                 residual_risks.append({
                     "phase": phase,
@@ -446,7 +562,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
                     "reason": "用户确认的会诊摘要已回注证据板",
                     "timestamp": _now(),
                 })
-            if consultation_resume_payload.get("action") in {"skip_consultation", "resume_after_consultation"}:
+            active_consultation_session = None
+            pending_consultation_approval = None
+            if consultation_resume_payload.get("action") == "skip_consultation":
                 requires_more_evidence = False
                 target_agent = None
             log("thinking", f"会诊已恢复，恢复指令: {consultation_resume_payload.get('action', 'resume')}")

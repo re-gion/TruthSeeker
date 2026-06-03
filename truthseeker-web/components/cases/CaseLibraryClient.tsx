@@ -92,23 +92,24 @@ function RealCaseCard({ item }: { item: PublicCaseCard }) {
   return (
     <Link
       href={`/cases/${item.id}`}
-      className="group rounded-lg border border-white/10 bg-white/[0.045] p-5 transition-colors hover:border-[#D4FF12]/35 hover:bg-white/[0.07]"
+      className="group relative block h-full overflow-hidden rounded-lg border border-white/10 bg-[linear-gradient(145deg,rgba(255,255,255,0.065),rgba(255,255,255,0.025))] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#D4FF12]/35 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4FF12]/45"
     >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#D4FF12]/35 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#D4FF12]/20 bg-[#D4FF12]/8 text-[#D4FF12]">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#D4FF12]/25 bg-[#D4FF12]/10 text-[#D4FF12] shadow-[0_0_24px_rgba(212,255,18,0.08)]">
             {renderCategoryIcon(item.mediaCategory)}
           </div>
           <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold text-white group-hover:text-[#D4FF12]">{item.title}</h3>
+            <h3 className="line-clamp-2 text-base font-semibold leading-6 text-white transition-colors group-hover:text-[#D4FF12]">{item.title}</h3>
             <div className="mt-1 text-xs text-white/55">{item.categoryLabel}</div>
           </div>
         </div>
-        <span className={`rounded border px-2 py-1 text-[11px] ${verdictTone(String(item.verdict))}`}>
+        <span className={`shrink-0 rounded border px-2 py-1 text-[11px] ${verdictTone(String(item.verdict))}`}>
           {item.verdictLabel}
         </span>
       </div>
-      <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-white/68">{item.summary}</p>
+      <p className="mt-4 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-white/68">{item.summary}</p>
       <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/10 pt-3 text-xs text-white/45">
         <span>{item.confidenceLabel}</span>
         <span>{item.difficulty}</span>

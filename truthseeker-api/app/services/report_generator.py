@@ -2,9 +2,11 @@
 import asyncio
 import importlib
 import io
+import inspect
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -13,17 +15,26 @@ from fastapi import HTTPException
 
 from app.services.analysis_persistence import normalize_final_verdict
 from app.services.consultation_workflow import filter_human_consultation_messages
+from app.services.input_types import display_input_type
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
 
 MAX_REPORT_FIELD_CHARS = 1200
 MAX_SEARCH_SUMMARY_CHARS = 280
+REPORT_AUDIT_LOG_LIMIT = 50
 SKIP_REPORT_KEYS = {"signed_url", "raw_response", "case_rag"}
 MARKDOWN_REPORT_FIELDS = {
     "llm_analysis": "LLM 分析",
     "llm_cross_validation": "LLM 逻辑质询",
     "llm_ruling": "LLM 最终研判",
+}
+
+AGENT_DISPLAY_NAMES = {
+    "forensics": "电子取证 Agent",
+    "osint": "情报溯源 Agent",
+    "challenger": "逻辑质询 Agent",
+    "commander": "综合研判 Agent",
 }
 
 
@@ -36,66 +47,96 @@ async def _fetch_task_data(task_id: str) -> dict:
     return await asyncio.to_thread(_sync_fetch_task_data, task_id)
 
 
+def _is_transient_read_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in ("readerror", "read error", "timeout", "connection reset", "server disconnected"))
+
+
+def _execute_supabase_query(factory, *, attempts: int = 3):
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return factory()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts or not _is_transient_read_error(exc):
+                raise
+            time.sleep(0.2 * attempt)
+    raise last_error or RuntimeError("Supabase query failed")
+
+
 def _sync_fetch_task_data(task_id: str) -> dict:
     """同步获取任务数据（在线程池中执行）"""
     # 1. 任务基本信息
-    task_resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
+    task_resp = _execute_supabase_query(lambda: supabase.table("tasks").select("*").eq("id", task_id).execute())
     if not task_resp.data:
         raise ValueError(f"Task not found: {task_id}")
     task = task_resp.data[0]
 
     # 2. 分析状态
-    analysis_resp = (
-        supabase.table("analysis_states")
-        .select("*")
-        .eq("task_id", task_id)
-        .execute()
+    analysis_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("analysis_states")
+            .select("*")
+            .eq("task_id", task_id)
+            .execute()
+        )
     )
     analysis_states = analysis_resp.data or []
 
     # 3. Agent 日志
-    logs_resp = (
-        supabase.table("agent_logs")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("timestamp", desc=False)
-        .execute()
+    logs_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("agent_logs")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("timestamp", desc=False)
+            .execute()
+        )
     )
     agent_logs = logs_resp.data or []
 
-    audit_resp = (
-        supabase.table("audit_logs")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=False)
-        .execute()
+    audit_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("audit_logs")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
     )
     audit_logs = audit_resp.data or []
 
-    sessions_resp = (
-        supabase.table("consultation_sessions")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=False)
-        .execute()
+    sessions_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("consultation_sessions")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
     )
     consultation_sessions = sessions_resp.data or []
 
-    messages_resp = (
-        supabase.table("consultation_messages")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=False)
-        .execute()
+    messages_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("consultation_messages")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
     )
     consultation_messages = messages_resp.data or []
 
-    report_resp = (
-        supabase.table("reports")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("generated_at", desc=True)
-        .execute()
+    report_resp = _execute_supabase_query(
+        lambda: (
+            supabase.table("reports")
+            .select("*")
+            .eq("task_id", task_id)
+            .order("generated_at", desc=True)
+            .execute()
+        )
     )
     report = report_resp.data[0] if report_resp.data else None
 
@@ -128,7 +169,7 @@ async def generate_markdown_report(task_id: str) -> str:
     lines: list[str] = []
 
     # ---- 标题 ----
-    lines.append("# TruthSeeker 鉴伪与溯源分析报告")
+    lines.append("# TruthSeeker 跨模态鉴伪与溯源分析最终裁决报告")
     lines.append("")
 
     # ---- 任务信息 ----
@@ -138,7 +179,7 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append(f"|------|------|")
     lines.append(f"| 任务 ID | `{task.get('id', 'N/A')}` |")
     lines.append(f"| 标题 | {task.get('title', 'N/A')} |")
-    lines.append(f"| 输入类型 | {task.get('input_type', 'N/A')} |")
+    lines.append(f"| 输入类型 | {display_input_type(task.get('input_type'))} |")
     lines.append(f"| 状态 | {task.get('status', 'N/A')} |")
     lines.append(f"| 创建时间 | {_fmt_time(task.get('created_at'))} |")
     lines.append(f"| 更新时间 | {_fmt_time(task.get('updated_at'))} |")
@@ -170,7 +211,7 @@ async def generate_markdown_report(task_id: str) -> str:
 
     # ---- 降级状态汇总 ----
     forensics = _extract_agent_result(analysis_states, "forensics")
-    osint = _extract_agent_result(analysis_states, "osint")
+    osint = _extract_agent_result(analysis_states, "osint") or _derive_osint_result_from_final_verdict(result)
     degraded_items: list[str] = []
     tool_failures: list[str] = []
 
@@ -197,14 +238,14 @@ async def generate_markdown_report(task_id: str) -> str:
     if forensics and forensics.get("degraded"):
         tool_summary = forensics.get("tool_summary") or {}
         degraded_items.append(
-            f"Forensics 取证降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
+            f"{_agent_display_name('forensics')} 降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
             f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
         )
         _collect_tool_failures(forensics)
     if osint and osint.get("degraded"):
         tool_summary = osint.get("tool_summary") or {}
         degraded_items.append(
-            f"OSINT 情报降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
+            f"{_agent_display_name('osint')} 降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
             f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
         )
         _collect_tool_failures(osint)
@@ -212,9 +253,9 @@ async def generate_markdown_report(task_id: str) -> str:
         forensics_degraded = (result.get("forensics_summary") or {}).get("degraded")
         osint_degraded = (result.get("osint_summary") or {}).get("degraded")
         if forensics_degraded and not forensics:
-            degraded_items.append("Forensics 取证降级（详情见分析状态）")
+            degraded_items.append(f"{_agent_display_name('forensics')} 降级（详情见分析状态）")
         if osint_degraded and not osint:
-            degraded_items.append("OSINT 情报降级（详情见分析状态）")
+            degraded_items.append(f"{_agent_display_name('osint')} 降级（详情见分析状态）")
     if degraded_items:
         lines.append("## ⚠️ 降级状态汇总")
         lines.append("")
@@ -234,18 +275,18 @@ async def generate_markdown_report(task_id: str) -> str:
 
     # ---- Forensics 分析 ----
     if forensics:
-        lines.append("## 三、Forensics 取证分析")
+        lines.append(f"## 三、{_agent_display_name('forensics')} 分析")
         lines.append("")
         lines.extend(_dict_to_markdown(forensics).splitlines())
         lines.append("")
 
     # ---- OSINT 情报 ----
-    lines.append("## 四、OSINT 开源情报溯源")
+    lines.append(f"## 四、{_agent_display_name('osint')} 分析")
     lines.append("")
     if osint:
         lines.extend(_dict_to_markdown(osint).splitlines())
     else:
-        lines.append("- 暂无 OSINT 情报溯源数据（Agent 未运行或结果未入库）。")
+        lines.append(f"- 暂无 {_agent_display_name('osint')} 数据（Agent 未运行或结果未入库）。")
     lines.append("")
 
     # ---- 公开案例 RAG ----
@@ -277,10 +318,12 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
 
     # ---- 全程审计日志 ----
-    audit_sections = _build_full_audit_log_sections(agent_logs, analysis_states, audit_logs)
+    audit_sections = _build_full_audit_log_sections(agent_logs, analysis_states, audit_logs, limit=REPORT_AUDIT_LOG_LIMIT)
     lines.append("## 八、全程审计日志")
     lines.append("")
     if audit_sections:
+        lines.append(f"> 为省篇幅，这里只展示前 {REPORT_AUDIT_LOG_LIMIT} 条日志，完整日志请见审计日志文件。")
+        lines.append("")
         lines.extend(audit_sections)
     else:
         lines.append("- 暂无可展示的审计日志。")
@@ -317,6 +360,33 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append(f"*报告生成时间: {now_cn.strftime('%Y-%m-%d %H:%M:%S')}*")
     lines.append(f"*TruthSeeker - 跨模态恶意 AIGC 鉴伪与溯源系统*")
 
+    return _normalize_report_agent_terms("\n".join(lines))
+
+
+async def generate_audit_log_markdown(task_id: str) -> str:
+    """Generate a complete audit-log Markdown file for a task."""
+    data_or_coro = _fetch_task_data(task_id)
+    data = await data_or_coro if inspect.isawaitable(data_or_coro) else data_or_coro
+    task = data["task"]
+    entries = _collect_audit_entries(
+        data.get("agent_logs") or [],
+        data.get("analysis_states") or [],
+        data.get("audit_logs") or [],
+    )
+    lines = [
+        "# TruthSeeker 全程审计日志",
+        "",
+        f"- 任务 ID：`{task.get('id', task_id)}`",
+        f"- 标题：{task.get('title', 'N/A')}",
+        f"- 日志总数：{len(entries)}",
+        "",
+        "## 完整日志",
+        "",
+    ]
+    if not entries:
+        lines.append("- 暂无可展示的审计日志。")
+    else:
+        lines.extend(_render_audit_entries(entries, limit=None))
     return "\n".join(lines)
 
 
@@ -382,6 +452,29 @@ def _fmt_confidence(value) -> str:
     return str(value)
 
 
+def _agent_display_name(agent_name: str) -> str:
+    return AGENT_DISPLAY_NAMES.get(agent_name, agent_name)
+
+
+def _normalize_report_agent_terms(markdown: str) -> str:
+    replacements = [
+        (r"Forensics\s*电子取证", _agent_display_name("forensics")),
+        (r"Forensics\s*取证", _agent_display_name("forensics")),
+        (r"Forensics\s*Agent", _agent_display_name("forensics")),
+        (r"\bForensics\b", _agent_display_name("forensics")),
+        (r"OSINT\s*开源情报溯源", _agent_display_name("osint")),
+        (r"OSINT\s*情报", _agent_display_name("osint")),
+        (r"OSINT\s*Agent", _agent_display_name("osint")),
+        (r"\bOSINT\b", _agent_display_name("osint")),
+        (r"法医分析", f"{_agent_display_name('forensics')} 分析"),
+        (r"法医", "电子取证"),
+    ]
+    normalized = markdown
+    for pattern, replacement in replacements:
+        normalized = re.sub(pattern, replacement, normalized)
+    return normalized
+
+
 def _extract_agent_result(analysis_states: list, agent_name: str) -> Optional[dict]:
     """从 analysis_states 中提取指定 agent 的结果"""
     for state in reversed(analysis_states):
@@ -391,6 +484,34 @@ def _extract_agent_result(analysis_states: list, agent_name: str) -> Optional[di
         if state.get("agent_name") == agent_name or state.get("agent") == agent_name:
             return state.get("result") or state.get("data")
     return None
+
+
+def _derive_osint_result_from_final_verdict(result: dict | None) -> Optional[dict]:
+    """Use final verdict OSINT context when the dedicated agent snapshot is missing."""
+    if not isinstance(result, dict):
+        return None
+
+    osint_summary = result.get("osint_summary")
+    provenance_graph = result.get("provenance_graph")
+    provenance_summary = result.get("provenance_summary")
+    has_fallback_data = any(
+        isinstance(value, dict) and bool(value)
+        for value in (osint_summary, provenance_graph, provenance_summary)
+    )
+    if not has_fallback_data:
+        return None
+
+    fallback: dict = {
+        "analysis_source": "final_verdict_summary",
+        "note": "未找到独立 OSINT Agent 持久化明细，本节由最终裁决中的 OSINT 摘要与溯源图谱回填。",
+    }
+    if isinstance(osint_summary, dict):
+        fallback.update(osint_summary)
+    if isinstance(provenance_summary, dict):
+        fallback["provenance_summary"] = provenance_summary
+    if isinstance(provenance_graph, dict):
+        fallback["provenance_graph"] = provenance_graph
+    return fallback
 
 
 def _maybe_fmt_time(value) -> str:
@@ -586,7 +707,7 @@ def _safe_metadata_summary(metadata) -> str:
         if any(secret in lowered for secret in ("token", "secret", "password", "authorization", "signed_url")):
             continue
         if isinstance(value, (dict, list)):
-            rendered = json.dumps(value, ensure_ascii=False)
+            rendered = json.dumps(value, ensure_ascii=False, default=str)
         else:
             rendered = str(value)
         parts.append(f"{key_text}={_truncate_text(rendered, 90)}")
@@ -595,10 +716,12 @@ def _safe_metadata_summary(metadata) -> str:
     return "，".join(parts)
 
 
-def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audit_logs: list) -> list[str]:
+def _collect_audit_entries(agent_logs: list, analysis_states: list, audit_logs: list) -> list[dict]:
     """Merge agent logs, persisted timeline events, and audit_logs into one chronological audit trail."""
     entries: list[dict] = []
     for log in agent_logs:
+        if not isinstance(log, dict):
+            continue
         timestamp = log.get("timestamp") or log.get("created_at")
         entries.append({
             "timestamp": timestamp,
@@ -609,6 +732,8 @@ def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audi
         })
 
     for state in analysis_states:
+        if not isinstance(state, dict):
+            continue
         board = _as_dict(state.get("evidence_board"))
         for event in _as_list(board.get("timeline_events")):
             if not isinstance(event, dict):
@@ -623,6 +748,8 @@ def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audi
             })
 
     for row in audit_logs:
+        if not isinstance(row, dict):
+            continue
         metadata_summary = _safe_metadata_summary(row.get("metadata"))
         action = str(row.get("action") or "audit")
         content = action if not metadata_summary else f"{action}（{metadata_summary}）"
@@ -639,18 +766,27 @@ def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audi
         if str(entry.get("content") or "").strip()
     ]
     entries.sort(key=lambda item: _parse_timeline_time(item.get("timestamp")))
+    return entries
 
+
+def _render_audit_entries(entries: list[dict], *, limit: int | None) -> list[str]:
     lines: list[str] = []
-    for entry in entries[:80]:
+    rendered_entries = entries if limit is None else entries[:limit]
+    for entry in rendered_entries:
         ts = _fmt_time(entry.get("timestamp"))
         agent = entry.get("agent") or "system"
         source = entry.get("source") or "日志"
         kind = entry.get("kind") or "info"
         content = _truncate_text(str(entry.get("content") or ""), 320)
         lines.append(f"- **[{ts}] {source} / {agent}** ({kind}): {content}")
-    if len(entries) > 80:
-        lines.append(f"- ... 及其他 {len(entries) - 80} 条审计记录")
+    if limit is not None and len(entries) > limit:
+        lines.append(f"- ... 及其他 {len(entries) - limit} 条审计记录")
     return lines
+
+
+def _build_full_audit_log_sections(agent_logs: list, analysis_states: list, audit_logs: list, *, limit: int = REPORT_AUDIT_LOG_LIMIT) -> list[str]:
+    entries = _collect_audit_entries(agent_logs, analysis_states, audit_logs)
+    return _render_audit_entries(entries, limit=limit)
 
 
 def _dict_to_markdown(data: dict, indent: int = 0) -> str:
@@ -700,7 +836,7 @@ def _build_case_rag_sections(forensics_rag: dict | None, osint_rag: dict | None)
         "> 公开案例 RAG 仅作类案参考，用于提示相似手法、攻击链和复核方向；不得作为当前检材的直接事实证据。",
         "",
     ]
-    items = [("Forensics 电子取证", forensics_rag), ("OSINT 情报溯源", osint_rag)]
+    items = [(_agent_display_name("forensics"), forensics_rag), (_agent_display_name("osint"), osint_rag)]
     rendered_any = False
     for label, result in items:
         sections.append(f"### {label}")
@@ -755,9 +891,9 @@ def _build_case_rag_sections(forensics_rag: dict | None, osint_rag: dict | None)
 def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list) -> list[str]:
     """Build timeline grouped by Challenger's phase-specific review rounds."""
     phase_names = {
-        "forensics": "Forensics",
-        "osint": "OSINT",
-        "commander": "Commander",
+        "forensics": _agent_display_name("forensics"),
+        "osint": _agent_display_name("osint"),
+        "commander": _agent_display_name("commander"),
     }
     sections: list[str] = []
     seen: set[tuple[str, int, str]] = set()

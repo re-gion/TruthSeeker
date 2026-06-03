@@ -65,16 +65,42 @@ function normalizeTextList(value: unknown): string[] {
         .filter((item): item is string => item.trim().length > 0)
 }
 
+const VERDICT_ALIASES: Record<string, { verdict: string; label: string }> = {
+    authentic: { verdict: "authentic", label: "内容真实" },
+    real: { verdict: "authentic", label: "内容真实" },
+    suspicious: { verdict: "suspicious", label: "高度可疑" },
+    aigc: { verdict: "suspicious", label: "疑似 AIGC" },
+    ai_generated: { verdict: "suspicious", label: "疑似 AIGC" },
+    "ai-generated": { verdict: "suspicious", label: "疑似 AIGC" },
+    synthetic: { verdict: "suspicious", label: "疑似 AIGC" },
+    manipulated: { verdict: "suspicious", label: "疑似 AIGC" },
+    generated: { verdict: "suspicious", label: "疑似 AIGC" },
+    forged: { verdict: "forged", label: "确认伪造" },
+    fake: { verdict: "forged", label: "确认伪造" },
+    deepfake: { verdict: "forged", label: "确认伪造" },
+    "deep fake": { verdict: "forged", label: "确认伪造" },
+    inconclusive: { verdict: "inconclusive", label: "无法判定" },
+    unknown: { verdict: "inconclusive", label: "无法判定" },
+}
+
+function normalizeVerdict(raw: string, rawLabel = "") {
+    const key = raw.trim().toLowerCase()
+    const normalized = VERDICT_ALIASES[key] || VERDICT_ALIASES[key.replace(/\s+/g, "_")]
+    if (normalized) return normalized
+    return { verdict: raw || "inconclusive", label: rawLabel || raw || "无法判定" }
+}
+
 export function extractVerdictSnapshot(value: unknown) {
     const record = isRecord(value) ? value : {}
-    const verdict = readString(record, ["verdict", "verdict_value", "label"], "inconclusive")
-    const verdictLabel = readString(record, ["verdict_label", "verdict_cn", "label", "title"], verdict)
-    const confidence = readNumber(record, ["confidence_overall", "confidence", "score"], 0)
+    const rawVerdict = readString(record, ["verdict", "verdict_value", "label"], "inconclusive")
+    const rawVerdictLabel = readString(record, ["verdict_label", "verdict_cn", "label", "title"], rawVerdict)
+    const normalized = normalizeVerdict(rawVerdict, rawVerdictLabel)
+    const confidence = readNumber(record, ["confidence_overall", "confidence", "score", "aigc_score", "aigc_probability", "ai_generated_probability", "deepfake_probability"], 0)
     const evidence = normalizeTextList(readValue(record, ["key_evidence", "evidence", "keyEvidence"]))
 
     return {
-        verdict,
-        verdictLabel,
+        verdict: normalized.verdict,
+        verdictLabel: rawVerdictLabel && rawVerdictLabel !== rawVerdict ? rawVerdictLabel : normalized.label,
         confidence,
         evidence,
     }
@@ -82,10 +108,13 @@ export function extractVerdictSnapshot(value: unknown) {
 
 export function extractAnalysisSnapshot(value: unknown) {
     const record = isRecord(value) ? value : {}
+    const rawVerdict = readString(record, ["verdict", "result", "label"], "unknown")
+    const normalized = normalizeVerdict(rawVerdict)
     return {
-        verdict: readString(record, ["verdict", "result", "label"], "unknown"),
+        verdict: normalized.verdict,
+        verdictLabel: normalized.label,
         analysisSummary: readString(record, ["analysis_summary", "llm_analysis", "summary", "analysis"], ""),
-        confidence: readNumber(record, ["confidence_overall", "confidence", "score"], 0),
+        confidence: readNumber(record, ["confidence_overall", "confidence", "score", "aigc_score", "aigc_probability", "ai_generated_probability", "deepfake_probability"], 0),
     }
 }
 
@@ -114,18 +143,80 @@ export function downloadMarkdownReport(content: string, filename: string) {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 type FetchLike = typeof fetch
 
+function requestOptions(authToken?: string | null): RequestInit {
+    return {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+    }
+}
+
+async function fetchTextWithRetry(
+    url: string,
+    errorLabel: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+    attempts = 3,
+) {
+    let lastStatus = 0
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const resp = await fetchImpl(url, requestOptions(authToken))
+        if (resp.ok) return resp.text()
+        lastStatus = resp.status
+        if (attempt < attempts && resp.status >= 500) {
+            await Promise.resolve()
+            continue
+        }
+        break
+    }
+    throw new Error(`${errorLabel}: ${lastStatus}`)
+}
+
+async function fetchPdfBlob(
+    taskId: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+    attempts = 3,
+) {
+    let lastStatus = 0
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const resp = await fetchImpl(`${API_BASE}/api/v1/report/${taskId}/pdf`, requestOptions(authToken))
+        if (resp.ok) return resp.blob()
+        lastStatus = resp.status
+        if (attempt < attempts && resp.status >= 500) {
+            await Promise.resolve()
+            continue
+        }
+        break
+    }
+    throw new Error(`PDF 生成失败: ${lastStatus}`)
+}
+
+function downloadBlobFile(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+}
+
 
 export async function fetchCanonicalMarkdownReport(
     taskId: string,
     authToken?: string | null,
     fetchImpl: FetchLike = fetch,
 ) {
-    const resp = await fetchImpl(`${API_BASE}/api/v1/report/${taskId}/md`, {
-        method: "GET",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-    })
-    if (!resp.ok) throw new Error(`Markdown 报告生成失败: ${resp.status}`)
-    return resp.text()
+    return fetchTextWithRetry(`${API_BASE}/api/v1/report/${taskId}/md`, "Markdown 报告生成失败", authToken, fetchImpl)
+}
+
+export async function fetchAuditLogMarkdown(
+    taskId: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+) {
+    return fetchTextWithRetry(`${API_BASE}/api/v1/report/${taskId}/audit-log.md`, "审计日志生成失败", authToken, fetchImpl)
 }
 
 
@@ -139,25 +230,50 @@ export async function downloadCanonicalMarkdownReport(taskId: string, authToken?
     }
 }
 
-/** 从后端 API 下载 PDF 报告 */
-export async function downloadPdfReport(taskId: string, authToken?: string | null) {
+export async function downloadCanonicalMarkdownReportWithAuditLog(
+    taskId: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+) {
     try {
-        const resp = await fetch(`${API_BASE}/api/v1/report/${taskId}/pdf`, {
-            method: "GET",
-            headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        })
-        if (!resp.ok) throw new Error(`PDF 生成失败: ${resp.status}`)
-        const blob = await resp.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `truthseeker-report-${taskId.slice(0, 8)}.pdf`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
+        const [markdown, auditLog] = await Promise.all([
+            fetchCanonicalMarkdownReport(taskId, authToken, fetchImpl),
+            fetchAuditLogMarkdown(taskId, authToken, fetchImpl),
+        ])
+        const shortId = taskId.slice(0, 8)
+        downloadMarkdownReport(markdown, `truthseeker-report-${shortId}.md`)
+        downloadMarkdownReport(auditLog, `truthseeker-audit-log-${shortId}.md`)
+    } catch (e) {
+        console.error("Markdown + audit log download failed:", e)
+        alert("Markdown 报告或审计日志生成失败，请稍后重试")
+    }
+}
+
+/** 从后端 API 下载 PDF 报告 */
+export async function downloadPdfReport(taskId: string, authToken?: string | null, fetchImpl: FetchLike = fetch) {
+    try {
+        const blob = await fetchPdfBlob(taskId, authToken, fetchImpl)
+        downloadBlobFile(blob, `truthseeker-report-${taskId.slice(0, 8)}.pdf`)
     } catch (e) {
         console.error("PDF download failed:", e)
         alert("PDF 报告生成失败，请稍后重试")
+    }
+}
+
+/** 从后端 API 下载 PDF 报告，并附带完整 Markdown 审计日志 */
+export async function downloadPdfReportWithAuditLog(
+    taskId: string,
+    authToken?: string | null,
+    fetchImpl: FetchLike = fetch,
+) {
+    try {
+        const pdfBlob = await fetchPdfBlob(taskId, authToken, fetchImpl)
+        const auditLog = await fetchAuditLogMarkdown(taskId, authToken, fetchImpl)
+        const shortId = taskId.slice(0, 8)
+        downloadBlobFile(pdfBlob, `truthseeker-report-${shortId}.pdf`)
+        downloadMarkdownReport(auditLog, `truthseeker-audit-log-${shortId}.md`)
+    } catch (e) {
+        console.error("PDF + audit log download failed:", e)
+        alert("PDF 报告或审计日志生成失败，请稍后重试")
     }
 }

@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 
+from app.services.input_types import display_input_type, input_type_color
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -25,6 +27,10 @@ def _get_supabase():
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 HIGH_RISK_VERDICT_ALIASES = (
+    "aigc",
+    "ai_generated",
+    "ai-generated",
+    "generated",
     "fake",
     "forged",
     "deepfake",
@@ -53,29 +59,8 @@ STATUS_LABELS = {
     "cancelled": "已取消",
 }
 
-INPUT_TYPE_LABELS = {
-    "video": "视频内容",
-    "audio": "音频内容",
-    "image": "图像内容",
-    "text": "文本内容",
-}
-
-
 def _display_input_type(input_type: Any) -> str:
-    raw = _read_string(input_type)
-    if not raw:
-        return "未分类"
-    # 保留下划线，仅标准化空格与横杠
-    normalized = raw.lower().replace(" ", "").replace("-", "")
-    # 单一类型直接查表
-    if normalized in INPUT_TYPE_LABELS:
-        return INPUT_TYPE_LABELS[normalized]
-    # 组合类型（如 image_text）拆分为 modality 列表，去掉"内容"后缀后拼接
-    parts = normalized.split("_")
-    mapped = [INPUT_TYPE_LABELS.get(p) for p in parts if p in INPUT_TYPE_LABELS]
-    if mapped:
-        return "+".join([m.replace("内容", "") for m in mapped])
-    return raw or "未分类"
+    return display_input_type(_read_string(input_type))
 
 VERDICT_LABELS = {
     "authentic": "真实结论",
@@ -119,6 +104,25 @@ EVIDENCE_SOURCE_LABELS = {
     "voiceprint": "声纹比对",
     "metadata": "元数据校验",
 }
+
+
+SANKEY_MIDDLE_COLORS = {
+    "开源情报": "#A78BFA",
+    "取证分析": "#FB7185",
+    "帧级取证": "#F97316",
+    "换脸痕迹": "#EF4444",
+    "反向检索": "#38BDF8",
+    "声纹比对": "#D4FF3C",
+    "元数据校验": "#22C55E",
+    "视觉证据": "#61D4FF",
+    "音频证据": "#D4FF3C",
+    "文本证据": "#22C55E",
+    "其他证据": "#94A3B8",
+}
+
+
+def _sankey_middle_color(label: str) -> str:
+    return SANKEY_MIDDLE_COLORS.get(label, "#7A77FF")
 
 
 def _is_record(value: Any) -> bool:
@@ -425,17 +429,28 @@ def _build_flow_sankey(tasks: list[dict[str, Any]], reports: list[dict[str, Any]
     if not reports:
         return {"nodes": [], "links": []}
 
-    input_labels = {
-        _read_string(task.get("id")): _display_input_type(task.get("input_type"))
+    input_meta = {
+        _read_string(task.get("id")): {
+            "label": _display_input_type(task.get("input_type")),
+            "color": input_type_color(_read_string(task.get("input_type"))),
+        }
         for task in tasks
         if _read_string(task.get("id"))
     }
     node_order: dict[str, None] = {}
-    link_counts: dict[tuple[str, str], int] = {}
+    link_counts: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def add_link(source: str, target: str, color: str) -> None:
+        key = (source, target)
+        if key not in link_counts:
+            link_counts[key] = {"value": 0, "color": color}
+        link_counts[key]["value"] += 1
 
     for report in reports:
         task_id = _read_string(report.get("task_id"))
-        input_label = input_labels.get(task_id, "未知输入")
+        meta = input_meta.get(task_id, {"label": "未知输入", "color": "#7A77FF"})
+        input_label = meta["label"]
+        input_color = meta["color"]
         verdict_label = _display_verdict_outcome(report.get("verdict_payload") or report.get("verdict"))
         evidence_items = _read_list(report.get("key_evidence"))
         if not evidence_items:
@@ -452,14 +467,14 @@ def _build_flow_sankey(tasks: list[dict[str, Any]], reports: list[dict[str, Any]
             node_order.setdefault(middle_label, None)
             node_order.setdefault(verdict_label, None)
 
-            link_counts[(input_label, middle_label)] = link_counts.get((input_label, middle_label), 0) + 1
-            link_counts[(middle_label, verdict_label)] = link_counts.get((middle_label, verdict_label), 0) + 1
+            add_link(input_label, middle_label, input_color)
+            add_link(middle_label, verdict_label, _sankey_middle_color(middle_label))
 
     return {
         "nodes": [{"name": name} for name in node_order],
         "links": [
-            {"source": source, "target": target, "value": value}
-            for (source, target), value in link_counts.items()
+            {"source": source, "target": target, "value": data["value"], "color": data["color"]}
+            for (source, target), data in link_counts.items()
         ],
     }
 

@@ -402,7 +402,7 @@ async def forensics_interpret(
     """Let the LLM interpret raw forensic detection results into professional analysis."""
     system_prompt = (
             "你是一位专攻恶意 AIGC 检测的取证分析专家。"
-            "你需要在同一上下文中综合样本引用、全局检测目标、Reality Defender 和 VirusTotal 等工具结果，"
+            "你需要在同一上下文中综合样本引用、全局检测目标、Sightengine 图片 AIGC 检测、Reality Defender 音视频合成/篡改检测和 VirusTotal 等工具结果，"
             "撰写结构清晰、术语准确的中文电子取证 Markdown 报告。"
             "必须使用以下二级内小标题，且标题原样保留："
             "### 自主检材观察；### 外部检测结果解读；### 融合判断；### 限制与复核建议。"
@@ -411,7 +411,8 @@ async def forensics_interpret(
             "如果工具结果标记 degraded、analysis_available=false 或 method=local_fallback_no_external_verdict，"
             "只能写成外部工具未取得真实结论，不得把降级占位字段解释为真实检测通过、面部自然或无伪影。"
             "如果传入 case_rag_search 或 case_rag 字段，相似公开案例只能作为类案参考和复核方向，"
-            "不得写成当前检材事实，也不得替代本轮样本、Reality Defender 或 VirusTotal 证据。"
+            "不得写成当前检材事实，也不得替代本轮样本、Sightengine、Reality Defender 或 VirusTotal 证据。"
+            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
@@ -437,8 +438,8 @@ async def forensics_interpret(
             "### 自主检材观察\n"
             f"- 降级模式下无法调用 Kimi 完成自主图像/文本复核；当前仅能读取样本类型 {input_type} 与工具摘要。\n\n"
             "### 外部检测结果解读\n"
-            f"- 是否伪造: {raw_api_result.get('is_deepfake', False)}\n"
-            f"- 置信度/概率: {raw_api_result.get('deepfake_probability', raw_api_result.get('confidence', 'N/A'))}\n\n"
+            f"- 是否存在 AIGC 风险线索: {raw_api_result.get('is_aigc', raw_api_result.get('is_deepfake', False))}\n"
+            f"- AIGC 风险概率: {raw_api_result.get('aigc_probability', raw_api_result.get('ai_generated_probability', raw_api_result.get('deepfake_probability', raw_api_result.get('confidence', 'N/A'))))}\n\n"
             "### 融合判断\n"
             "- 当前判断主要来自规则化工具摘要，不能替代多模态模型复核。\n\n"
             "### 限制与复核建议\n"
@@ -461,16 +462,17 @@ async def osint_interpret(
     indicators = raw_intel.get("indicators", [])
     system_prompt = (
             "你是一位专攻威胁评估的开源情报(OSINT)分析师。"
-            "你需要对传入的原始情报数据、Exa 检索结果、VirusTotal 结果和样本引用进行专业研判，"
+            "你需要对传入的原始情报数据、Exa 检索结果、VirusTotal、WhoisXML 域名注册/DNS历史结果和样本引用进行专业研判，"
             "并说明情报溯源图谱的关键节点、关系和引用覆盖情况。"
             "必须输出 Markdown，并原样保留这些小标题："
             "### 自主情报推理；### 外部情报结果解读；### 来源可信度与图谱质量；### 关联风险与复核建议。"
             "自主情报推理要基于案件提示、样本摘要、实体关系和文本线索进行推断，"
-            "外部情报结果解读再汇总 Exa、VirusTotal 等 API 证据。"
-            "如果 VirusTotal 或 Exa 标记 degraded，只能说明外部情报不可用或需复核，"
+            "外部情报结果解读再汇总 Exa、VirusTotal、WhoisXML 等 API 证据。"
+            "如果 VirusTotal、WhoisXML 或 Exa 标记 degraded，只能说明外部情报不可用或需复核，"
             "不得把未实际调用的结果写成安全厂商未检出。"
             "如果传入 case_rag_search 或 case_rag 字段，相似公开案例只能作为攻击模式和溯源路径参考，"
             "不能替代当前 URL、域名、样本或外部来源的独立核验。"
+            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
@@ -491,7 +493,7 @@ async def osint_interpret(
             f"- 威胁评分: {raw_intel.get('threat_score', 'N/A')}\n"
             f"- 关键指标数: {len(indicators) if isinstance(indicators, list) else 'N/A'}\n\n"
             "### 来源可信度与图谱质量\n"
-            "- 需复核 Exa/VirusTotal 是否实际返回可引用证据。\n\n"
+            "- 需复核 Exa/VirusTotal/WhoisXML 是否实际返回可引用证据。\n\n"
             "### 关联风险与复核建议\n"
             f"- 原始情报摘要: {json.dumps(raw_intel, ensure_ascii=False)[:800]}"
         ),
@@ -528,7 +530,7 @@ async def challenger_model_review(
             "residual_risks: 数组；markdown: Markdown 字符串。"
             "markdown 必须原样保留这些小标题："
             "### 质询对象与本轮置信度；### 主要质询点；### 打回/放行建议；### 收敛依据。"
-            "模型可以建议打回，但代码会另外用 Δ(t)<0.08、置信度>0.8、最少 2 轮、最多 5 轮兜底。"
+            "模型可以建议打回，但代码会另外用 Δ(t)<0.08、置信度>0.8、阻断性 high issue 和最多 5 轮兜底。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
     )
     human_text = (
@@ -608,6 +610,170 @@ async def challenger_cross_validate(
 
 
 # ---------------------------------------------------------------------------
+# Commander consultation moderation
+# ---------------------------------------------------------------------------
+
+def _normalize_help_items(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip() if isinstance(item, str) else ""
+        if not text:
+            continue
+        key = re.sub(r"\s+", "", text.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text[:400])
+    return result
+
+
+def _help_tokens(text: str) -> set[str]:
+    normalized = text.lower()
+    words = set(re.findall(r"[a-z0-9_]{2,}", normalized))
+    chars = set(re.findall(r"[\u4e00-\u9fff]", normalized))
+    return words | chars
+
+
+def _help_similarity(left: str, right: str) -> float:
+    left_tokens = _help_tokens(left)
+    right_tokens = _help_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _generic_dedupe_help_items(items: list[str], *, limit: int = 5) -> list[str]:
+    deduped: list[str] = []
+    for item in items:
+        if any(_help_similarity(item, existing) >= 0.62 for existing in deduped):
+            continue
+        deduped.append(item)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _normalize_expert_tasks(value: Any, help_needed: list[str], trigger: dict[str, Any]) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    if isinstance(value, list):
+        for index, item in enumerate(value, start=1):
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question") or "").strip()
+            if not question:
+                continue
+            severity = str(item.get("severity") or "high").lower()
+            if severity not in {"high", "medium", "low"}:
+                severity = "high"
+            tasks.append({
+                "id": str(item.get("id") or f"expert-task-{index}"),
+                "target_agent": str(item.get("target_agent") or trigger.get("target_agent") or "unknown"),
+                "issue_type": str(item.get("issue_type") or item.get("type") or "issue"),
+                "severity": severity,
+                "question": question[:500],
+                "requested_action": str(
+                    item.get("requested_action")
+                    or "请给出判断依据、可补充证据、以及是否需要重跑/人工复核该环节。"
+                )[:500],
+                "expected_output": str(
+                    item.get("expected_output")
+                    or "一到三条可执行结论：风险判断、缺失证据、建议继续检测或人工复核的动作。"
+                )[:500],
+            })
+            if len(tasks) >= 5:
+                break
+    if tasks:
+        return tasks
+    return [
+        {
+            "id": f"expert-task-{index}",
+            "target_agent": str(trigger.get("target_agent") or "unknown"),
+            "issue_type": "issue",
+            "severity": "high",
+            "question": f"请专家判断并补充：{item}",
+            "requested_action": "请给出判断依据、可补充证据、以及是否需要重跑/人工复核该环节。",
+            "expected_output": "一到三条可执行结论：风险判断、缺失证据、建议继续检测或人工复核的动作。",
+        }
+        for index, item in enumerate(help_needed[:5], start=1)
+    ]
+
+
+def _fallback_consultation_context_dedupe(context: dict[str, Any]) -> dict[str, Any]:
+    result = dict(context)
+    trigger = result.get("trigger") if isinstance(result.get("trigger"), dict) else {}
+    help_needed = _generic_dedupe_help_items(_normalize_help_items(result.get("help_needed")))
+    result["help_needed"] = help_needed
+    result["expert_tasks"] = _normalize_expert_tasks(result.get("expert_tasks"), help_needed, trigger)
+    result["help_needed_dedupe"] = {
+        "provider": "generic_similarity_fallback",
+        "llm_available": False,
+        "method": "token_jaccard_similarity",
+    }
+    return result
+
+
+async def commander_dedupe_consultation_context(
+    context: dict[str, Any],
+    *,
+    case_prompt: str = "",
+    sample_refs: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Let Commander merge repeated consultation help items before showing experts."""
+    if not isinstance(context, dict):
+        return context
+    help_needed = _normalize_help_items(context.get("help_needed"))
+    if len(help_needed) <= 1:
+        return context
+
+    fallback = _fallback_consultation_context_dedupe(context)
+    system_prompt = (
+        "你是 TruthSeeker 的 Commander 主持人，负责在启动专家会诊前整理“需要帮助”字段。"
+        "你的任务是合并语义重复或同一根因的求助点，保留不同根因、不同 Agent、不同证据缺口。"
+        "不要新增输入中不存在的事实，不要按固定关键词套模板。"
+        "输出必须是 JSON 对象，字段为 help_needed 和 expert_tasks。"
+        "help_needed 最多 5 条，每条应具体、可执行、避免重复。"
+        "expert_tasks 应与 help_needed 对齐，每项包含 target_agent、issue_type、severity、question、requested_action、expected_output。"
+    )
+    human_text = (
+        f"案件背景：{case_prompt or context.get('case_prompt') or '用户未补充额外背景。'}\n\n"
+        f"会诊触发信息：\n{json.dumps(context.get('trigger') or {}, ensure_ascii=False, indent=2)}\n\n"
+        f"原始需要帮助：\n{json.dumps(help_needed, ensure_ascii=False, indent=2)}\n\n"
+        f"原始专家任务：\n{json.dumps(context.get('expert_tasks') or [], ensure_ascii=False, indent=2)}"
+    )
+    raw = await _invoke_multimodal_llm(
+        system_prompt=system_prompt,
+        human_text=human_text,
+        sample_refs=sample_refs,
+        fallback_text=json.dumps({
+            "help_needed": fallback.get("help_needed") or [],
+            "expert_tasks": fallback.get("expert_tasks") or [],
+        }, ensure_ascii=False),
+    )
+    parsed = _extract_json_object(raw)
+    if not parsed:
+        return fallback
+
+    trigger = context.get("trigger") if isinstance(context.get("trigger"), dict) else {}
+    deduped_help = _normalize_help_items(parsed.get("help_needed"))
+    if not deduped_help:
+        return fallback
+    deduped_help = deduped_help[:5]
+    result = dict(context)
+    result["help_needed"] = deduped_help
+    result["expert_tasks"] = _normalize_expert_tasks(parsed.get("expert_tasks"), deduped_help, trigger)
+    result["help_needed_dedupe"] = {
+        "provider": "commander_llm",
+        "llm_available": True,
+        "method": "semantic_merge",
+        "raw_response": raw[:1200],
+    }
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Commander Agent
 # ---------------------------------------------------------------------------
 
@@ -618,10 +784,11 @@ async def commander_ruling(
     agent_weights: dict,
     case_prompt: str = "",
     sample_refs: list[dict] | None = None,
+    confidence_context: dict | None = None,
 ) -> str:
     """Let the LLM produce a final ruling based on all agent evidence."""
     system_prompt = (
-            "你是一位资深指挥官，负责基于全部智能体证据做出最终裁决。"
+            "你是一位研判指挥官，负责基于全部智能体证据做出最终裁决。"
             "你需要综合取证分析、情报评估和交叉验证三个维度的结论，"
             "结合各智能体的权重配置，撰写权威的中文最终裁决报告。"
             "公开案例 RAG 命中只能作为类案参考，不得直接改变裁决结论或置信度，"
@@ -629,6 +796,8 @@ async def commander_ruling(
             "报告必须包含：1) 最终裁决结论（伪造/真实/无法判定）；"
             "2) 置信度评估与证据链完整性分析；3) 各智能体结论对比与权重考量；"
             "4) 关键分歧点及处理意见；5) 后续取证建议与风险提示。"
+            "综合置信度必须引用结构化 final_verdict.confidence_overall 或权重加权结果，"
+            "不得把 OSINT 自身置信度、人工意见或模型自行估计写成最终综合置信度。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要用代码块包裹。"
     )
@@ -638,7 +807,8 @@ async def commander_ruling(
         f"【取证分析结果】\n{json.dumps(forensics, ensure_ascii=False, indent=2)}\n\n"
         f"【情报评估结果】\n{json.dumps(osint, ensure_ascii=False, indent=2)}\n\n"
         f"【交叉验证反馈】\n{json.dumps(challenger_feedback, ensure_ascii=False, indent=2)}\n\n"
-        f"【智能体权重配置】\n{json.dumps(agent_weights, ensure_ascii=False, indent=2)}"
+        f"【智能体权重配置】\n{json.dumps(agent_weights, ensure_ascii=False, indent=2)}\n\n"
+        f"【结构化综合置信度】\n{json.dumps(confidence_context or {}, ensure_ascii=False, indent=2)}"
     )
     return await _invoke_multimodal_llm(
         system_prompt=system_prompt,

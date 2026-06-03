@@ -1,5 +1,6 @@
 """Commander Agent - 研判指挥Agent，负责综合所有证据做出最终裁决 + LLM 推理"""
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.tools.llm_client import build_sample_references, commander_ruling
@@ -42,25 +43,26 @@ async def commander_node(state: TruthSeekerState) -> dict:
         logs.append(entry)
         return entry
 
-    log("thinking", f"👑 研判指挥Agent 启动，开始综合电子取证、情报图谱和质询过程...")
-    log("thinking", f"📊 证据板共 {len(evidence_board)} 条，质询官报告 {challenger.get('issue_count', 0)} 个问题")
+    log("thinking", f"研判Agent 启动，开始综合电子取证、情报图谱和质询过程...")
+    log("thinking", f"证据板共 {len(evidence_board)} 条，质询官报告 {challenger.get('issue_count', 0)} 个问题")
     if case_prompt:
-        log("thinking", f"🎯 全局检测目标: {case_prompt[:120]}")
+        log("thinking", f"全局检测目标: {case_prompt[:120]}")
     if expert_messages:
-        log("thinking", f"💬 纳入 {len(expert_messages)} 条专家会诊意见")
+        log("thinking", f"纳入 {len(expert_messages)} 条专家会诊意见")
     if confirmed_consultation_summary:
         summary_text = confirmed_consultation_summary.get("confirmed_summary") if isinstance(confirmed_consultation_summary, dict) else None
         if summary_text:
-            log("thinking", f"🧑‍⚖️ 纳入用户确认的会诊摘要: {summary_text[:160]}")
+            log("thinking", f"纳入用户确认的会诊摘要: {summary_text[:160]}")
 
     # === 加权计算（保留数值计算的确定性） ===
     forensics_conf = forensics.get("confidence", 0.5)
-    forensics_deepfake_prob = forensics.get("deepfake_probability", 0.5)
-    forensics_is_deepfake = forensics.get("is_deepfake", False)
+    forensics_aigc_prob = forensics.get("aigc_probability", forensics.get("deepfake_probability", 0.5))
+    forensics_is_aigc = forensics.get("is_aigc", forensics.get("is_deepfake", False))
     osint_threat = osint.get("threat_score", 0.0)
     osint_risk = max(osint_threat, osint.get("text_risk_score", 0.0), osint.get("social_engineering_score", 0.0))
     osint_conf = osint.get("confidence", 0.75)
-    quality_score = challenger.get("quality_score", 0.8)
+    quality_score = challenger.get("quality_score", challenger.get("confidence", 0.8))
+    challenger_conf = challenger.get("confidence", quality_score)
 
     # 动态权重：依据各 Agent 的置信度和降级状态调整
     forensics_weight = 0.45 if not forensics.get("degraded") else 0.25
@@ -73,34 +75,64 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "challenger": challenger_weight,
     }
 
+    def weighted_component(confidence: float, weight: float) -> float:
+        return float(
+            (Decimal(str(confidence)) * Decimal(str(weight))).quantize(
+                Decimal("0.001"),
+                rounding=ROUND_HALF_UP,
+            )
+        )
+
     # 综合评分
-    deepfake_score = (
-        forensics_deepfake_prob * forensics_weight
+    aigc_score = (
+        forensics_aigc_prob * forensics_weight
         + osint_risk * osint_weight
     )
-    overall_risk_score = max(deepfake_score, osint_risk)
+    overall_risk_score = max(aigc_score, osint_risk)
 
-    # 质询官调节：质量问题降低置信度
-    confidence_adjustment = quality_score
-    overall_confidence = (
-        (forensics_conf * forensics_weight + osint_conf * osint_weight)
-        * confidence_adjustment
+    confidence_components = {
+        "forensics": {
+            "confidence": forensics_conf,
+            "weight": forensics_weight,
+            "weighted": weighted_component(forensics_conf, forensics_weight),
+        },
+        "osint": {
+            "confidence": osint_conf,
+            "weight": osint_weight,
+            "weighted": weighted_component(osint_conf, osint_weight),
+        },
+        "challenger": {
+            "confidence": challenger_conf,
+            "weight": challenger_weight,
+            "weighted": weighted_component(challenger_conf, challenger_weight),
+        },
+    }
+    overall_confidence = float(
+        sum(Decimal(str(item["weighted"])) for item in confidence_components.values()).quantize(
+            Decimal("0.001"),
+            rounding=ROUND_HALF_UP,
+        )
     )
+    confidence_context = {
+        "confidence_overall": overall_confidence,
+        "formula": "forensics_confidence * forensics_weight + osint_confidence * osint_weight + challenger_confidence * challenger_weight",
+        "components": confidence_components,
+    }
 
-    log("action", f"⚖️  权重配置: 法医={forensics_weight:.0%} | OSINT={osint_weight:.0%} | 质询={challenger_weight:.0%}")
-    log("action", f"📈 伪造评分: {deepfake_score:.1%} | 综合风险: {overall_risk_score:.1%} | 综合置信度: {overall_confidence:.1%} | 证据质量: {quality_score:.1%}")
+    log("action", f"权重配置: 法医={forensics_weight:.0%} | OSINT={osint_weight:.0%} | 质询={challenger_weight:.0%}")
+    log("action", f"AIGC 风险评分: {aigc_score:.1%} | 综合风险: {overall_risk_score:.1%} | 综合置信度: {overall_confidence:.1%} | 证据质量: {quality_score:.1%}")
 
     # 判决逻辑
-    if (deepfake_score > 0.65 and overall_confidence > 0.6) or (
+    if (aigc_score > 0.65 and overall_confidence > 0.6) or (
         osint_risk > 0.75 and osint_conf > 0.5 and quality_score > 0.45
     ):
         verdict = "forged"
         verdict_cn = "伪造"
     elif (
-        deepfake_score > 0.4
+        aigc_score > 0.4
         or osint_risk > 0.4
         or osint.get("is_suspicious", False)
-        or (forensics_is_deepfake and overall_confidence > 0.5)
+        or (forensics_is_aigc and overall_confidence > 0.5)
     ):
         verdict = "suspicious"
         verdict_cn = "可疑"
@@ -111,25 +143,33 @@ async def commander_node(state: TruthSeekerState) -> dict:
         verdict = "inconclusive"
         verdict_cn = "无法判定"
 
-    log("finding", f"🏁 初步裁决: {verdict_cn}，综合置信度: {overall_confidence:.1%}")
+    log("finding", f"初步裁决: {verdict_cn}，综合置信度: {overall_confidence:.1%}")
 
     # === LLM 最终裁决报告 ===
     llm_ruling = ""
-    log("action", "🧠 正在调用大模型生成最终裁决报告...")
+    log("action", "正在调用大模型生成最终裁决报告...")
     try:
         enriched_challenger = {
             **challenger,
             "expert_messages": expert_messages[:10],
             "confirmed_consultation_summary": confirmed_consultation_summary,
         }
-        llm_ruling = await commander_ruling(forensics, osint, enriched_challenger, agent_weights, case_prompt, sample_refs)
+        llm_ruling = await commander_ruling(
+            forensics,
+            osint,
+            enriched_challenger,
+            agent_weights,
+            case_prompt,
+            sample_refs,
+            confidence_context=confidence_context,
+        )
         if llm_ruling.startswith("[LLM降级]"):
-            log("action", "⚠️  LLM 裁决不可用，使用规则推断")
+            log("action", "LLM 裁决不可用，使用规则推断")
         else:
-            log("finding", f"🧠 LLM 裁决报告生成完成，{len(llm_ruling)} 字")
+            log("finding", f"LLM 裁决报告生成完成，{len(llm_ruling)} 字")
     except Exception as e:
         llm_ruling = f"[LLM降级] 裁决推理异常: {e}"
-        log("action", f"⚠️  LLM 裁决异常: {e}")
+        log("action", f"LLM 裁决异常: {e}")
 
     provenance_graph = osint.get("provenance_graph") or state.get("provenance_graph") or {}
 
@@ -138,12 +178,15 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "verdict": verdict,
         "verdict_cn": verdict_cn,
         "confidence": overall_confidence,
-        "deepfake_score": deepfake_score,
+        "confidence_overall": overall_confidence,
+        "confidence_components": confidence_components,
+        "aigc_score": aigc_score,
         "risk_score": overall_risk_score,
         "quality_score": quality_score,
         "agent_weights": agent_weights,
         "forensics_summary": {
-            "is_deepfake": forensics_is_deepfake,
+            "is_aigc": forensics_is_aigc,
+            "aigc_probability": forensics_aigc_prob,
             "confidence": forensics_conf,
             "model_used": forensics.get("model_used", "unknown"),
             "degraded": forensics.get("degraded", False),
@@ -205,7 +248,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "quality": final_graph.get("quality") or {},
     }
 
-    log("conclusion", f"👑 最终裁决: 【{verdict_cn}】 综合置信度 {overall_confidence:.1%}")
+    log("conclusion", f"最终裁决: 【{verdict_cn}】 综合置信度 {overall_confidence:.1%}")
     record_audit_event(
         action="commander.verdict",
         task_id=task_id,
@@ -213,12 +256,12 @@ async def commander_node(state: TruthSeekerState) -> dict:
         metadata={
             "verdict": verdict,
             "confidence": overall_confidence,
-            "deepfake_score": deepfake_score,
+            "aigc_score": aigc_score,
             "forensics_degraded": forensics.get("degraded", False),
             "osint_degraded": osint.get("degraded", False),
         },
     )
-    log("conclusion", f"📋 裁决报告已存档，任务 {task_id} 分析完成")
+    log("conclusion", f"裁决报告已存档，任务 {task_id} 分析完成")
 
     # 时间轴关键事件
     timeline_events.append(build_timeline_event(

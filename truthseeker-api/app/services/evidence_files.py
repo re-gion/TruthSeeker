@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
+from app.services.input_types import derive_input_type_from_modalities
+
 
 MAX_EVIDENCE_FILES = 5
 
@@ -88,10 +90,7 @@ def require_evidence_files(files: list[UploadedEvidenceFile]) -> bool:
 
 
 def derive_input_type(files: list[UploadedEvidenceFile]) -> str:
-    modalities = sorted({item["modality"] for item in files})
-    if len(modalities) == 1:
-        return modalities[0]
-    return "mixed"
+    return derive_input_type_from_modalities({item["modality"] for item in files})
 
 
 def build_agent_file_views(files: list[UploadedEvidenceFile]) -> dict[str, Any]:

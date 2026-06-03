@@ -1,13 +1,13 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-04-29
+> 更新时间：2026-06-02
 
 ## 1. 当前运行时边界
 
 TruthSeeker 当前运行时是 **FedPaRS-compatible 多智能体研判架构**：
 
 - Kimi 2.5 作为四个 Agent 共享的原生多模态推理基座，并禁用 thinking。
-- Reality Defender、VirusTotal、Exa 等外部工具提供专业取证、威胁情报和联网搜索能力。
+- Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 等外部工具提供专业取证、威胁情报、联网搜索和域名溯源能力；文本 AIGC 检测改为内部工具。
 - 公开案例 RAG 使用 Supabase pgvector 和 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding，为 Forensics/OSINT 提供类案参考。
 - LangGraph 负责阶段式 Agent 编排和收敛路由。
 - Supabase 保存任务、分析快照、日志、报告、会诊和审计记录。
@@ -39,7 +39,9 @@ truthseeker-api/
 │   │   │   └── commander.py
 │   │   └── tools/
 │   │       ├── deepfake_api.py
+│   │       ├── domain_provenance.py
 │   │       ├── threat_intel.py
+│   │       ├── internal_text_aigc.py
 │   │       ├── text_detection.py
 │   │       ├── osint_search.py
 │   │       ├── provenance_graph.py
@@ -117,15 +119,30 @@ Kimi 2.5：
 - 多模态输入通过短期 signed URL 引用传递。
 - 日志、报告和持久化不保存 signed URL 明文。
 
-Reality Defender：
+Sightengine / Reality Defender：
 
-- 电子取证阶段处理所有媒体文件。
+- 图片默认由 Sightengine `genai` 做 AIGC 图片检测。
+- 音频和视频保留 Reality Defender 合成/篡改检测，作为音视频工具链。
 - 返回成功、降级或失败结构。
+- 运行时主字段统一为 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_probability`、`is_deepfake`、`deepfake_score` 只允许作为历史 JSONB 快照读取兼容，不再作为新报告主字段。
 
 VirusTotal：
 
 - 电子取证阶段扫描所有文件哈希和文本 IOC。
 - OSINT 阶段可对 Exa 搜索产生的新 IOC 追加查询。
+- URL 检测优先轮询 analysis `completed` 后采信统计；若新提交扫描长时间 queued，会按官方 unpadded base64 URL identifier 回查 `/api/v3/urls/{url_id}` 的既有 `last_analysis_stats`。同一任务内相同 URL 复用已完成结果，避免扫描尚未完成时把空统计误写成 0 家检出。
+
+内部文本 AIGC 检测：
+
+- Forensics 和 OSINT 都会对上传文本检材调用内部 `ai_text_detector`，不再依赖外部文本 AIGC API。
+- `internal_text_aigc.py` 负责把 `text_detection.analyze_text()` 规范化为工具矩阵结果，`provider=internal_text_detector`。
+- `text_detection.py` 融合 Kimi 文本判断、本地句长/词汇多样性/起伏度/重复短语/模板化话术统计，以及社工诱导风险特征。
+- 文本检测分数只作为概率性佐证，不能单独替代样本上下文、工具证据、情报核验或人工复核。
+
+WhoisXML：
+
+- OSINT 阶段对 URL/域名线索查询 WHOIS 注册信息和 DNS 历史记录。
+- 未配置 key、超时或网络失败时返回结构化降级结果，不把“缺数据”写成“无异常”。
 
 Exa：
 
@@ -139,6 +156,7 @@ Exa：
 - embedding 使用独立配置：`EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`，默认模型为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`。
 - Forensics 和 OSINT 运行时调用 `case_rag_search`，混合 vector 召回与关键词召回。结果只作为类案参考，不直接改变当前裁决分数。
 - `scripts/rebuild_case_rag_index.py --include-builtin --include-public` 用于回填内置案例和历史公开案例。
+- `scripts/delete_public_case_rag_chunks.py --title-contains "案例标题" --apply` 用于清理已删除公开案例遗留的向量 chunks；默认 dry-run。
 
 ## 6. 持久化与报告
 

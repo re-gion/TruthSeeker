@@ -16,19 +16,61 @@ function FileIcon({ modality }: { modality: string | null }) {
   return <FileText className="h-5 w-5" />
 }
 
-function PreviewPane({ url, mimeType }: { url: string; mimeType: string | null }) {
+type PreviewState = {
+  signedUrl: string
+  previewKind: string
+  text: string
+  charset: string | null
+  detectedEncoding: string | null
+  textUrl: string | null
+}
+
+function PreviewPane({ preview, mimeType }: { preview: PreviewState; mimeType: string | null }) {
+  const url = preview.signedUrl
+  const externalUrl = preview.previewKind === "text" && preview.textUrl ? preview.textUrl : url
+  const openOriginalLink = (
+    <a href={externalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#D4FF12]">
+      <ExternalLink className="h-3.5 w-3.5" />
+      新页面查看原检材
+    </a>
+  )
+
+  if (preview.previewKind === "text" || mimeType?.startsWith("text/")) {
+    return (
+      <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/35 p-3">
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/45">
+          <span>文本预览 · UTF-8</span>
+          {externalUrl && openOriginalLink}
+        </div>
+        <pre className="min-h-72 flex-1 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-white/75">
+          {preview.text || "暂无可预览文本"}
+        </pre>
+      </div>
+    )
+  }
   if (mimeType?.startsWith("audio/")) {
-    return <audio controls src={url} className="mt-3 w-full" />
+    return (
+      <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/35 p-3">
+        <div className="mb-2 flex justify-end text-xs">{openOriginalLink}</div>
+        <audio controls src={url} className="w-full" />
+      </div>
+    )
   }
   if (mimeType?.startsWith("video/")) {
-    return <video controls src={url} className="mt-3 aspect-video w-full rounded-lg border border-white/10 bg-black" />
+    return (
+      <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/35 p-3">
+        <div className="mb-2 flex justify-end text-xs">{openOriginalLink}</div>
+        <video controls src={url} className="aspect-video w-full rounded-lg border border-white/10 bg-black" />
+      </div>
+    )
   }
   if (mimeType?.startsWith("image/")) {
     return (
-      <a href={url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm text-[#D4FF12]">
-        <ExternalLink className="h-4 w-4" />
-        在新页面查看原图
-      </a>
+      <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/35 p-3">
+        <div className="mb-2 flex justify-end text-xs">{openOriginalLink}</div>
+        {/* eslint-disable-next-line @next/next/no-img-element -- Signed Storage URLs are short-lived and not known in next.config image domains. */}
+        <img src={url} alt="公开案例原始图片检材预览" className="max-h-96 w-full rounded-md object-contain" />
+      </div>
     )
   }
   return (
@@ -44,7 +86,7 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
   const [detail, setDetail] = useState<PublicCaseDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({})
+  const [previews, setPreviews] = useState<Record<string, PreviewState>>({})
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
@@ -70,7 +112,7 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
     setPreviewLoading(fileId)
     try {
       const result = await requestCasePreviewUrl(caseId, fileId)
-      setPreviewUrls((current) => ({ ...current, [fileId]: result.signedUrl }))
+      setPreviews((current) => ({ ...current, [fileId]: result }))
     } catch (err) {
       setError(err instanceof Error ? err.message : "检材预览链接生成失败")
     } finally {
@@ -153,11 +195,11 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid items-stretch gap-4 md:grid-cols-2">
         {detail.publicFiles.map((file) => {
-          const previewUrl = previewUrls[file.id]
+          const preview = previews[file.id]
           return (
-            <div key={file.id} className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+            <div key={file.id} className="flex h-full flex-col rounded-lg border border-white/10 bg-white/[0.04] p-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3 text-white">
                   <FileIcon modality={file.modality} />
@@ -177,7 +219,7 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
                   </button>
                 )}
               </div>
-              {previewUrl && <PreviewPane url={previewUrl} mimeType={file.mimeType} />}
+              {preview && <PreviewPane preview={preview} mimeType={file.mimeType} />}
             </div>
           )
         })}

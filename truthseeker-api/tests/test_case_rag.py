@@ -95,12 +95,12 @@ class FakeSupabase:
 def test_chunk_markdown_is_stable_and_keeps_headings():
     from app.services.case_rag import build_chunk_hash, chunk_markdown
 
-    markdown = "# 案例\n\n## 关键证据\n" + ("口型不同步。压缩伪影异常。\n\n" * 80)
+    markdown = "# 案例\n\n## 摘要\n" + ("口型不同步。压缩伪影异常。\n\n" * 80)
     chunks = chunk_markdown(markdown, max_chars=300, overlap_chars=40)
 
     assert len(chunks) > 1
     assert chunks[0]["chunk_index"] == 0
-    assert any("关键证据" in item["text"] for item in chunks)
+    assert any("摘要" in item["text"] for item in chunks)
     assert build_chunk_hash("builtin", "case-audio-scam", chunks[0]["text"]) == build_chunk_hash(
         "builtin", "case-audio-scam", chunks[0]["text"]
     )

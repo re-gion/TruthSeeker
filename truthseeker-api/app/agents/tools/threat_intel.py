@@ -1,13 +1,20 @@
 """威胁情报工具 - 支持 VirusTotal API 和 Mock 模拟"""
 import asyncio
+import base64
 import hashlib
 import logging
 from typing import Optional
+
+import httpx
 
 from app.agents.tools.fallback import shared_degradation
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+VT_URL_POLL_ATTEMPTS = 5
+VT_URL_POLL_DELAY_SECONDS = 3.0
+_URL_SCAN_CACHE: dict[str, dict] = {}
 
 
 async def analyze_urls(urls: list[str]) -> dict:
@@ -33,8 +40,10 @@ async def analyze_urls(urls: list[str]) -> dict:
 
 async def _virustotal_scan(url: str, api_key: str) -> dict:
     """调用 VirusTotal API 进行扫描"""
+    cache_key = url.strip()
+    if cache_key in _URL_SCAN_CACHE:
+        return {**_URL_SCAN_CACHE[cache_key], "reused": True}
     try:
-        import httpx
         headers = {"x-apikey": api_key}
         async with httpx.AsyncClient(timeout=10.0) as client:
             # 提交 URL 扫描
@@ -62,50 +71,37 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
                     api_key_configured=True,
                 )
 
-            # 获取分析结果
-            await asyncio.sleep(2)
-            result_resp = await client.get(
-                f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
-                headers=headers,
-            )
-            if result_resp.status_code != 200:
-                logger.warning("VirusTotal URL scan result returned HTTP %s for analysis_id=%s", result_resp.status_code, analysis_id)
-                return await _mock_url_analysis(
-                    url,
-                    fallback_reason=f"result_http_{result_resp.status_code}",
-                    api_key_configured=True,
+            final_result: dict | None = None
+            last_status = "queued"
+            for attempt in range(VT_URL_POLL_ATTEMPTS):
+                if attempt > 0:
+                    await asyncio.sleep(VT_URL_POLL_DELAY_SECONDS)
+                result_resp = await client.get(
+                    f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
+                    headers=headers,
                 )
-
-            result = result_resp.json()
-            stats = result.get("data", {}).get("attributes", {}).get("stats", {})
-            malicious = stats.get("malicious", 0)
-            suspicious = stats.get("suspicious", 0)
-            total = sum(stats.values()) if stats else 1
-
-            threat_score = min(1.0, (malicious * 1.0 + suspicious * 0.5) / max(total, 1))
-
-            indicators = []
-            if malicious > 0:
-                indicators.append(f"VirusTotal: {malicious} 家安全厂商标记为恶意")
-            if suspicious > 0:
-                indicators.append(f"VirusTotal: {suspicious} 家安全厂商标记为可疑")
-
+                if result_resp.status_code != 200:
+                    logger.warning("VirusTotal URL scan result returned HTTP %s for analysis_id=%s", result_resp.status_code, analysis_id)
+                    return await _mock_url_analysis(
+                        url,
+                        fallback_reason=f"result_http_{result_resp.status_code}",
+                        api_key_configured=True,
+                    )
+                result = result_resp.json()
+                attrs = result.get("data", {}).get("attributes", {})
+                last_status = str(attrs.get("status") or "").lower()
+                if last_status == "completed":
+                    final_result = _build_vt_url_result(url, attrs.get("stats") or {})
+                    break
+            if final_result is None:
+                existing_result = await _fetch_existing_vt_url_report(client, url, headers)
+                if existing_result is not None:
+                    _URL_SCAN_CACHE[cache_key] = dict(existing_result)
+                    return existing_result
+                return _pending_vt_url_result(url, analysis_id, last_status)
             shared_degradation.report_success("virustotal")
-            return {
-                "threat_score": threat_score,
-                "indicators": indicators,
-                "domain_info": {"url": url},
-                "virustotal": {
-                    "malicious": malicious,
-                    "suspicious": suspicious,
-                    "total_engines": total,
-                    "stats": stats,
-                    "status": "ok",
-                    "scan_available": True,
-                },
-                "status": "ok",
-                "degraded": False,
-            }
+            _URL_SCAN_CACHE[cache_key] = dict(final_result)
+            return final_result
     except Exception as e:
         logger.warning("VirusTotal URL scan degraded: %s", e)
         shared_degradation.report_failure("virustotal", e)
@@ -114,6 +110,82 @@ async def _virustotal_scan(url: str, api_key: str) -> dict:
             fallback_reason="network_error",
             api_key_configured=True,
         )
+
+
+async def _fetch_existing_vt_url_report(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> dict | None:
+    """回查 VirusTotal 已有 URL 报告，避免新提交扫描长时间 queued 时完全无结果。"""
+    try:
+        url_id = _vt_url_identifier(url)
+        result_resp = await client.get(
+            f"https://www.virustotal.com/api/v3/urls/{url_id}",
+            headers=headers,
+        )
+        if result_resp.status_code != 200:
+            logger.warning("VirusTotal existing URL report returned HTTP %s for %s", result_resp.status_code, url)
+            return None
+        attrs = result_resp.json().get("data", {}).get("attributes", {})
+        stats = attrs.get("last_analysis_stats") or {}
+        if not stats:
+            return None
+        return _build_vt_url_result(url, stats, source="existing_url_report")
+    except Exception as exc:
+        logger.warning("VirusTotal existing URL report lookup failed for %s: %s", url, exc)
+        return None
+
+
+def _vt_url_identifier(url: str) -> str:
+    return base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _build_vt_url_result(url: str, stats: dict, *, source: str = "submitted_analysis") -> dict:
+    malicious = int(stats.get("malicious", 0) or 0)
+    suspicious = int(stats.get("suspicious", 0) or 0)
+    total = sum(int(value or 0) for value in stats.values()) if stats else 0
+    threat_score = min(1.0, (malicious * 1.0 + suspicious * 0.5) / max(total, 1))
+    indicators = []
+    if malicious > 0:
+        indicators.append(f"VirusTotal: {malicious} 家安全厂商标记为恶意")
+    if suspicious > 0:
+        indicators.append(f"VirusTotal: {suspicious} 家安全厂商标记为可疑")
+    if not indicators:
+        indicators.append("VirusTotal: 已完成扫描，未见厂商标记恶意或可疑")
+    return {
+        "threat_score": threat_score,
+        "indicators": indicators,
+        "domain_info": {"url": url},
+        "virustotal": {
+            "malicious": malicious,
+            "suspicious": suspicious,
+            "total_engines": total,
+            "stats": stats,
+            "status": "completed",
+            "source": source,
+            "scan_available": True,
+        },
+        "status": "success",
+        "degraded": False,
+    }
+
+
+def _pending_vt_url_result(url: str, analysis_id: str, status: str) -> dict:
+    safe_status = status or "queued"
+    return {
+        "threat_score": 0.0,
+        "indicators": [f"VirusTotal 扫描尚未完成（status={safe_status}），未采信空统计为零检出"],
+        "domain_info": {"url": url},
+        "virustotal": {
+            "malicious": None,
+            "suspicious": None,
+            "total_engines": 0,
+            "stats": {},
+            "status": safe_status,
+            "analysis_id": analysis_id,
+            "scan_available": False,
+        },
+        "status": "degraded",
+        "degraded": True,
+        "fallback_reason": f"analysis_{safe_status}",
+    }
 
 
 async def _mock_url_analysis(

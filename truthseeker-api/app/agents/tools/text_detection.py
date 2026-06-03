@@ -144,6 +144,68 @@ def _split_words(text: str) -> list[str]:
     return words
 
 
+def _clamp_score(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _coefficient_of_variation(lengths: list[int]) -> float:
+    if not lengths:
+        return 0.0
+    avg = sum(lengths) / len(lengths)
+    if avg <= 0:
+        return 0.0
+    variance = sum((item - avg) ** 2 for item in lengths) / len(lengths)
+    return math.sqrt(variance) / avg
+
+
+def _phrase_repetition_score(sentences: list[str]) -> float:
+    normalized = [re.sub(r"\s+", "", sentence) for sentence in sentences if sentence.strip()]
+    if len(normalized) < 2:
+        return 0.0
+    prefixes = [sentence[:4] for sentence in normalized if len(sentence) >= 4]
+    if not prefixes:
+        return 0.0
+    repeated_prefix_ratio = 1.0 - (len(set(prefixes)) / len(prefixes))
+
+    bigrams: list[str] = []
+    for sentence in normalized:
+        bigrams.extend(sentence[index:index + 2] for index in range(max(0, len(sentence) - 1)))
+    if not bigrams:
+        return round(repeated_prefix_ratio, 4)
+    repeated_bigram_ratio = 1.0 - (len(set(bigrams)) / len(bigrams))
+    return round(_clamp_score(repeated_prefix_ratio * 0.55 + repeated_bigram_ratio * 0.45), 4)
+
+
+def _punctuation_regularity_score(sentences: list[str]) -> float:
+    endings = []
+    for sentence in sentences:
+        match = re.search(r"[。！？.!?]$", sentence.strip())
+        endings.append(match.group(0) if match else "")
+    if len(endings) < 3:
+        return 0.0
+    return round(_clamp_score(1.0 - (len(set(endings)) / len(endings))), 4)
+
+
+def _template_marker_score(text: str) -> tuple[float, list[str]]:
+    markers = {
+        "紧急/限时压力": ["立即", "尽快", "截止", "逾期", "最后", "受限", "限制功能"],
+        "身份核验模板": ["验证账号", "核验身份", "完成复核", "个人信息", "客服通知"],
+        "跳转动作诱导": ["扫码", "二维码", "点击链接", "进入页面", "访问入口"],
+        "泛化解释套话": ["综上", "因此", "需要注意的是", "建议您", "为了保障"],
+    }
+    hits: list[str] = []
+    for label, terms in markers.items():
+        if any(term in text for term in terms):
+            hits.append(label)
+    if not hits:
+        return 0.0, []
+    return round(_clamp_score(len(hits) / len(markers)), 4), hits
+
+
+def _signal(name: str, score: float, reason: str) -> dict:
+    return {"name": name, "score": round(_clamp_score(score), 4), "reason": reason}
+
+
 def analyze_text_structure(text: str) -> dict:
     """纯本地统计分析，检测文本结构异常。
 
@@ -207,13 +269,48 @@ def analyze_text_structure(text: str) -> dict:
     if ttr < 0.3 and total_words > 10:
         anomalies.append("词汇多样性偏低，疑似 AI 生成")
 
+    cv = _coefficient_of_variation(lengths)
+    burstiness_score = _clamp_score(1.0 - cv)
+    repetition_score = _phrase_repetition_score(sentences)
+    punctuation_regularity = _punctuation_regularity_score(sentences)
+    template_score, template_hits = _template_marker_score(text)
+
+    detection_signals = [
+        _signal("sentence_uniformity", uniformity_score, "句长分布越均匀，越可能来自模板或模型生成"),
+        _signal("low_vocabulary_diversity", 1.0 - vocabulary_diversity, "词汇多样性偏低会增加模板化或机器生成嫌疑"),
+        _signal("low_burstiness", burstiness_score, "人类文本通常句长起伏更明显，低起伏度需要复核"),
+        _signal("repetitive_phrasing", repetition_score, "重复开头、重复短语或固定句式会提高机器/模板嫌疑"),
+        _signal("punctuation_regularity", punctuation_regularity, "标点模式过于一致时提示文本生成流程可能较机械"),
+        _signal("template_markers", template_score, "命中客服、限时、核验、跳转等模板化话术"),
+    ]
+    local_ai_score = _clamp_score(
+        uniformity_score * 0.24
+        + (1.0 - vocabulary_diversity) * 0.18
+        + burstiness_score * 0.18
+        + repetition_score * 0.18
+        + punctuation_regularity * 0.08
+        + template_score * 0.14
+    )
+
+    if repetition_score >= 0.35:
+        anomalies.append("存在重复短语或固定句式，疑似模板化生成")
+    if template_hits:
+        anomalies.append(f"命中模板化话术特征：{'、'.join(template_hits)}")
+
     return {
         "sentence_count": sentence_count,
         "avg_sentence_length": round(avg_length, 2),
         "type_token_ratio": round(ttr, 4),
         "sentence_length_std": round(std_dev, 2),
+        "sentence_length_cv": round(cv, 4),
         "length_uniformity_score": round(uniformity_score, 4),
+        "burstiness_score": round(burstiness_score, 4),
+        "repetition_score": repetition_score,
+        "punctuation_regularity_score": punctuation_regularity,
+        "template_marker_score": template_score,
         "vocabulary_diversity": round(vocabulary_diversity, 4),
+        "local_ai_score": round(local_ai_score, 4),
+        "detection_signals": detection_signals,
         "anomalies": anomalies,
     }
 
@@ -339,12 +436,19 @@ async def analyze_text(text_content: str) -> dict:
     llm_anomalies = llm_result.get("anomalies", [])
     structural_anomalies = structural_result.get("anomalies", [])
 
+    local_ai_score = float(structural_result.get("local_ai_score", structural_result.get("length_uniformity_score", 0.0)) or 0.0)
+    llm_degraded = bool(llm_result.get("degraded"))
+    if llm_degraded:
+        ai_probability = _clamp_score(local_ai_score * 0.78 + float(social_engineering.get("score", 0.0) or 0.0) * 0.22)
+    else:
+        ai_probability = _clamp_score(float(ai_probability) * 0.68 + local_ai_score * 0.22 + float(social_engineering.get("score", 0.0) or 0.0) * 0.10)
+
     # 判断是否 AI 生成
     is_ai_generated = ai_probability > 0.6
 
     # 计算置信度：基于 LLM 与结构分析的一致性
     # 结构分析的 length_uniformity_score 高 → 也暗示 AI
-    structural_hint = structural_result.get("length_uniformity_score", 0.0)
+    structural_hint = local_ai_score
     llm_hint = ai_probability
 
     # 两者越一致，置信度越高
@@ -356,6 +460,8 @@ async def analyze_text(text_content: str) -> dict:
     # 如果结构分析表明文本太短，降低置信度
     if structural_result.get("sentence_count", 0) < 3:
         confidence *= 0.6
+    if llm_degraded:
+        confidence *= 0.75
 
     # 合并异常列表
     all_anomalies = list(dict.fromkeys(
@@ -370,10 +476,16 @@ async def analyze_text(text_content: str) -> dict:
         "manipulation_score": manipulation_score,
         "structural_analysis": structural_result,
         "social_engineering": social_engineering,
+        "detection_signals": structural_result.get("detection_signals", []),
+        "local_ai_score": round(local_ai_score, 4),
         "key_claims": key_claims,
         "anomalies": all_anomalies,
         "extracted_urls": extracted_urls,
         "confidence": round(confidence, 4),
-        "degraded": bool(llm_result.get("degraded")),
+        "degraded": llm_degraded,
+        "limitations": [
+            "文本 AIGC 检测只能作为概率性线索，不应单独作为定性证据",
+            "短文本、模板通知、人工润色和混合撰写会降低检测可靠性",
+        ],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

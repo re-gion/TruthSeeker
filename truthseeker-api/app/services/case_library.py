@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.analysis_persistence import normalize_final_verdict
+from app.services.input_types import canonical_input_type
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,33 @@ def redact_public_text(value: str | None) -> str:
     return text
 
 
+def _remove_public_key_evidence_sections(markdown: str) -> str:
+    lines = (markdown or "").splitlines()
+    result: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.strip()
+        is_heading = stripped.startswith("#")
+        heading_text = stripped.lstrip("#").strip()
+        if is_heading and "关键证据" in heading_text:
+            skipping = True
+            continue
+        if skipping and is_heading:
+            skipping = False
+        if skipping:
+            continue
+        if not is_heading and stripped.startswith("关键证据"):
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
+
+
 def redact_public_markdown(markdown: str | None) -> str:
-    return redact_public_text(markdown or "")
+    return _remove_public_key_evidence_sections(redact_public_text(markdown or ""))
+
+
+def strip_public_key_evidence_sections(markdown: str | None) -> str:
+    return redact_public_markdown(markdown)
 
 
 def _metadata(task: dict[str, Any]) -> dict[str, Any]:
@@ -100,11 +126,14 @@ def _derive_media_category(files: list[dict[str, Any]], input_type: str | None =
         return "image_forgery"
     if "text" in modalities:
         return "text_generation"
-    if input_type == "audio":
+    canonical = canonical_input_type(input_type)
+    if "_" in canonical:
+        return "image_text_mixed"
+    if canonical == "audio":
         return "audio_forgery"
-    if input_type == "video":
+    if canonical == "video":
         return "video_forgery"
-    if input_type == "image":
+    if canonical == "image":
         return "image_forgery"
     return "text_generation"
 
@@ -142,10 +171,21 @@ def _fallback_title_and_summary(
     media_category: str,
     confidence: float | None,
     difficulty: str,
+    case_prompt: str | None = None,
 ) -> tuple[str, str]:
     verdict_label = VERDICT_LABEL_MAP.get(verdict, verdict)
     category_label = CATEGORY_LABEL_MAP.get(media_category, media_category)
-    title = f"{verdict_label}·{category_label}·{difficulty}难度案例"
+    prompt = case_prompt or ""
+    if any(keyword in prompt for keyword in ("客服", "通知", "账号", "验证码", "钓鱼")):
+        subject = "账号安全通知"
+    elif any(keyword in prompt for keyword in ("董事长", "领导", "转账")):
+        subject = "领导转账"
+    elif any(keyword in prompt for keyword in ("新闻", "媒体", "公告")):
+        subject = "媒体信息"
+    else:
+        subject = CATEGORY_LABEL_MAP.get(media_category, "AIGC")
+    case_type = "钓鱼诈骗" if verdict in {"forged", "suspicious"} and media_category == "image_text_mixed" else category_label
+    title = f"{subject}{case_type}案例"
     conf_text = f"{confidence * 100:.1f}%" if confidence is not None else "未知"
     summary = f"本案为{category_label}类型检材，研判结论为{verdict_label}，综合置信度 {conf_text}。"
     return title, summary
@@ -185,7 +225,8 @@ async def generate_case_title_and_summary(
     files = _task_files(task)
     media_category = _derive_media_category(files, task.get("input_type"))
     difficulty = _difficulty(confidence)
-    fallback = _fallback_title_and_summary(verdict, media_category, confidence, difficulty)
+    case_prompt = str(task.get("description") or _metadata(task).get("case_prompt") or "")
+    fallback = _fallback_title_and_summary(verdict, media_category, confidence, difficulty, case_prompt)
 
     if llm is None:
         return fallback
@@ -208,12 +249,12 @@ async def generate_case_title_and_summary(
         "media_category": media_category,
         "difficulty": difficulty,
         "files": file_descriptors,
-        "case_prompt": redact_public_text(str(task.get("description") or _metadata(task).get("case_prompt") or ""))[:200],
+        "case_prompt": redact_public_text(case_prompt)[:200],
         "key_evidence": [redact_public_text(str(item))[:160] for item in key_evidence[:3]],
     }
     prompt = (
         "你是 TruthSeeker 的公开案例编辑。请基于输入生成适合公开案例库展示的标题和摘要。\n"
-        "要求：标题 10-20 个中文字符，概括案例类型，不使用原始文件名；"
+        "要求：标题 10-24 个中文字符，必须包含具体主体/实体和案例类型，例如“董事长语音诈骗”“账号安全通知钓鱼”，不得只写“图文混合身份冒充诈骗案例”；"
         "摘要 50-120 个中文字符，面向公众解释案情、结论和置信度；"
         "不得泄露邮箱、手机号、身份证号、存储路径或签名 URL。\n"
         "只输出 JSON，格式为 {\"title\":\"...\",\"summary\":\"...\"}。\n"
@@ -274,11 +315,6 @@ def build_markdown_from_report_row(report: dict[str, Any]) -> str:
     summary = report.get("summary") or verdict.get("analysis_summary")
     if summary:
         lines.extend(["", "## 摘要", str(summary)])
-    key_evidence = report.get("key_evidence") or verdict.get("key_evidence") or []
-    if key_evidence:
-        lines.extend(["", "## 关键证据"])
-        for item in key_evidence:
-            lines.append(f"- {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
     recommendations = report.get("recommendations") or verdict.get("recommendations") or []
     if recommendations:
         lines.extend(["", "## 处置建议"])
@@ -427,7 +463,7 @@ def sanitize_case_for_response(row: dict[str, Any], *, include_report: bool = Fa
         "published_at": row.get("published_at"),
     }
     if include_report:
-        payload["report_markdown"] = row.get("report_markdown") or ""
+        payload["report_markdown"] = strip_public_key_evidence_sections(row.get("report_markdown") or "")
     return payload
 
 

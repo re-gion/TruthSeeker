@@ -88,7 +88,8 @@ class ChallengerTimelineSourceTests(unittest.TestCase):
         self.assertIn('"satisfaction": confidence', source)
         self.assertIn('"model_requires_more_evidence"', source)
         self.assertIn('"model_target_agent"', source)
-        self.assertIn("phase_round < 2", source)
+        self.assertNotIn("phase_round < 2", source)
+        self.assertIn("first_round_high_confidence_pass", source)
 
     def test_report_sections_and_markdown_fields_are_readable(self):
         source = read_source("app/services/report_generator.py")

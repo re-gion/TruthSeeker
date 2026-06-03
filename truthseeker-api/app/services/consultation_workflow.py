@@ -181,9 +181,12 @@ def _same_target_recent_records(challenge_records: list[dict[str, Any]], stuck_r
         return []
     recent = challenge_records[-stuck_rounds:]
     target = recent[-1].get("target_agent")
+    phase = recent[-1].get("phase")
     if not target:
         return []
-    if all(item.get("target_agent") == target for item in recent):
+    if not phase or target != phase:
+        return []
+    if all(item.get("target_agent") == target and item.get("phase") == phase for item in recent):
         return recent
     return []
 

@@ -8,6 +8,7 @@ from app.services.case_library import (
     build_case_fingerprint,
     build_case_library_entry,
     ensure_case_library_entry,
+    _derive_media_category,
     redact_public_markdown,
 )
 
@@ -142,12 +143,18 @@ def test_build_case_fingerprint_is_stable_for_same_files_and_prompt():
     assert build_case_fingerprint(files_a, "另一个提示词") != build_case_fingerprint(files_a, "请 判断 是否伪造")
 
 
-def test_redact_public_markdown_removes_sensitive_values_but_keeps_report_evidence():
+def test_redact_public_markdown_removes_sensitive_values_and_key_evidence_section():
     markdown = """
 # 鉴伪报告
 上传者 test@example.com，手机号 13812345678，身份证 110101199901011234。
 Storage: user-1/tmpabc.png?token=secret-token
-关键证据：口型不同步，压缩伪影异常。
+
+## 关键证据
+- {"type": "forensics", "source": "forensics_agent", "confidence": 0.95}
+- {"type": "osint", "source": "osint_agent", "confidence": 0.82}
+
+## 处置建议
+- 冻结相关账号。
 """
 
     redacted = redact_public_markdown(markdown)
@@ -156,8 +163,10 @@ Storage: user-1/tmpabc.png?token=secret-token
     assert "13812345678" not in redacted
     assert "110101199901011234" not in redacted
     assert "secret-token" not in redacted
-    assert "口型不同步" in redacted
-    assert "压缩伪影异常" in redacted
+    assert "关键证据" not in redacted
+    assert "forensics_agent" not in redacted
+    assert "处置建议" in redacted
+    assert "冻结相关账号" in redacted
 
 
 def test_build_case_library_entry_derives_category_and_public_fields():
@@ -201,6 +210,10 @@ def test_build_case_library_entry_derives_category_and_public_fields():
     assert "13812345678" not in entry["report_markdown"]
 
 
+def test_derive_media_category_accepts_canonical_text_image_input_type_without_files():
+    assert _derive_media_category([], "text_image") == "image_text_mixed"
+
+
 def test_build_markdown_from_report_row_tolerates_invalid_confidence():
     from app.services.case_library import build_markdown_from_report_row
 
@@ -213,6 +226,28 @@ def test_build_markdown_from_report_row_tolerates_invalid_confidence():
 
     assert "存在伪造风险" in markdown
     assert "综合置信度" not in markdown
+
+
+def test_public_case_markdown_omits_key_evidence_section():
+    from app.services.case_library import build_markdown_from_report_row, sanitize_case_for_response
+
+    markdown = build_markdown_from_report_row({
+        "verdict": "forged",
+        "confidence_overall": 0.91,
+        "summary": "最终裁决已说明证据链。",
+        "key_evidence": [{"type": "forensics", "source": "forensics_agent", "confidence": 0.95}],
+        "verdict_payload": {"key_evidence": [{"type": "osint", "source": "osint_agent", "confidence": 0.82}]},
+    })
+
+    assert "最终裁决已说明证据链" in markdown
+    assert "关键证据" not in markdown
+    assert "forensics_agent" not in markdown
+
+    payload = sanitize_case_for_response({"id": "case-1", "report_markdown": "# 报告\n\n## 关键证据\n- 无意义字段\n\n## 摘要\n保留"}, include_report=True)
+
+    assert "关键证据" not in payload["report_markdown"]
+    assert "无意义字段" not in payload["report_markdown"]
+    assert "摘要" in payload["report_markdown"]
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""恶意 AIGC 检测工具 - Reality Defender API with mock fallback
+"""恶意 AIGC 检测工具 - Sightengine image AIGC + Reality Defender fallback
 
 Reality Defender API 流程:
 1. POST /api/files/aws-presigned → 获取签名URL + request_id
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 RD_BASE = "https://api.prd.realitydefender.xyz"
+SIGHTENGINE_BASE = "https://api.sightengine.com/1.0/check.json"
 
 # 文件类型映射: input_type → (extension, supported_types)
 FILE_TYPE_MAP = {
@@ -73,11 +74,16 @@ def _get_api_key() -> str:
     return settings.REALITY_DEFENDER_API_KEY
 
 
+def _get_sightengine_credentials() -> tuple[str, str]:
+    return settings.SIGHTENGINE_API_USER, settings.SIGHTENGINE_API_SECRET
+
+
 async def _download_file(file_url: str) -> tuple[bytes, str]:
     """从 Supabase 签名 URL 下载文件，返回 (字节数据, 文件名)"""
     async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS) as client:
         resp = await client.get(file_url, follow_redirects=True)
-        resp.raise_for_status()
+        if hasattr(resp, "raise_for_status"):
+            resp.raise_for_status()
 
         # 尝试从 Content-Disposition 或 URL 路径提取文件名
         filename = "upload.mp4"
@@ -214,46 +220,50 @@ def _parse_rd_result(rd_data: dict) -> dict:
         metadata = results_summary.get("metadata", {})
         final_score_raw = metadata.get("finalScore")
 
-        # API 返回 0-100，转为 0-1
-        deepfake_probability = float(final_score_raw) / 100.0 if final_score_raw is not None else 0.0
+        # API 返回 0-100，转为 0-1。对外统一使用 AIGC/篡改风险字段。
+        aigc_probability = float(final_score_raw) / 100.0 if final_score_raw is not None else 0.0
 
         if status == "FAKE":
-            is_deepfake = True
+            is_aigc = True
         elif status == "SUSPICIOUS":
-            is_deepfake = True
+            is_aigc = True
         elif status == "NOT_APPLICABLE":
             reasons = metadata.get("reasons", [])
             reason_msg = "; ".join(r.get("message", "") for r in reasons) if reasons else ""
             logger.warning("[Reality Defender] NOT_APPLICABLE: %s", reason_msg)
-            is_deepfake = False
-            deepfake_probability = 0.0
+            is_aigc = False
+            aigc_probability = 0.0
         elif status == "UNABLE_TO_EVALUATE":
             error_info = results_summary.get("error", {})
             raise RuntimeError(f"RD unable to evaluate: {error_info.get('message', 'unknown')}")
         else:
             # AUTHENTIC
-            is_deepfake = False
+            is_aigc = False
     else:
         # --- 回退旧格式 ensemble ---
         ensemble = rd_data.get("ensemble", {})
         if ensemble:
-            deepfake_probability = float(ensemble.get("score", 0.0))
-            is_deepfake = ensemble.get("label", "").upper() == "FAKE"
+            aigc_probability = float(ensemble.get("score", 0.0))
+            is_aigc = ensemble.get("label", "").upper() == "FAKE"
         elif model_scores:
             first = model_scores[0]
-            deepfake_probability = float(first["score"])
-            is_deepfake = first["label"].upper() == "FAKE"
+            aigc_probability = float(first["score"])
+            is_aigc = first["label"].upper() == "FAKE"
         else:
-            deepfake_probability = float(rd_data.get("score", 0.0))
-            is_deepfake = rd_data.get("label", "").upper() == "FAKE"
+            aigc_probability = float(rd_data.get("score", 0.0))
+            is_aigc = rd_data.get("label", "").upper() == "FAKE"
 
-    confidence = deepfake_probability if is_deepfake else (1.0 - deepfake_probability)
+    confidence = aigc_probability if is_aigc else (1.0 - aigc_probability)
 
     return {
-        "is_deepfake": is_deepfake,
+        "is_aigc": is_aigc,
+        "is_aigc_manipulated": is_aigc,
+        "aigc_probability": aigc_probability,
+        "manipulation_probability": aigc_probability,
         "confidence": confidence,
-        "deepfake_probability": deepfake_probability,
         "model": "reality_defender",
+        "provider": "reality_defender",
+        "detection_scope": "audio_video_manipulation",
         "models": model_scores,
         "frame_inferences": frame_inferences,
         "audio_score": audio_score,
@@ -267,6 +277,84 @@ def _parse_rd_result(rd_data: dict) -> dict:
         "raw_response": rd_data,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _parse_sightengine_result(data: dict) -> dict:
+    type_scores = data.get("type") if isinstance(data.get("type"), dict) else {}
+    ai_probability = float(type_scores.get("ai_generated", data.get("ai_generated", 0.0)) or 0.0)
+    ai_probability = max(0.0, min(1.0, ai_probability))
+    is_ai_generated = ai_probability >= 0.5
+    confidence = ai_probability if is_ai_generated else 1.0 - ai_probability
+    return {
+        "is_ai_generated": is_ai_generated,
+        "is_aigc": is_ai_generated,
+        "is_aigc_manipulated": is_ai_generated,
+        "aigc_probability": ai_probability,
+        "ai_generated_probability": ai_probability,
+        "confidence": confidence,
+        "model": "sightengine_genai",
+        "provider": "sightengine",
+        "detection_scope": "image_aigc_generation",
+        "analysis_available": True,
+        "models": [
+            {
+                "name": "sightengine_genai",
+                "score": ai_probability,
+                "label": "AI_GENERATED" if is_ai_generated else "HUMAN_OR_UNDETERMINED",
+            }
+        ],
+        "frame_inferences": [],
+        "audio_score": None,
+        "indicators": [
+            f"AI 生成概率 {ai_probability:.1%}",
+        ],
+        "details": {
+            "model": "genai",
+            "status": data.get("status"),
+        },
+        "raw_response": data,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def analyze_with_sightengine(file_url: str) -> dict:
+    """Use Sightengine genai model for AI-generated image detection."""
+    api_user, api_secret = _get_sightengine_credentials()
+    if not api_user or not api_secret:
+        return await mock_deepfake_analysis(
+            file_url,
+            "image",
+            fallback_reason="missing_sightengine_credentials",
+            api_key_configured=False,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS) as client:
+            file_data, filename = await _download_file(file_url)
+            resp = await client.post(
+                SIGHTENGINE_BASE,
+                data={
+                    "models": "genai",
+                    "api_user": api_user,
+                    "api_secret": api_secret,
+                },
+                files={"media": (filename or "image.jpg", file_data)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if str(data.get("status", "")).lower() not in {"success", "ok"} and not data.get("type"):
+                raise RuntimeError(f"Sightengine returned non-success status: {data}")
+            shared_degradation.report_success("sightengine")
+            return _parse_sightengine_result(data)
+    except Exception as exc:
+        logger.warning("[Sightengine] image AIGC detection degraded: %s", exc)
+        shared_degradation.report_failure("sightengine", exc)
+        return await mock_deepfake_analysis(
+            file_url,
+            "image",
+            fallback_reason=f"sightengine_{type(exc).__name__}: {exc}",
+            api_key_configured=True,
+        )
 
 
 async def analyze_with_reality_defender(file_url: str, media_type: str = "video") -> dict:
@@ -358,7 +446,7 @@ async def analyze_with_reality_defender(file_url: str, media_type: str = "video"
         )
 
 
-async def mock_deepfake_analysis(
+async def mock_aigc_media_analysis(
     file_url: str,
     media_type: str = "video",
     *,
@@ -387,10 +475,13 @@ async def mock_deepfake_analysis(
     ]
 
     return {
-        "is_deepfake": False,
+        "is_aigc": False,
+        "is_aigc_manipulated": False,
+        "aigc_probability": fallback_prob,
         "confidence": 0.2,
-        "deepfake_probability": fallback_prob,
         "model": "reality_defender_unavailable",
+        "provider": "local_fallback",
+        "detection_scope": "aigc_media",
         "degraded": True,
         "analysis_available": False,
         "method": "local_fallback_no_external_verdict",
@@ -409,6 +500,39 @@ async def mock_deepfake_analysis(
     }
 
 
+async def mock_deepfake_analysis(
+    file_url: str,
+    media_type: str = "video",
+    *,
+    fallback_reason: str = "mock_mode",
+    api_key_configured: bool = False,
+) -> dict:
+    """Backward-compatible wrapper for older call sites."""
+    return await mock_aigc_media_analysis(
+        file_url,
+        media_type,
+        fallback_reason=fallback_reason,
+        api_key_configured=api_key_configured,
+    )
+
+
 async def analyze_media(file_url: str, media_type: str = "video") -> dict:
     """主入口：优先调用真实 API，不可用时回退到模拟"""
+    provider = (settings.AIGC_IMAGE_PROVIDER or "sightengine").strip().lower()
+    fallback_provider = (settings.AIGC_IMAGE_FALLBACK_PROVIDER or "reality_defender").strip().lower()
+    if media_type == "image" and provider == "sightengine":
+        result = await analyze_with_sightengine(file_url)
+        if (
+            result.get("analysis_available", True)
+            or fallback_provider != "reality_defender"
+            or not settings.REALITY_DEFENDER_API_KEY
+        ):
+            return result
+        fallback = await analyze_with_reality_defender(file_url, media_type)
+        return {
+            **fallback,
+            "primary_provider": "sightengine",
+            "fallback_provider": "reality_defender",
+            "primary_result": result,
+        }
     return await analyze_with_reality_defender(file_url, media_type)

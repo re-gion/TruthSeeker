@@ -20,7 +20,7 @@
 
 - [x] 前端上传改为最多 5 个文件，单文件 500MB。
 - [x] 文本框改为全局检测提示词，不再允许仅凭提示词创建检测任务。
-- [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> Challenger。
+- [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> END。
 - [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
 - [x] Kimi 2.5 作为四 Agent 共享多模态推理基座，禁用 thinking，工具结果 all-settled 后再进入 Agent 推理。
 - [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
@@ -248,7 +248,7 @@
 - [x] 文件上传进度条接入真实进度
 
 ### 2026-04-29 质询、报告与检测页体验修订
-- [x] Challenger 改为 Kimi 结构化质询建议 + 代码硬门槛兜底（Δ(t)<0.08、置信度 >0.8、最少 2 轮、最多 5 轮）
+- [x] Challenger 改为 Kimi 结构化质询建议 + 代码硬门槛兜底（Δ(t)<0.08、置信度 >0.8、最多 5 轮；Commander 完成后不再质询）
 - [x] Forensics / OSINT / Challenger LLM 字段改为 Agent 定制 Markdown 输出，保留模型自主推理段落
 - [x] 报告章节改为逻辑质询、质询时间线、全程审计日志、建议与说明顺延
 - [x] 检测页历史回放合并 agent_logs、timeline_events、audit_logs；时间轴展示 Challenger 局部轮次
@@ -261,6 +261,9 @@
 - [x] `.env.example` 补充官方 API 与 coding plan 的示例配置
 - [x] 检测页右上角改为系统流程展板，按上传输入、创建任务、开始检测、Agent 执行、局部质询轮次、报告生成展示全流程
 - [x] 修复官方 Kimi API 地址归一、K2.5 thinking/temperature 参数风险，以及多轮质询重复调用成功外部工具导致的误降级
+- [x] Forensics / OSINT 接入内部文本 AIGC 检测工具矩阵（不再依赖外部文本检测 API）
+- [x] 公开案例库 Markdown 过滤“关键证据”章节，避免把结构化内部证据对象展示给公众
+- [x] 将新检测链路主字段从旧 `deepfake_*` 迁移到 `aigc_*`，旧字段仅作为历史快照兼容 fallback
 
 ---
 

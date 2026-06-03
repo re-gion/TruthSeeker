@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.consultation_workflow import (
     build_moderator_summary,
     build_consultation_context,
@@ -65,6 +67,19 @@ def test_three_round_trigger_requires_same_target_and_adjacent_delta():
     assert noisy_delta["should_pause"] is False
 
 
+def test_consultation_trigger_is_scoped_to_current_phase():
+    result = evaluate_consultation_trigger(
+        [
+            _challenge(target_agent="forensics", round_number=1),
+            _challenge(target_agent="forensics", round_number=2),
+            _challenge(target_agent="forensics", round_number=3) | {"phase": "osint"},
+        ],
+        existing_sessions=[],
+    )
+
+    assert result["should_pause"] is False
+
+
 def test_repeated_deadlock_requires_user_approval_before_consultation():
     result = evaluate_consultation_trigger(
         [
@@ -124,6 +139,111 @@ def test_consultation_context_deduplicates_high_issues_and_builds_expert_tasks()
     assert len(context["expert_tasks"]) == 1
     assert context["expert_tasks"][0]["target_agent"] == "forensics"
     assert "工具失败" in context["expert_tasks"][0]["question"]
+
+
+def test_consultation_context_keeps_semantic_dedupe_for_commander_llm():
+    trigger = {
+        "reason": "osint 连续低置信",
+        "target_agent": "osint",
+        "recent_challenges": [
+            _challenge(
+                target_agent="osint",
+                round_number=1,
+                high=True,
+            ) | {
+                "issues": [{
+                    "type": "osint_tool_degraded",
+                    "severity": "high",
+                    "agent": "osint",
+                    "description": "WhoisXML域名溯源工具降级（HTTPStatusError 422），导致无法获取moroba.com.br的注册人信息、注册时间、DNS历史及IP归属地。",
+                }]
+            },
+            _challenge(
+                target_agent="osint",
+                round_number=2,
+                high=True,
+            ) | {
+                "issues": [{
+                    "type": "osint_tool_degraded",
+                    "severity": "high",
+                    "agent": "osint",
+                    "description": "WhoisXML域名溯源工具降级（HTTPStatusError 422），未能获取moroba.com.br的注册人信息、注册时间、DNS历史及IP归属地。",
+                }]
+            },
+            _challenge(
+                target_agent="osint",
+                round_number=3,
+                high=True,
+            ) | {
+                "issues": [{
+                    "type": "osint_tool_degraded",
+                    "severity": "high",
+                    "agent": "osint",
+                    "description": "WhoisXML域名溯源工具持续降级（HTTPStatusError 422），导致无法获取moroba.com.br的注册人信息、注册时间、DNS历史及IP归属地。",
+                }]
+            },
+        ],
+    }
+
+    context = build_consultation_context(
+        task_id="task-1",
+        case_prompt="核验钓鱼样本",
+        evidence_files=[],
+        forensics_result={"confidence": 0.82},
+        osint_result={"confidence": 0.61},
+        challenger_feedback={"confidence": 0.38},
+        trigger=trigger,
+    )
+
+    assert len(context["help_needed"]) == 3
+    assert "WhoisXML" in context["help_needed"][0]
+    assert len(context["expert_tasks"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_commander_llm_deduplicates_consultation_help_needed(monkeypatch):
+    from app.agents.tools import llm_client
+
+    async def fake_invoke(*_args, **_kwargs):
+        return """{
+          "help_needed": ["文本检测三轮均指向同一证据链缺口：需要专家判断客服通知文本是否存在 AI 生成或人工模板构造特征。"],
+          "expert_tasks": [{
+            "target_agent": "forensics",
+            "issue_type": "model_challenge",
+            "severity": "high",
+            "question": "请专家判断客服通知文本的生成方式，并说明是否影响图文证据链。",
+            "requested_action": "合并重复问题后给出一到三条补证建议。",
+            "expected_output": "文本生成方式判断、证据链影响、后续补证动作。"
+          }]
+        }"""
+
+    monkeypatch.setattr(llm_client, "_invoke_multimodal_llm", fake_invoke)
+    context = {
+        "help_needed": [
+            "文本AIGC检测因Unicode编码错误降级，无法判定客服通知文本是否为AI生成。",
+            "文本检测工具仍处于降级状态，无法判断客服通知文本是AI生成还是人工撰写。",
+            "连续三轮未能提供文本生成概率评估，图文混合证据链断裂。",
+        ],
+        "expert_tasks": [],
+        "trigger": {"target_agent": "forensics", "reason": "forensics 连续低置信"},
+    }
+
+    result = await llm_client.commander_dedupe_consultation_context(context, case_prompt="核验客服通知")
+
+    assert result["help_needed"] == ["文本检测三轮均指向同一证据链缺口：需要专家判断客服通知文本是否存在 AI 生成或人工模板构造特征。"]
+    assert len(result["expert_tasks"]) == 1
+    assert result["expert_tasks"][0]["target_agent"] == "forensics"
+
+
+def test_consultation_workflow_has_no_text_aigc_api_specific_canonical_rule():
+    from pathlib import Path
+
+    source = Path("app/services/consultation_workflow.py").read_text(encoding="utf-8")
+
+    assert "TEXT_AIGC_DEGRADED_HELP" not in source
+    assert "_is_text_aigc_detector_degraded" not in source
+    assert "_similar_issue_key" not in source
+    assert "aidetectorapi" not in source.lower()
 
 
 def test_moderator_summary_filters_system_messages_and_deduplicates_human_quotes():

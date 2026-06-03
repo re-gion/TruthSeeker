@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-06-01
+> 更新时间：2026-06-02
 
 ## 1. 输入边界
 
@@ -32,7 +32,7 @@
 - `description` 保存 `case_prompt`。
 - `metadata.files` 保存标准化文件清单。
 - `storage_paths.files` 保存文件名、模态和 storage path。
-- `input_type` 由后端根据文件模态推导，混合模态写为 `mixed`。
+- `input_type` 由后端根据文件模态推导，使用 15 个规范组合值：`text`、`image`、`audio`、`video` 四个单模态，双模态、三模态和四模态按 `text_image`、`text_image_video`、`text_image_audio_video` 这类下划线 key 记录；历史 `mixed` 在迁移中统一改为 `text_image`，展示为“图文混合”。
 - 服务端只信任 JWT 中的 `request.state.user_id`。
 
 ## 3. 检测状态机
@@ -49,18 +49,16 @@ flowchart TD
   O --> C2["challenger: 图谱质询"]
   C2 -->|未收敛且未达上限| O
   C2 -->|图谱收敛| M["commander: 研判指挥 Agent"]
-  M --> C3["challenger: 报告审阅"]
-  C3 -->|报告需修订| M
-  C3 -->|审阅通过或到达上限| R["报告生成、hash、审计"]
+  M --> R["报告生成、hash、审计"]
 ```
 
 阶段规则：
 
 - 自主推理先行：四个 Agent 都先基于 Kimi 2.5 原生多模态能力读取可访问样本、文本内容、全局检测目标和证据板，并禁用 thinking，再按角色调用外部工具，最后融合自主推理与工具结果完成任务。
-- `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Kimi 2.5 多模态上下文读取所有样本，同时调用 Reality Defender 和 VirusTotal 等专业工具。
-- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API 与 VirusTotal 追加查询，生成可视化情报溯源图谱。
-- `challenger` 在三个阶段分别审查取证报告、溯源图谱、最终报告。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回。
-- `commander` 生成最终鉴伪与溯源报告。它同样先综合样本、证据板和各 Agent 结论进行自主裁决，再输出最终报告；报告阶段如果被 Challenger 打回，只重写报告，不重新打开取证或搜索工具链。
+- `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Kimi 2.5 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
+- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测与 `text_claim_extract` 结果补充社工诱导和文本来源研判，生成可视化情报溯源图谱。
+- `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。
+- `commander` 生成最终鉴伪与溯源报告。它综合样本、证据板、Challenger 反馈和各 Agent 结论进行自主裁决；裁决完成后直接结束检测，不再进入 Challenger，避免最终报告阶段重复前序质询。
 - 每阶段最多 5 轮，质量变化阈值为 0.08。达到阈值则视为收敛；达到轮次上限仍未完全解决时继续推进，但写入残留风险。
 - 人机会诊触发采用统一门槛：同一目标 Agent 最近 3 轮都存在 high 质询，本轮置信度 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`。首次触发自动暂停为 `waiting_consultation`；同一任务后续再次触发进入 `waiting_consultation_approval`，由用户决定“再次会诊”或“跳过本次”。
 
@@ -99,10 +97,12 @@ flowchart TD
 
 工具策略：
 
-- 首轮全量调用：所有媒体文件进 Reality Defender；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal。
+- 首轮全量调用：图片进 Sightengine `genai`，音视频进 Reality Defender，文本检材进内部 `ai_text_detector` / `text_claim_extract`；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal，URL/域名线索进 WhoisXML 查询 WHOIS 与 DNS 历史。工具层可以保留 provider 原始标签（如 `AI_GENERATED`），但报告、SSE 和持久化裁决不得把图片 AIGC 概率混写成 Deepfake 概率。
 - 后续智能重跑：只重跑失败、降级、被 Challenger 命中或新 IOC 对应的工具。
 - Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
+- VirusTotal URL 检测必须等待 URL analysis `completed` 后才采信新扫描统计；如果提交后的 analysis 仍是 `queued`，会回查 VT 已有 URL 报告的 `last_analysis_stats` 作为补救。同一任务内相同 URL 复用同一个 completed 或历史报告结果，避免 Forensics/OSINT 对同一 URL 得到互相矛盾的“8 家 vs 0 家”统计。
 - 公开案例 RAG 由 Forensics 和 OSINT 作为内部工具调用。语料来自用户授权公开的真实案例和 4 个内置案例 Markdown，使用 pgvector + 全文检索混合召回；命中结果只作为类案参考和复核方向，不直接改变当前裁决分数。
+- 内部文本 AIGC 检测由 Forensics 和 OSINT 作为内部工具调用，融合 Kimi 文本判断、本地句长/词汇/重复/模板化统计和社工诱导特征；输出是概率性线索，不作为单独定性证据。
 - 所有外部工具保留硬超时；超时必须写成结构化失败结果。
 
 ## 6. 情报溯源图谱
@@ -190,9 +190,9 @@ flowchart TD
 - 检测任务完整生成最终报告并写入 `reports`。
 - 全局公开案例中不存在相同文件 SHA-256 集合和相同 `case_prompt` 的案例。
 
-公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的真实案例；`GET /api/v1/cases/{id}` 也支持 `builtin-*` 内置案例详情。预览接口按需从原任务私有文件记录读取 Storage path 并生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告，内置展示案例也可点击查看补齐后的 Markdown 报告。
+公开接口为 `GET /api/v1/cases`、`GET /api/v1/cases/{id}`、`POST /api/v1/cases/{id}/preview-url`。列表和详情匿名可读，只返回 `status='published'` 的真实案例；`GET /api/v1/cases/{id}` 也支持 `builtin-*` 内置案例详情。预览接口按需从原任务私有文件记录读取 Storage path 并生成 10 分钟 signed URL，数据库不保存永久公开链接。前端 `/cases` 支持全部、文本生成、图像伪造、图文混合、音频伪造、视频伪造分类筛选和分页，`/cases/[id]` 渲染 Markdown 研判报告，内置展示案例也可点击查看补齐后的 Markdown 报告。公开案例 Markdown 会过滤“关键证据”章节，只保留裁决、摘要、处置建议等对公众有解释价值的内容；检测台正式报告不受影响。
 
-公开案例 RAG 使用 `case_library_rag_chunks` 保存真实公开案例和内置案例的 Markdown 分块、1024 维 embedding、分类/裁决元数据和全文索引。默认 embedding 服务为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`，配置项为 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`CASE_RAG_ENABLED` 和 `CASE_RAG_TOP_K`。新增公开案例生成完整报告后会尝试自动索引；历史案例和内置案例可用 `python scripts/rebuild_case_rag_index.py --include-builtin --include-public` 回填。
+公开案例 RAG 使用 `case_library_rag_chunks` 保存真实公开案例和内置案例的 Markdown 分块、1024 维 embedding、分类/裁决元数据和全文索引。默认 embedding 服务为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`，配置项为 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`CASE_RAG_ENABLED` 和 `CASE_RAG_TOP_K`。新增公开案例生成完整报告后会尝试自动索引；历史案例和内置案例可用 `python scripts/rebuild_case_rag_index.py --include-builtin --include-public` 回填。删除公开案例时必须同步删除 `source_kind=public` 且同 `case_id` 的 RAG chunks；历史遗留 chunks 可用 `python scripts/delete_public_case_rag_chunks.py --title-contains "案例标题" --apply` 清理。
 
 ## 10. 暂不实现
 

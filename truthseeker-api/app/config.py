@@ -19,6 +19,11 @@ def _read_kimi_env() -> dict[str, str]:
         "KIMI_SILICONFLOW_API_KEY", "KIMI_SILICONFLOW_BASE_URL", "KIMI_SILICONFLOW_MODEL",
         "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
         "EMBEDDING_DIMENSIONS", "CASE_RAG_ENABLED", "CASE_RAG_TOP_K",
+        "AIGC_IMAGE_PROVIDER", "AIGC_IMAGE_FALLBACK_PROVIDER",
+        "SIGHTENGINE_API_USER", "SIGHTENGINE_API_SECRET",
+        "WHOISXML_API_KEY", "DOMAIN_PROVENANCE_ENABLED", "WHOISXML_TIMEOUT_SECONDS",
+        "TEXT_AIGC_DETECTOR_ENABLED",
+        "TEXT_AIGC_AI_THRESHOLD",
     ):
         value = raw.get(key)
         if value is not None:
@@ -95,6 +100,13 @@ class Settings(BaseSettings):
         default="https://api.exa.ai",
         validation_alias=AliasChoices("EXA_BASE_URL", "Exa_Base_URL"),
     )
+    AIGC_IMAGE_PROVIDER: str = Field(default="sightengine", validation_alias=AliasChoices("AIGC_IMAGE_PROVIDER"))
+    AIGC_IMAGE_FALLBACK_PROVIDER: str = Field(default="reality_defender", validation_alias=AliasChoices("AIGC_IMAGE_FALLBACK_PROVIDER"))
+    SIGHTENGINE_API_USER: str = Field(default="", validation_alias=AliasChoices("SIGHTENGINE_API_USER", "Sightengine_API_User"))
+    SIGHTENGINE_API_SECRET: str = Field(default="", validation_alias=AliasChoices("SIGHTENGINE_API_SECRET", "Sightengine_API_Secret"))
+    WHOISXML_API_KEY: str = Field(default="", validation_alias=AliasChoices("WHOISXML_API_KEY", "WhoisXML_API_KEY"))
+    DOMAIN_PROVENANCE_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("DOMAIN_PROVENANCE_ENABLED"))
+    WHOISXML_TIMEOUT_SECONDS: float = Field(default=20.0, validation_alias=AliasChoices("WHOISXML_TIMEOUT_SECONDS"))
 
     # Public case RAG embeddings. Defaults target SiliconFlow's OpenAI-compatible embeddings API.
     EMBEDDING_BASE_URL: str = Field(
@@ -119,6 +131,8 @@ class Settings(BaseSettings):
     CONSULTATION_STUCK_ROUNDS: int = 3
     CONSULTATION_CONFIDENCE_THRESHOLD: float = 0.8
     CONSULTATION_DELTA_THRESHOLD: float = 0.08
+    TEXT_AIGC_DETECTOR_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("TEXT_AIGC_DETECTOR_ENABLED", "Text_AIGC_Detector_Enabled"))
+    TEXT_AIGC_AI_THRESHOLD: float = Field(default=0.6, validation_alias=AliasChoices("TEXT_AIGC_AI_THRESHOLD", "Text_AIGC_AI_Threshold"))
     REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
     REALITY_DEFENDER_UPLOAD_TIMEOUT_SECONDS: float = 60.0
     REALITY_DEFENDER_CLIENT_TIMEOUT_SECONDS: float = 240.0

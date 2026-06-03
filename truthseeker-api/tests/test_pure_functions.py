@@ -118,8 +118,9 @@ class ParseRdResultTests(unittest.TestCase):
             "requestId": "req-123",
         }
         result = _parse_rd_result(rd_data)
-        self.assertTrue(result["is_deepfake"])
-        self.assertAlmostEqual(result["deepfake_probability"], 0.85)
+        self.assertTrue(result["is_aigc"])
+        self.assertAlmostEqual(result["aigc_probability"], 0.85)
+        self.assertNotIn("deepfake_probability", result)
         self.assertAlmostEqual(result["confidence"], 0.85)
         self.assertEqual(result["model"], "reality_defender")
         self.assertEqual(len(result["models"]), 1)
@@ -130,20 +131,20 @@ class ParseRdResultTests(unittest.TestCase):
             "models": [{"name": "m1", "score": 0.3, "label": "REAL"}],
         }
         result = _parse_rd_result(rd_data)
-        self.assertFalse(result["is_deepfake"])
-        self.assertAlmostEqual(result["deepfake_probability"], 0.3)
+        self.assertFalse(result["is_aigc"])
+        self.assertAlmostEqual(result["aigc_probability"], 0.3)
         self.assertAlmostEqual(result["confidence"], 0.7)  # 1 - 0.3
 
     def test_fallback_to_top_level(self):
         rd_data = {"score": 0.6, "label": "FAKE"}
         result = _parse_rd_result(rd_data)
-        self.assertTrue(result["is_deepfake"])
-        self.assertAlmostEqual(result["deepfake_probability"], 0.6)
+        self.assertTrue(result["is_aigc"])
+        self.assertAlmostEqual(result["aigc_probability"], 0.6)
 
     def test_empty_data(self):
         result = _parse_rd_result({})
-        self.assertFalse(result["is_deepfake"])
-        self.assertAlmostEqual(result["deepfake_probability"], 0.0)
+        self.assertFalse(result["is_aigc"])
+        self.assertAlmostEqual(result["aigc_probability"], 0.0)
         self.assertEqual(result["models"], [])
         self.assertEqual(result["frame_inferences"], [])
 
@@ -195,7 +196,9 @@ class DegradationManagerTests(unittest.TestCase):
 class MinimalResultTests(unittest.TestCase):
     def test_minimal_forensics(self):
         result = minimal_forensics_result("video")
-        self.assertFalse(result["is_deepfake"])
+        self.assertFalse(result["is_aigc"])
+        self.assertAlmostEqual(result["aigc_probability"], 0.0)
+        self.assertNotIn("deepfake_probability", result)
         self.assertAlmostEqual(result["confidence"], 0.2)
         self.assertTrue(result["degraded"])
         self.assertEqual(result["degradation_level"], "minimal")

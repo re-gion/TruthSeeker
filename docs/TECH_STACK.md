@@ -74,9 +74,18 @@ SUPABASE_ANON_KEY=
 SUPABASE_JWT_SECRET=NOT_SET
 
 REALITY_DEFENDER_API_KEY=
+AIGC_IMAGE_PROVIDER=sightengine
+AIGC_IMAGE_FALLBACK_PROVIDER=reality_defender
+SIGHTENGINE_API_USER=
+SIGHTENGINE_API_SECRET=
 VIRUSTOTAL_API_KEY=
 EXA_API_KEY=
 EXA_BASE_URL=https://api.exa.ai
+DOMAIN_PROVENANCE_ENABLED=true
+WHOISXML_API_KEY=
+WHOISXML_TIMEOUT_SECONDS=20
+TEXT_AIGC_DETECTOR_ENABLED=true
+TEXT_AIGC_AI_THRESHOLD=0.6
 KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
@@ -106,12 +115,18 @@ CONVERGENCE_THRESHOLD=0.08
 - `Virus_Total`
 - `Kimi_API_KEY`
 - `Kimi_Base_URL`
+- `Sightengine_API_User`
+- `Sightengine_API_Secret`
+- `WhoisXML_API_KEY`
 
 `APP_ENV=production` 时 `SUPABASE_JWT_SECRET` 不能为 `NOT_SET`，否则后端会拒绝启动。
 
 ## 备注
 
 - 四个 Agent 共享 Kimi 2.5 原生多模态推理基座，调用时禁用 thinking；运行时可通过 `KIMI_PROVIDER=official|coding` 在官方 API 与 Kimi coding plan 之间切换；两种方式都只配置 Kimi 2.5，不再配置 `moonshot-v1-128k` 模型回退。
+- 图片 AIGC 检测默认使用 Sightengine `genai`，通过 `AIGC_IMAGE_PROVIDER=sightengine`、`SIGHTENGINE_API_USER` 和 `SIGHTENGINE_API_SECRET` 启用；Reality Defender 保留为音视频合成/篡改检测和图片检测降级备份。系统主字段使用 `aigc_*`，不再把图片 `AI_GENERATED` 结果上浮为 Deepfake 概率。
+- 文本 AIGC 检测使用内部工具，通过 `TEXT_AIGC_DETECTOR_ENABLED=true` 和 `TEXT_AIGC_AI_THRESHOLD` 控制。Forensics/OSINT 都会把结果以 `ai_text_detector` 写入工具矩阵，融合 Kimi 文本判断、本地统计特征和社工诱导特征；结果只作为概率性线索，不单独定性。
+- 域名溯源使用 WhoisXML WHOIS + DNS History，通过 `DOMAIN_PROVENANCE_ENABLED=true` 和 `WHOISXML_API_KEY` 启用；未配置 key 时 OSINT 会记录结构化降级。
 - 公开案例库 RAG 使用独立 embedding 配置，默认接入 SiliconFlow OpenAI-compatible `POST /v1/embeddings`，模型为 `Qwen/Qwen3-VL-Embedding-8B`，维度固定 1024。只需在本地 `.env` 填入 `EMBEDDING_API_KEY` 并运行迁移/回填脚本即可启用。
-- 当前运行时是 Kimi 2.5 自主推理 + 外部检测 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
+- 当前运行时是 Kimi 2.5 自主推理 + 内部文本/案例工具 + 外部媒体与情报 API + LangGraph 的 FedPaRS-compatible 架构；FedPaRS 训练/推理底座仍是可替换检测器方向。
 - 不要把真实密钥提交到仓库，只保留示例文件和本地 `.env` / `.env.local`。

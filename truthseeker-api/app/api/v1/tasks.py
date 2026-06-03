@@ -26,6 +26,21 @@ def _get_supabase():
     return supabase
 
 
+def _is_input_type_constraint_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    return "23514" in text and "tasks_input_type_check" in text
+
+
+def _task_create_error_detail(exc: Exception) -> str:
+    if _is_input_type_constraint_error(exc):
+        return (
+            "任务输入类型已生成新规范值，但数据库 tasks_input_type_check 约束尚未迁移。"
+            "请先执行 truthseeker-api/sql/migrations/20260603_input_type_combinations.sql，"
+            "该迁移会把历史 mixed 更新为 text_image 并允许 15 个输入类型。"
+        )
+    return "Failed to create task"
+
+
 class CreateTaskRequest(BaseModel):
     title: str = "Untitled Task"
     input_type: str = "video"
@@ -128,7 +143,7 @@ async def create_task(req: CreateTaskRequest, request: Request):
         raise
     except Exception as e:
         logger.error("Error creating task: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to create task")
+        raise HTTPException(status_code=500, detail=_task_create_error_detail(e))
 
 
 @router.get("/{task_id}", response_model=TaskResponse)

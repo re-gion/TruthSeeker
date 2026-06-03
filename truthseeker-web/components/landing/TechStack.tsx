@@ -6,7 +6,7 @@ export function TechStack() {
     const categories = [
         {
             name: "前端",
-            tools: ["Next.js 15", "React 19", "Tailwind v4", "R3F", "Motion v12", "shadcn/ui"]
+            tools: ["Next.js 16", "React 19", "Tailwind v4", "R3F", "Motion v12", "shadcn/ui"]
         },
         {
             name: "后端与编排",
@@ -18,7 +18,7 @@ export function TechStack() {
         },
         {
             name: "Agent与检测工具",
-            tools: ["Kimi-K2.5", "Qwen3-VL", "Reality Defender", "VirusTotal", "Multi-Agent Debate"]
+            tools: ["Kimi-K2.5", "Sightengine", "Reality Defender", "VirusTotal", "WhoisXML"]
         }
     ]
 

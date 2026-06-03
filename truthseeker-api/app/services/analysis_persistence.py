@@ -22,11 +22,13 @@ def normalize_final_verdict(final_verdict: dict[str, Any] | None) -> dict[str, A
     llm_ruling = verdict.get("llm_ruling", "")
     key_evidence = verdict.get("key_evidence") or []
     agent_weights = verdict.get("agent_weights", verdict.get("agent_weights_used", {}))
+    aigc_score = verdict.get("aigc_score", verdict.get("deepfake_score"))
 
     normalized = {
         **verdict,
         "confidence": confidence,
         "confidence_overall": confidence,
+        "aigc_score": aigc_score,
         "verdict_label": verdict.get("verdict", verdict.get("verdict_label", "inconclusive")),
         "analysis_summary": verdict.get("analysis_summary") or llm_ruling,
         "agent_weights": agent_weights,
@@ -34,6 +36,7 @@ def normalize_final_verdict(final_verdict: dict[str, Any] | None) -> dict[str, A
         "key_evidence": key_evidence,
         "total_evidence": len(key_evidence),
     }
+    normalized.pop("deepfake_score", None)
     return normalized
 
 

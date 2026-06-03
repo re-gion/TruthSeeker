@@ -10,6 +10,8 @@ import httpx
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.llm_client import build_sample_references, osint_interpret
+from app.agents.tools.domain_provenance import analyze_domain_provenance
+from app.agents.tools.internal_text_aigc import detect_ai_generated_text
 from app.agents.tools.osint_search import build_deidentified_queries, search_osint
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
@@ -30,6 +32,56 @@ def _now() -> str:
 
 def _tool_key(result: dict[str, Any]) -> tuple[str, str]:
     return str(result.get("tool", "")), str(result.get("target", ""))
+
+
+def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_analysis: dict[str, Any]) -> dict[str, Any] | None:
+    feedback = state.get("challenger_feedback") or {}
+    consultation_summary = state.get("confirmed_consultation_summary")
+    feedback_phase = str(feedback.get("phase") or "")
+    target_agent = str(feedback.get("target_agent") or feedback_phase or "")
+    feedback_relevant = target_agent == agent or feedback_phase == agent
+    summary_target = ""
+    if isinstance(consultation_summary, dict):
+        summary_target = str(consultation_summary.get("target_agent") or consultation_summary.get("phase") or "")
+    summary_relevant = bool(consultation_summary) and (summary_target == agent or (not summary_target and feedback_relevant))
+    consultation_summary_text = (
+        consultation_summary.get("confirmed_summary")
+        if isinstance(consultation_summary, dict)
+        else consultation_summary
+    )
+    previous_analysis_text = (
+        previous_analysis.get("llm_analysis")
+        or previous_analysis.get("analysis_summary")
+        or previous_analysis.get("summary")
+        if isinstance(previous_analysis, dict)
+        else previous_analysis
+    )
+    issues = [issue for issue in (feedback.get("issues_found") or []) if isinstance(issue, dict)]
+    relevant_issues = [
+        issue for issue in issues
+        if not issue.get("agent") or issue.get("agent") == agent or target_agent == agent
+    ]
+    has_feedback = bool(
+        relevant_issues
+        or (feedback_relevant and feedback.get("llm_cross_validation"))
+        or (feedback_relevant and feedback.get("residual_risks"))
+        or summary_relevant
+    )
+    if not has_feedback:
+        return None
+    return {
+        "target_agent": agent,
+        "challenger_phase": feedback.get("phase"),
+        "challenger_confidence": feedback.get("confidence"),
+        "challenger_issues": relevant_issues or issues,
+        "llm_cross_validation": feedback.get("llm_cross_validation"),
+        "residual_risks": feedback.get("residual_risks") or [],
+        "consultation_summary": consultation_summary_text if summary_relevant else None,
+        "consultation_summary_payload": consultation_summary if summary_relevant else None,
+        "previous_analysis": previous_analysis_text,
+        "previous_analysis_payload": previous_analysis,
+        "instruction": "本轮只针对 Challenger 打回点和会诊摘要补强，不重复上一轮完整报告。",
+    }
 
 
 def _all_evidence_files(state: TruthSeekerState) -> list[dict[str, Any]]:
@@ -115,6 +167,11 @@ def _summarize_tool(tool: str, result: dict[str, Any]) -> str:
     if tool == "virustotal_osint_ioc":
         vt = result.get("virustotal") or {}
         return f"VT threat_score={result.get('threat_score', 0):.2f}, malicious={vt.get('malicious', 0)}"
+    if tool == "whoisxml_domain_provenance":
+        return result.get("summary") or f"domain={result.get('domain', 'unknown')}, status={result.get('status')}"
+    if tool == "ai_text_detector":
+        provider = result.get("provider") or "external"
+        return result.get("summary") or f"{provider} AI probability={result.get('ai_probability', 0):.2f}"
     if tool == "text_claim_extract":
         return f"claims={len(result.get('key_claims') or [])}, ai_probability={result.get('ai_probability', 0):.2f}"
     return "工具完成"
@@ -237,6 +294,14 @@ async def osint_node(state: TruthSeekerState) -> dict:
             )
             tool_results.append(text_tool)
         text_analysis_result = text_tool.get("result") if isinstance(text_tool.get("result"), dict) else None
+        if not maybe_reuse("ai_text_detector", "uploaded_text"):
+            text_aigc_tool = await _settle_tool(
+                tool="ai_text_detector",
+                target="uploaded_text",
+                coro=detect_ai_generated_text(combined, target="uploaded_text"),
+                timeout=45.0,
+            )
+            tool_results.append(text_aigc_tool)
 
     urls_to_check = list(dict.fromkeys(urls_to_check))
     vt_tasks = [
@@ -253,15 +318,37 @@ async def osint_node(state: TruthSeekerState) -> dict:
         log("action", f"正在查询 {len(vt_tasks)} 个 URL/域名 IOC 的 VirusTotal 情报")
         tool_results.extend(await asyncio.gather(*vt_tasks))
 
+    domain_tasks = [
+        _settle_tool(
+            tool="whoisxml_domain_provenance",
+            target=url,
+            coro=analyze_domain_provenance(url),
+            timeout=30.0,
+        )
+        for url in urls_to_check[:5]
+        if not maybe_reuse("whoisxml_domain_provenance", url)
+    ]
+    if domain_tasks:
+        log("action", f"正在查询 {len(domain_tasks)} 个 URL/域名的 WhoisXML 注册与 DNS 历史")
+        tool_results.extend(await asyncio.gather(*domain_tasks))
+
     threat_indicators: list[str] = []
     vt_threat_score = 0.0
     virustotal_summaries: list[dict[str, Any]] = []
+    domain_provenance_summaries: list[dict[str, Any]] = []
+    text_aigc_detection: dict[str, Any] | None = None
     for item in tool_results:
         result = item.get("result") or {}
         if item.get("tool") == "virustotal_osint_ioc":
             vt_threat_score = max(vt_threat_score, float(result.get("threat_score", 0.0) or 0.0))
             threat_indicators.extend(str(v) for v in result.get("indicators") or [])
             virustotal_summaries.append(result)
+        if item.get("tool") == "whoisxml_domain_provenance":
+            domain_provenance_summaries.append(result)
+            if result.get("summary"):
+                threat_indicators.append(str(result["summary"]))
+        if item.get("tool") == "ai_text_detector" and result.get("status") == "success":
+            text_aigc_detection = result
 
     if text_analysis_result:
         ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
@@ -273,6 +360,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
             threat_indicators.append(f"文本社工诱导风险高 ({social_score:.1%})")
         threat_indicators.extend(str(v) for v in (social.get("indicators") or [])[:5])
         threat_indicators.extend(str(v) for v in (text_analysis_result.get("anomalies") or [])[:3])
+    if text_aigc_detection:
+        external_text_prob = float(text_aigc_detection.get("ai_probability", 0.0) or 0.0)
+        if external_text_prob >= 0.6:
+            provider = text_aigc_detection.get("provider") or "外部工具"
+            threat_indicators.append(f"{provider} 文本 AI 生成概率高 ({external_text_prob:.1%})")
 
     queries = build_deidentified_queries(
         case_prompt=case_prompt,
@@ -303,6 +395,9 @@ async def osint_node(state: TruthSeekerState) -> dict:
         text_manipulation_score = float(text_analysis_result.get("manipulation_score", 0.0) or 0.0)
         ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
         text_ai_score = 0.55 if ai_prob >= 0.75 and urls_to_check else 0.0
+    if text_aigc_detection:
+        external_text_prob = float(text_aigc_detection.get("ai_probability", 0.0) or 0.0)
+        text_ai_score = max(text_ai_score, external_text_prob * 0.5)
     text_risk_score = max(text_social_score, text_manipulation_score, text_ai_score)
     threat_score = min(1.0, max(vt_threat_score, exa_signal, text_risk_score))
     if not threat_indicators and search_results:
@@ -354,9 +449,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "confidence": osint_confidence,
         "threat_indicators": threat_indicators,
         "virustotal_summary": virustotal_summaries,
+        "domain_provenance_summary": domain_provenance_summaries,
         "search_results": search_results,
         "search_queries": queries,
         "text_analysis": text_analysis_result,
+        "text_aigc_detection": text_aigc_detection,
         "text_samples": text_samples,
         "model_claims": model_claims,
         "tool_results": tool_results,
@@ -373,6 +470,10 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "degraded": degraded,
         "timestamp": _now(),
     }
+    reinforcement_context = _build_reinforcement_context(state, "osint", state.get("osint_result") or {})
+    if reinforcement_context:
+        partial_result["reinforcement_context"] = reinforcement_context
+        log("thinking", "读取 Challenger/会诊反馈，按打回点补强情报溯源分析")
 
     log("action", "正在调用 Kimi 进行情报归纳与溯源图谱解释")
     llm_analysis = await osint_interpret(partial_result, input_type, case_prompt, sample_refs)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { getCasebaseFileSizeError, getUploadErrorMessage } from "./FileUploader"
+import { deriveInputType, getCasebaseFileSizeError, getUploadErrorMessage } from "./FileUploader"
 
 describe("getUploadErrorMessage", () => {
   it("explains backend connectivity failures instead of showing raw Failed to fetch", () => {
@@ -19,5 +19,19 @@ describe("getCasebaseFileSizeError", () => {
 
     expect(getCasebaseFileSizeError([largeFile], true)).toContain("公开案例库")
     expect(getCasebaseFileSizeError([largeFile], false)).toBeNull()
+  })
+})
+
+describe("deriveInputType", () => {
+  it("returns canonical modality combinations instead of mixed", () => {
+    expect(deriveInputType([
+      { id: "1", name: "notice.png", mime_type: "image/png", size_bytes: 1, modality: "image", storage_path: "a" },
+      { id: "2", name: "claim.txt", mime_type: "text/plain", size_bytes: 1, modality: "text", storage_path: "b" },
+    ])).toBe("text_image")
+
+    expect(deriveInputType([
+      { id: "1", name: "voice.mp3", mime_type: "audio/mpeg", size_bytes: 1, modality: "audio", storage_path: "a" },
+      { id: "2", name: "clip.mp4", mime_type: "video/mp4", size_bytes: 1, modality: "video", storage_path: "b" },
+    ])).toBe("audio_video")
   })
 })

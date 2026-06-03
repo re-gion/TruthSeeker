@@ -79,6 +79,7 @@ export interface DashboardSankeyLink {
   source: string
   target: string
   value: number
+  color?: string
 }
 
 export interface DashboardViewModel {
@@ -123,6 +124,10 @@ export interface DashboardApiResponse {
 type FetchLike = typeof fetch
 
 const HIGH_RISK_VERDICT_ALIASES = [
+  "aigc",
+  "ai_generated",
+  "ai-generated",
+  "generated",
   "fake",
   "forged",
   "deepfake",
@@ -388,10 +393,12 @@ function normalizeSankey(payload: DashboardApiResponse["flow_sankey"]): Dashboar
         .map((link) => {
           const record = readRecord(link)
           if (!record) return null
+          const color = readString(record.color)
           return {
             source: readString(record.source),
             target: readString(record.target),
             value: Math.max(0, Math.round(toNumber(record.value) ?? 0)),
+            ...(color ? { color } : {}),
           }
         })
         .filter(

@@ -62,6 +62,22 @@ describe("public case library mapping", () => {
     expect(detail.reportMarkdown).toContain("董事长语音诈骗")
   })
 
+  it("normalizes legacy AIGC and deepfake verdict aliases for public cases", () => {
+    expect(normalizeCaseDetail({
+      id: "case-ai",
+      verdict: "AI_GENERATED",
+      public_files: [],
+    }).verdictLabel).toBe("疑似 AIGC")
+
+    const detail = normalizeCaseDetail({
+      id: "case-deepfake",
+      verdict: "deepfake",
+      public_files: [],
+    })
+    expect(detail.verdict).toBe("forged")
+    expect(detail.verdictLabel).toBe("确认伪造")
+  })
+
   it("fetches list/detail/preview endpoints with the expected public API shape", async () => {
     const fetchMock = vi
       .fn()
@@ -75,7 +91,12 @@ describe("public case library mapping", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ signed_url: "https://storage.example/file", expires_in: 600 }),
+        json: async () => ({
+          signed_url: "https://storage.example/file",
+          expires_in: 600,
+          preview_kind: "text",
+          text_url: "/api/v1/cases/case-1/files/file-1/text",
+        }),
       })
 
     await getCaseList({ category: "video_forgery", page: 2, pageSize: 3 }, fetchMock as unknown as typeof fetch)
@@ -92,5 +113,7 @@ describe("public case library mapping", () => {
       body: JSON.stringify({ file_id: "file-1" }),
     })
     expect(preview.signedUrl).toBe("https://storage.example/file")
+    expect(preview.previewKind).toBe("text")
+    expect(preview.textUrl).toBe("http://localhost:8000/api/v1/cases/case-1/files/file-1/text")
   })
 })
