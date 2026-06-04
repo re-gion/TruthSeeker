@@ -34,7 +34,14 @@
 | 2026-06-02 | 后端/VirusTotal URL 扫描 | VT URL 新提交扫描可能长时间 `queued`，短轮询结束后会出现 `analysis_queued` 且没有厂商统计 | queued 时不要把空统计当 0 检出；应补充回查 `/api/v3/urls/{url_id}` 的既有 `last_analysis_stats`，仍无结果才标记 `scan_available=false` |
 | 2026-06-03 | 后端/Challenger 会诊恢复 | `resume_after_consultation` 如果被当作自动放行，会导致仍需补证的阶段直接跳到下一 Agent；跨阶段复用 `consultation_trigger_history` 还会让 OSINT 阶段错误触发 forensics 会诊 | 会诊恢复载荷要先注入本轮 Challenger 上下文，只有 `skip_consultation` 才强制放行；会诊触发必须按当前 `phase == target_agent` 的连续记录计算 |
 | 2026-06-03 | 后端/文本 AIGC 与会诊上下文 | 同一问题连续三轮由 LLM 改写后会污染“需要帮助”字段；按某个案例写死 canonical 规则会过拟合 | Commander 在启动专家会诊时调用 LLM 对 `help_needed` 语义合并，LLM 不可用才用通用相似度兜底；不要按单个工具/API 错误写死关键词规则 |
+| 2026-06-03 | 后端/会诊轮次与摘要 | 第 5 轮仍触发会诊会造成专家回复无法再补强，因为再推理会变成第 6 轮；结束会诊时只拼接聊天记录也不是摘要 | 每个目标 Agent 最多在第 3/4 轮触发两次会诊，第 5 轮直接放行并保留残留风险；结束会诊必须由 Commander LLM 总结 `help_needed`、专家任务和对话，固定结构只做降级兜底 |
 | 2026-06-03 | 后端/AIGC 字段命名 | 图片 `AI_GENERATED`、音视频合成篡改和旧 Deepfake provider 字段混用，会让报告把 AIGC 概率误写成 Deepfake 概率 | 新运行时主字段统一用 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_*` 只作为历史 JSONB 读取 fallback，不能进入新报告主字段或用户可见术语 |
+| 2026-06-04 | 个人经验库/会诊摘要 | 会诊结束时生成的个人经验草稿如果只挂在 `summary_pending` payload 上，用户确认摘要时可能被重建的 `summary_payload` 覆盖丢失 | 摘要确认必须保留已有 `experience_drafts`；个人经验入库必须由用户单独确认，并在生成草稿和确认入库两处都做相似/重复过滤 |
+| 2026-06-04 | 后端/Agent LLM provider | 给四 Agent 底层全模态模型新增 provider 时，容易误改检测 API、embedding API、输出长度或沿用普通 Bearer 鉴权头 | `AGENT_LLM_PROVIDER` 只控制 Agent LLM 模型家族；K2.5 渠道由 `KIMI_PROVIDER` 控制；`mimo` 使用 `MIMO_BASE_URL`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5` 和 `MIMO_THINKING=enabled|disabled`，小米 Token Plan 需要 `api-key` 请求头；TruthSeeker 单次输出上限由 `AGENT_LLM_MAX_OUTPUT_TOKENS` 控制；Sightengine、Reality Defender、VirusTotal、Exa 和 `EMBEDDING_*` 保持独立 |
+| 2026-06-04 | 后端/WhoisXML 报告统计 | WhoisXML WHOIS 成功但 DNS Lookup/IP Geolocation 403 时，如果把 `partial` 包装成 `degraded`，报告会出现“成功 5/7、降级 1、失败 0”这类不闭合口径，还会把部分可用误写成失败；默认链路不应再调用消耗 DRS 额度的 DNS History | OSINT 包装层保留 `partial`；报告用“可用/完整成功/部分可用/其他/降级/失败”展示；域名溯源默认用 WHOIS + DNS Lookup 当前 A/AAAA/CNAME + IP Geolocation，403 说明为对应 WhoisXML 子产品权限或额度受限 |
+| 2026-06-04 | 后端/SSE 幂等 | 已完成或正在分析的任务如果刷新、热重载或 SSE 重连后再次 POST `/detect/stream`，没有终态保护和运行锁会把同一 `task_id` 从 Forensics 开始重跑，覆盖报告并污染时间线 | `status=completed` 且非 `resume=true` 时必须直接复用 `reports.verdict_payload`、`tasks.result` 或 `analysis_states` 的最终裁决；`status=analyzing` 且已有 `active_detection_run_id` 时拒绝新的非恢复启动；报告/审计按最终 `detection_run_id` 过滤，只展示最终有效运行 |
+| 2026-06-04 | 后端/Agent 报告日期推理 | LLM 会把样本日期和分析时间的先后关系判反，例如把 2026-04-22 误称为相对 2026-06-04 的未来日期 | 日期先后关系必须由代码生成确定性时间校验表后注入 Forensics/OSINT 提示词；LLM 不得输出与校验表相反的判断 |
+| 2026-06-04 | 后端/OSINT 文本工具边界 | `text_claim_extract` 如果继续暴露 `ai_probability`，会和内部 `ai_text_detector` 的正式文本 AIGC 概率混淆，报告读者无法判断哪个才是准确信号 | `text_claim_extract` 只保留社工风险 claim、诱导话术、URL 和异常线索；文本 AIGC 概率只由 `ai_text_detector` 输出和参与 AIGC 风险评分 |
 
 ---
 

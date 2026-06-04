@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 MAX_INTERNAL_TEXT_AIGC_CHARS = 50_000
 TEXT_AIGC_TOOL_NAME = "ai_text_detector"
 INTERNAL_TEXT_AIGC_PROVIDER = "internal_text_detector"
+_TEXT_AIGC_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _now() -> str:
@@ -26,10 +29,19 @@ def _clamp_score(value: Any, fallback: float = 0.0) -> float:
         return fallback
 
 
+def normalize_text_for_detection(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def text_fingerprint(text: str) -> str:
+    normalized = normalize_text_for_detection(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 async def detect_ai_generated_text(text: str, *, target: str = "uploaded_text") -> dict[str, Any]:
     """Run the built-in text detector and normalize it as an agent tool result."""
     started_at = _now()
-    normalized_text = (text or "").strip()
+    normalized_text = normalize_text_for_detection(text)
     if not settings.TEXT_AIGC_DETECTOR_ENABLED:
         return {
             "tool": TEXT_AIGC_TOOL_NAME,
@@ -58,7 +70,17 @@ async def detect_ai_generated_text(text: str, *, target: str = "uploaded_text") 
         }
 
     try:
-        internal = await analyze_text(normalized_text[:MAX_INTERNAL_TEXT_AIGC_CHARS])
+        fingerprint = text_fingerprint(normalized_text[:MAX_INTERNAL_TEXT_AIGC_CHARS])
+        cached = _TEXT_AIGC_CACHE.get(fingerprint)
+        if cached:
+            return {
+                **cached,
+                "target": target,
+                "cache_hit": True,
+                "started_at": started_at,
+                "completed_at": _now(),
+            }
+        internal = await analyze_text(normalized_text[:MAX_INTERNAL_TEXT_AIGC_CHARS], use_llm=False)
     except Exception as exc:
         logger.warning("Internal text AIGC detector failed for %s: %s", target, exc)
         return {
@@ -79,7 +101,7 @@ async def detect_ai_generated_text(text: str, *, target: str = "uploaded_text") 
     confidence = _clamp_score(internal.get("confidence"), 0.5)
     is_ai_generated = bool(internal.get("is_ai_generated", ai_probability >= settings.TEXT_AIGC_AI_THRESHOLD))
     degraded = bool(internal.get("degraded"))
-    return {
+    payload = {
         "tool": TEXT_AIGC_TOOL_NAME,
         "provider": INTERNAL_TEXT_AIGC_PROVIDER,
         "target": target,
@@ -91,6 +113,9 @@ async def detect_ai_generated_text(text: str, *, target: str = "uploaded_text") 
         "is_ai_generated": is_ai_generated,
         "ai_probability": ai_probability,
         "confidence": round(confidence, 4),
+        "text_fingerprint": fingerprint,
+        "deterministic": True,
+        "llm_used": False,
         "manipulation_score": _clamp_score(internal.get("manipulation_score"), 0.0),
         "social_engineering_score": _clamp_score((internal.get("social_engineering") or {}).get("score"), 0.0),
         "local_ai_score": _clamp_score(internal.get("local_ai_score"), 0.0),
@@ -105,3 +130,5 @@ async def detect_ai_generated_text(text: str, *, target: str = "uploaded_text") 
         "started_at": started_at,
         "completed_at": _now(),
     }
+    _TEXT_AIGC_CACHE[fingerprint] = dict(payload)
+    return payload

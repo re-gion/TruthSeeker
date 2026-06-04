@@ -6,12 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable
 
-import httpx
-
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.llm_client import build_sample_references, osint_interpret
 from app.agents.tools.domain_provenance import analyze_domain_provenance
-from app.agents.tools.internal_text_aigc import detect_ai_generated_text
+from app.agents.tools.internal_text_aigc import detect_ai_generated_text, text_fingerprint
 from app.agents.tools.osint_search import build_deidentified_queries, search_osint
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
@@ -19,6 +17,8 @@ from app.agents.tools.threat_intel import analyze_urls
 from app.services.audit_log import record_audit_event
 from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
+from app.services.evidence_access import download_evidence_bytes
+from app.services.experience_library import experience_rag_search
 from app.services.text_validation import decode_text_bytes
 
 logger = logging.getLogger(__name__)
@@ -102,10 +102,8 @@ async def _read_text_sample(file_info: dict[str, Any]) -> dict[str, str]:
     url = file_info.get("file_url") or file_info.get("storage_path")
     if not isinstance(url, str) or not url or url.startswith("mock://"):
         return {"text": "", "encoding": "", "charset": ""}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, follow_redirects=True)
-        resp.raise_for_status()
-        return decode_text_bytes(resp.content, max_chars=TEXT_MAX_CHARS)
+    content, _ = await download_evidence_bytes(url, timeout=30.0)
+    return decode_text_bytes(content, max_chars=TEXT_MAX_CHARS)
 
 
 async def _settle_tool(
@@ -120,16 +118,16 @@ async def _settle_tool(
         result = await asyncio.wait_for(coro, timeout=timeout)
         result = result if isinstance(result, dict) else {"value": result}
         status = str(result.get("status") or "success")
-        degraded = bool(result.get("degraded")) or status in {"degraded", "no_key"}
+        degraded = bool(result.get("degraded")) or status in {"degraded", "no_key", "partial"}
         if degraded and status == "success":
             status = "degraded"
-        if status not in {"success", "degraded", "failed"}:
+        if status not in {"success", "partial", "degraded", "failed"}:
             status = "degraded" if degraded else "success"
         return {
             "tool": tool,
             "target": target,
             "status": status,
-            "degraded": degraded or status == "failed",
+            "degraded": degraded or status in {"partial", "failed"},
             "result": result,
             "summary": _summarize_tool(tool, result),
             "started_at": started_at,
@@ -173,7 +171,12 @@ def _summarize_tool(tool: str, result: dict[str, Any]) -> str:
         provider = result.get("provider") or "external"
         return result.get("summary") or f"{provider} AI probability={result.get('ai_probability', 0):.2f}"
     if tool == "text_claim_extract":
-        return f"claims={len(result.get('key_claims') or [])}, ai_probability={result.get('ai_probability', 0):.2f}"
+        social = result.get("social_engineering") or {}
+        social_score = float(social.get("score", 0.0) or 0.0)
+        return (
+            f"文本社工风险抽取: 关键声明 {len(result.get('key_claims') or [])} 条，"
+            f"社工评分 {social_score:.1%}"
+        )
     return "工具完成"
 
 
@@ -197,6 +200,23 @@ def _model_claims_from_text(text_result: dict[str, Any] | None, threat_indicator
     return claims
 
 
+def _sanitize_text_claim_extract_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep text_claim_extract focused on social-engineering claims, not AIGC scoring."""
+    sanitized: dict[str, Any] = {
+        "method": "social_claim_extract",
+        "scope": "social_engineering_claims",
+        "key_claims": result.get("key_claims") or [],
+        "anomalies": result.get("anomalies") or [],
+        "extracted_urls": result.get("extracted_urls") or [],
+        "social_engineering": result.get("social_engineering") or {},
+        "manipulation_score": float(result.get("manipulation_score", 0.0) or 0.0),
+        "limitations": [
+            "text_claim_extract 仅用于社工风险 claim 提取与诱导话术分析",
+        ],
+    }
+    return sanitized
+
+
 def _previous_successes(state: TruthSeekerState) -> dict[tuple[str, str], dict[str, Any]]:
     previous = (state.get("tool_results") or {}).get("osint")
     if not previous:
@@ -206,6 +226,28 @@ def _previous_successes(state: TruthSeekerState) -> dict[tuple[str, str], dict[s
         for item in previous
         if isinstance(item, dict) and item.get("status") == "success"
     }
+
+
+def _reuse_forensics_text_aigc(state: TruthSeekerState, text: str) -> dict[str, Any] | None:
+    fingerprint = text_fingerprint(text)
+    candidates = []
+    candidates.extend((state.get("tool_results") or {}).get("forensics") or [])
+    candidates.extend((state.get("forensics_result") or {}).get("tool_results") or [])
+    for item in candidates:
+        if not isinstance(item, dict) or item.get("tool") != "ai_text_detector" or item.get("status") != "success":
+            continue
+        result = item.get("result")
+        if not isinstance(result, dict) or result.get("status") != "success":
+            continue
+        if result.get("text_fingerprint") != fingerprint:
+            continue
+        return {
+            **item,
+            "reused": True,
+            "reused_from": "forensics",
+            "result": {**result, "reused_from": "forensics"},
+        }
+    return None
 
 
 async def osint_node(state: TruthSeekerState) -> dict:
@@ -293,14 +335,21 @@ async def osint_node(state: TruthSeekerState) -> dict:
                 timeout=120.0,
             )
             tool_results.append(text_tool)
-        text_analysis_result = text_tool.get("result") if isinstance(text_tool.get("result"), dict) else None
+        if isinstance(text_tool.get("result"), dict):
+            text_analysis_result = _sanitize_text_claim_extract_result(text_tool["result"])
+            text_tool["result"] = text_analysis_result
+            text_tool["summary"] = _summarize_tool("text_claim_extract", text_analysis_result)
+        else:
+            text_analysis_result = None
         if not maybe_reuse("ai_text_detector", "uploaded_text"):
-            text_aigc_tool = await _settle_tool(
-                tool="ai_text_detector",
-                target="uploaded_text",
-                coro=detect_ai_generated_text(combined, target="uploaded_text"),
-                timeout=45.0,
-            )
+            text_aigc_tool = _reuse_forensics_text_aigc(state, combined)
+            if text_aigc_tool is None:
+                text_aigc_tool = await _settle_tool(
+                    tool="ai_text_detector",
+                    target="uploaded_text",
+                    coro=detect_ai_generated_text(combined, target="uploaded_text"),
+                    timeout=45.0,
+                )
             tool_results.append(text_aigc_tool)
 
     urls_to_check = list(dict.fromkeys(urls_to_check))
@@ -329,7 +378,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         if not maybe_reuse("whoisxml_domain_provenance", url)
     ]
     if domain_tasks:
-        log("action", f"正在查询 {len(domain_tasks)} 个 URL/域名的 WhoisXML 注册与 DNS 历史")
+        log("action", f"正在查询 {len(domain_tasks)} 个 URL/域名的 WhoisXML 注册、当前 DNS 与 IP 归属")
         tool_results.extend(await asyncio.gather(*domain_tasks))
 
     threat_indicators: list[str] = []
@@ -351,9 +400,6 @@ async def osint_node(state: TruthSeekerState) -> dict:
             text_aigc_detection = result
 
     if text_analysis_result:
-        ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
-        if ai_prob > 0.6:
-            threat_indicators.append(f"文本 AI 生成概率高 ({ai_prob:.1%})")
         social = text_analysis_result.get("social_engineering") or {}
         social_score = float(social.get("score", 0.0) or 0.0)
         if social_score >= 0.45:
@@ -393,8 +439,6 @@ async def osint_node(state: TruthSeekerState) -> dict:
     if text_analysis_result:
         text_social_score = float((text_analysis_result.get("social_engineering") or {}).get("score", 0.0) or 0.0)
         text_manipulation_score = float(text_analysis_result.get("manipulation_score", 0.0) or 0.0)
-        ai_prob = float(text_analysis_result.get("ai_probability", 0.0) or 0.0)
-        text_ai_score = 0.55 if ai_prob >= 0.75 and urls_to_check else 0.0
     if text_aigc_detection:
         external_text_prob = float(text_aigc_detection.get("ai_probability", 0.0) or 0.0)
         text_ai_score = max(text_ai_score, external_text_prob * 0.5)
@@ -424,21 +468,45 @@ async def osint_node(state: TruthSeekerState) -> dict:
             "degraded": bool(case_rag.get("degraded")),
         },
     )
+    experience_rag = await experience_rag_search(
+        query=rag_query,
+        user_id=str(state.get("user_id") or ""),
+        agent="osint",
+    )
+    tool_results.append(experience_rag)
+    log("action", f"个人经验库检索完成: {experience_rag.get('summary', '无摘要')}")
+    record_audit_event(
+        action=f"experience_rag.{experience_rag.get('status', 'unknown')}",
+        task_id=task_id,
+        agent="osint",
+        metadata={
+            "match_count": len(experience_rag.get("matches") or []),
+            "degraded": bool(experience_rag.get("degraded")),
+        },
+    )
 
-    scoring_tools = [item for item in tool_results if item.get("tool") != "case_rag_search"]
-    degraded = any(item.get("status") in {"degraded", "failed"} for item in scoring_tools)
+    scoring_tools = [item for item in tool_results if item.get("tool") not in {"case_rag_search", "experience_rag_search"}]
+    degraded = any(item.get("status") in {"partial", "degraded", "failed"} for item in scoring_tools)
     if degraded:
         failed_count = sum(1 for item in scoring_tools if item.get("status") == "failed")
         degraded_count = sum(1 for item in scoring_tools if item.get("status") == "degraded")
+        partial_count = sum(1 for item in scoring_tools if item.get("status") == "partial")
         record_audit_event(
             action="osint.degraded",
             task_id=task_id,
             agent="osint",
-            metadata={"failed": failed_count, "degraded": degraded_count, "total": len(tool_results)},
+            metadata={"failed": failed_count, "degraded": degraded_count, "partial": partial_count, "total": len(tool_results)},
         )
 
     osint_confidence = 0.25 if exa_tool.get("status") == "failed" and not virustotal_summaries else min(0.92, 0.62 + len(search_results) * 0.04)
     model_claims = _model_claims_from_text(text_analysis_result, threat_indicators)
+
+    success_count = sum(1 for item in tool_results if item.get("status") == "success")
+    partial_count = sum(1 for item in tool_results if item.get("status") == "partial")
+    failed_count = sum(1 for item in scoring_tools if item.get("status") == "failed")
+    degraded_count = sum(1 for item in scoring_tools if item.get("status") == "degraded")
+    available_count = success_count + partial_count
+    other_count = max(0, len(tool_results) - available_count - degraded_count - failed_count)
 
     partial_result = {
         "threat_score": threat_score,
@@ -459,14 +527,20 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "tool_results": tool_results,
         "tool_summary": {
             "total": len(tool_results),
-            "success": sum(1 for item in tool_results if item.get("status") == "success"),
-            "degraded": sum(1 for item in scoring_tools if item.get("status") == "degraded"),
-            "failed": sum(1 for item in scoring_tools if item.get("status") == "failed"),
+            "success": success_count,
+            "partial": partial_count,
+            "available": available_count,
+            "other": other_count,
+            "degraded": degraded_count,
+            "failed": failed_count,
             "reused": sum(1 for item in tool_results if item.get("reused")),
             "case_rag_status": case_rag.get("status"),
             "case_rag_matches": len(case_rag.get("matches") or []),
+            "experience_rag_status": experience_rag.get("status"),
+            "experience_rag_matches": len(experience_rag.get("matches") or []),
         },
         "case_rag": case_rag,
+        "experience_rag": experience_rag,
         "degraded": degraded,
         "timestamp": _now(),
     }

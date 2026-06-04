@@ -9,6 +9,7 @@ import httpx
 
 from app.agents.tools.fallback import shared_degradation
 from app.config import settings
+from app.services.evidence_access import download_evidence_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -361,17 +362,14 @@ async def scan_file_hash(file_url: str) -> dict:
 
     # 下载文件计算 SHA-256（最多 32MB）
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                file_url,
-                headers={"Range": "bytes=0-33554431"},  # 前 32MB
-                follow_redirects=True,
-            )
-            if resp.status_code not in (200, 206):
-                return default_result
-
-            file_bytes = resp.content
-            hash_str = hashlib.sha256(file_bytes).hexdigest()
+        file_bytes, _ = await download_evidence_bytes(
+            file_url,
+            timeout=30.0,
+            range_header="bytes=0-33554431",
+        )
+        if not file_bytes:
+            return default_result
+        hash_str = hashlib.sha256(file_bytes).hexdigest()
     except Exception as exc:
         logger.warning("VirusTotal file hash download failed for %s: %s", file_url, exc)
         return default_result
@@ -426,16 +424,13 @@ async def extract_media_metadata(file_url: str, file_type: str) -> dict:
 
     # 下载前 1MB 字节
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                file_url,
-                headers={"Range": "bytes=0-1048575"},
-                follow_redirects=True,
-            )
-            if resp.status_code not in (200, 206):
-                logger.warning("Media metadata download returned HTTP %s for %s", resp.status_code, file_url)
-                return _default_metadata_result()
-            raw = resp.content
+        raw, _ = await download_evidence_bytes(
+            file_url,
+            timeout=20.0,
+            range_header="bytes=0-1048575",
+        )
+        if not raw:
+            return _default_metadata_result()
     except Exception as exc:
         logger.warning("Media metadata download failed for %s: %s", file_url, exc)
         return _default_metadata_result()

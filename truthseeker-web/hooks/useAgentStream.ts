@@ -75,12 +75,22 @@ export interface ConsultationContext {
     background?: string
     progress?: string
     blockers: string[]
-    helpNeeded?: string
+    helpNeeded?: string[]
     sampleLinks: ConsultationLink[]
     expertTasks?: Array<{
         question: string
         expectedOutput?: string
     }>
+}
+
+export interface ExperienceDraft {
+    title: string
+    target_agents: string[]
+    problem_pattern: string
+    recommended_method: string
+    evidence_to_check: string[]
+    when_to_escalate: string
+    limitations: string
 }
 
 export interface ConsultationState {
@@ -92,6 +102,7 @@ export interface ConsultationState {
     history: Record<string, unknown>[]
     summaryDraft?: string
     summaryConfirmed?: string
+    experienceDrafts?: ExperienceDraft[]
     lastEventType?: string
 }
 
@@ -250,7 +261,7 @@ function mergeConsultationContext(current: ConsultationContext, incoming: Partia
         background: incoming.background ?? current.background,
         progress: incoming.progress ?? current.progress,
         blockers: incoming.blockers && incoming.blockers.length > 0 ? incoming.blockers : current.blockers,
-        helpNeeded: incoming.helpNeeded ?? current.helpNeeded,
+        helpNeeded: incoming.helpNeeded && incoming.helpNeeded.length > 0 ? incoming.helpNeeded : current.helpNeeded,
         sampleLinks: incoming.sampleLinks && incoming.sampleLinks.length > 0 ? incoming.sampleLinks : current.sampleLinks,
     }
 }
@@ -410,9 +421,7 @@ function readConsultationContext(payload: Record<string, unknown> | null): Parti
         progress: pickString(context?.progress, context?.current_progress, context?.status_summary, context?.statusSummary)
             ?? readProgressSummary(context?.progress_summary),
         blockers: pickStringArray(context?.blockers, context?.current_blocker, context?.blocking_points, context?.open_questions, context?.conflicts),
-        helpNeeded: pickString(context?.help_needed, context?.helpNeeded, context?.requested_help, context?.assistance_needed)
-            ?? readStringArray(context?.help_needed).join("；")
-            ?? undefined,
+        helpNeeded: pickStringArray(context?.help_needed, context?.helpNeeded, context?.requested_help, context?.assistance_needed),
         sampleLinks: readConsultationLinks(sampleSource),
         expertTasks,
     }
@@ -438,6 +447,31 @@ function readConsultationSummary(event: ConsultationEvent, payload: Record<strin
     )
 }
 
+function readExperienceDraftsFromSession(session: Record<string, unknown> | null | undefined): ExperienceDraft[] {
+    const summaryPayload = readRecord(session?.summary_payload)
+    const source = summaryPayload?.experience_drafts
+    if (!Array.isArray(source)) return []
+    return source.flatMap((item): ExperienceDraft[] => {
+        if (!isObject(item)) return []
+        const title = readString(item.title)
+        const problem = readString(item.problem_pattern)
+        const method = readString(item.recommended_method)
+        const agents = Array.isArray(item.target_agents)
+            ? item.target_agents.map(String).filter(Boolean)
+            : []
+        if (!title || !problem || !method || agents.length === 0) return []
+        return [{
+            title,
+            target_agents: agents,
+            problem_pattern: problem,
+            recommended_method: method,
+            evidence_to_check: pickStringArray(item.evidence_to_check),
+            when_to_escalate: readString(item.when_to_escalate) ?? "",
+            limitations: readString(item.limitations) ?? "",
+        }]
+    })
+}
+
 export function normalizeConsultationEvent(event: ConsultationEvent, current: ConsultationState = INITIAL_CONSULTATION_STATE): ConsultationState {
     const payload = readRecord("payload" in event ? event.payload : undefined)
     const eventSession = readRecord("session" in event ? event.session : undefined)
@@ -456,6 +490,7 @@ export function normalizeConsultationEvent(event: ConsultationEvent, current: Co
         history: history.length > 0 ? history : current.history,
         summaryDraft: status === "summary_pending" || summary ? summary ?? current.summaryDraft : current.summaryDraft,
         summaryConfirmed: status === "summary_confirmed" ? summary ?? current.summaryDraft ?? current.summaryConfirmed : current.summaryConfirmed,
+        experienceDrafts: readExperienceDraftsFromSession(session),
         lastEventType: event.type,
     }
 }
@@ -563,6 +598,7 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
         session: consultationSession ?? undefined,
         summaryDraft: readString(summaryPayload?.generated_summary),
         summaryConfirmed: readString(summaryPayload?.user_confirmed_summary) ?? readString(summaryPayload?.confirmed_summary),
+        experienceDrafts: readExperienceDraftsFromSession(consultationSession),
     }
 
     return {

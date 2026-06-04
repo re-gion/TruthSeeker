@@ -1,6 +1,6 @@
 # TruthSeeker 应用流程
 
-> 更新时间：2026-06-02
+> 更新时间：2026-06-04
 
 ## 1. 输入边界
 
@@ -54,13 +54,13 @@ flowchart TD
 
 阶段规则：
 
-- 自主推理先行：四个 Agent 都先基于 Kimi 2.5 原生多模态能力读取可访问样本、文本内容、全局检测目标和证据板，并禁用 thinking，再按角色调用外部工具，最后融合自主推理与工具结果完成任务。
-- `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Kimi 2.5 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
-- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测与 `text_claim_extract` 结果补充社工诱导和文本来源研判，生成可视化情报溯源图谱。
+- 自主推理先行：四个 Agent 都先基于可配置的原生多模态 Agent LLM 读取可访问样本、文本内容、全局检测目标和证据板；默认 Kimi 2.5，调用 Kimi K2.5 时禁用 thinking，也可通过 `AGENT_LLM_PROVIDER=mimo` 切到小米 MiMo Token Plan 的 `mimo-v2.5`。Kimi K2.5 支持 `text,image,video` 输入、上下文 262144 tokens；MiMo `mimo-v2.5` 支持 `text,image` 输入、上下文 1048576 tokens，`MIMO_THINKING=enabled|disabled` 可显式控制思考模式。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 限制单次模型输出。随后各 Agent 再按角色调用外部工具，最后融合自主推理与工具结果完成任务。
+- `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Agent LLM 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
+- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。
 - `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。
 - `commander` 生成最终鉴伪与溯源报告。它综合样本、证据板、Challenger 反馈和各 Agent 结论进行自主裁决；裁决完成后直接结束检测，不再进入 Challenger，避免最终报告阶段重复前序质询。
 - 每阶段最多 5 轮，质量变化阈值为 0.08。达到阈值则视为收敛；达到轮次上限仍未完全解决时继续推进，但写入残留风险。
-- 人机会诊触发采用统一门槛：同一目标 Agent 最近 3 轮都存在 high 质询，本轮置信度 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`。首次触发自动暂停为 `waiting_consultation`；同一任务后续再次触发进入 `waiting_consultation_approval`，由用户决定“再次会诊”或“跳过本次”。
+- 人机会诊触发采用统一门槛：同一目标 Agent 最近 3 轮都存在 high 质询，本轮置信度 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`。在每个目标 Agent 的 5 轮上限内，最多只会在第 3 轮和第 4 轮触发两次会诊；第 5 轮即使仍未满足 Challenger 置信要求，也直接放行并写入残留风险，不再进入会诊。首次触发自动暂停为 `waiting_consultation`；同一目标 Agent 后续再次触发进入 `waiting_consultation_approval`，由用户决定“再次会诊”或“跳过本次”。
 
 ## 4. 人机专家会诊
 
@@ -87,9 +87,14 @@ flowchart TD
 
 - 邀请按 `task_id` 和 `consultation_session.id` 绑定，默认 24 小时 TTL；样本链接沿用本轮邀请有效期，不生成永久公开链接。
 - 消息保存为轻结构化记录：`session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
-- Commander 是主持人，负责在会诊开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。
+- Commander 是主持人，负责在会诊开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。用户结束会诊时，Commander 还会调用大模型阅读会诊上下文、`help_needed`、专家任务和用户/专家对话，生成可回注摘要；固定结构摘要只作为模型不可用时的兜底。
 - 只有用户能批准重复会诊、跳过本次、结束会诊、编辑确认 Commander 摘要。摘要确认后回注全局证据板，流程恢复到 Challenger。
 - 会诊恢复时，后端通过 `resume=true` 注入专家/用户消息、会诊 sessions 和已确认摘要；若 LangGraph checkpoint 丢失，则从 `analysis_states`、`consultation_messages` 和 `consultation_sessions` 重建可裁决状态。
+
+用户结束会诊时，Commander 会同时生成两类内容：
+
+- 会诊摘要：用户编辑确认后回注给后续 Agent，恢复研判。
+- 个人经验草稿：从用户与专家多轮交流中提取可复用方法、判据、补证路径和升级条件。草稿会先按当前账号和目标 Agent 检查已有相似经验，达到相似阈值的草稿直接过滤，不再展示给用户。用户确认摘要不会自动入库；前端只展示剩余草稿，允许编辑、删除草稿条目，再单独确认入库。
 
 ## 5. 工具调用与降级
 
@@ -97,11 +102,12 @@ flowchart TD
 
 工具策略：
 
-- 首轮全量调用：图片进 Sightengine `genai`，音视频进 Reality Defender，文本检材进内部 `ai_text_detector` / `text_claim_extract`；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal，URL/域名线索进 WhoisXML 查询 WHOIS 与 DNS 历史。工具层可以保留 provider 原始标签（如 `AI_GENERATED`），但报告、SSE 和持久化裁决不得把图片 AIGC 概率混写成 Deepfake 概率。
+- 首轮全量调用：图片进 Sightengine `genai`，音视频进 Reality Defender，文本检材进内部 `ai_text_detector`，社工风险 claim 与 URL/异常线索进 `text_claim_extract`；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal，URL/域名线索进 WhoisXML 查询 WHOIS、DNS Lookup 当前解析和 IP Geolocation 归属。工具层可以保留 provider 原始标签（如 `AI_GENERATED`），但报告、SSE 和持久化裁决不得把图片 AIGC 概率混写成 Deepfake 概率。
 - 后续智能重跑：只重跑失败、降级、被 Challenger 命中或新 IOC 对应的工具。
 - Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
 - VirusTotal URL 检测必须等待 URL analysis `completed` 后才采信新扫描统计；如果提交后的 analysis 仍是 `queued`，会回查 VT 已有 URL 报告的 `last_analysis_stats` 作为补救。同一任务内相同 URL 复用同一个 completed 或历史报告结果，避免 Forensics/OSINT 对同一 URL 得到互相矛盾的“8 家 vs 0 家”统计。
 - 公开案例 RAG 由 Forensics 和 OSINT 作为内部工具调用。语料来自用户授权公开的真实案例和 4 个内置案例 Markdown，使用 pgvector + 全文检索混合召回；命中结果只作为类案参考和复核方向，不直接改变当前裁决分数。
+- 个人经验库 RAG 由 Forensics、OSINT 和 Challenger 作为内部工具调用。语料来自当前账号确认入库的会诊经验，按 `user_id + target_agent` 隔离检索；Forensics/OSINT 只把命中经验作为个人方法参考和检查清单，不写成当前案件事实，不直接改分。Challenger 可用个人经验减少冗余质询点，也可在原本将触发会诊时先让目标 Agent 按经验补强一轮；补强后仍连续低置信高质询才进入会诊。
 - 内部文本 AIGC 检测由 Forensics 和 OSINT 作为内部工具调用，融合 Kimi 文本判断、本地句长/词汇/重复/模板化统计和社工诱导特征；输出是概率性线索，不作为单独定性证据。
 - 所有外部工具保留硬超时；超时必须写成结构化失败结果。
 
@@ -162,6 +168,10 @@ flowchart TD
 
 `final_verdict` 后，如果任务已勾选公开案例库，后端会先推送 `case_import_start`，生成公开案例标题和摘要并尝试入库/索引，然后推送 `case_import_created`、`case_import_duplicate` 或 `case_import_error`；未勾选时推送 `case_import_skipped`。`complete` 在案例导入阶段终态之后发送，前端报告按钮只在 `complete` 且导入阶段结束后显示。历史回放中的已完成任务默认视为导入阶段已结束，不重新触发入库。
 
+如果已完成任务再次收到非 `resume=true` 的 `POST /api/v1/detect/stream`（例如开发热重载、页面刷新或 SSE 连接重建），后端直接从 `reports.verdict_payload`、`tasks.result` 或 `analysis_states.result_snapshot.final_verdict` 复用已持久化最终裁决，推送 `final_verdict`、`case_import_skipped(reason=already_completed)` 和 `complete(reused=true)`，并记录 `detect_reused_completed` 审计事件；不会重新进入 Forensics/OSINT/Commander。
+
+每次新的非恢复检测流会生成 `detection_run_id`，写入 `tasks.metadata.active_detection_run_id`、`last_detection_run_id`、`detection_run_count`，并同步进入 `agent_logs.metadata`、`analysis_states.result_snapshot/evidence_board`、`reports.verdict_payload` 和关键审计事件。若任务已经是 `analyzing` 且存在 `active_detection_run_id`，新的非 `resume=true` 启动会返回 409，避免刷新、reload 或并发请求让同一 `task_id` 重入 LangGraph。报告和审计导出优先按最终裁决的 `detection_run_id` 过滤；节点内部未携带 run_id 的审计事件用该运行的 `detect_start` 到 `detect_completed/report_generated` 时间窗口兜底。`detection_run_id` 和 `detection_run_count` 仅作内部幂等、过滤和排障字段，不在正式报告任务信息中展示。
+
 新图谱不新增必须消费的新 SSE 事件，随 `final_verdict.provenance_graph` 下发；历史回放从 `reports.verdict_payload`、`analysis_states.result_snapshot`、`agent_logs`、`timeline_events` 和 `audit_logs` 读取。
 
 ## 8. 报告与可信输出
@@ -182,6 +192,8 @@ flowchart TD
 
 `report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 
+正式报告只展示必要时间：`创建时间` 来自 `tasks.created_at`，表示任务记录创建时间；`裁决时间` 来自 `reports.generated_at`，表示最终裁决/报告入库时间；`完成时间` 来自 `tasks.completed_at`，表示任务进入 completed/failed 等终态的时间。`tasks.updated_at` 仅表示任务记录最近一次更新，可能由状态、metadata、公开案例入库等操作触发，不作为报告主时间字段展示。
+
 ## 9. 公开案例库
 
 公开案例库使用独立 `case_library_entries` 表，只保存脱敏后的卡片字段、报告 Markdown 和公开展示所需文件元数据，不复制音视频等大文件，也不在公开案例记录中保存 `storage_path` 或文件 SHA-256。重复判断仍基于任务原始文件清单中的 SHA-256 指纹完成。案例入库条件：
@@ -194,7 +206,18 @@ flowchart TD
 
 公开案例 RAG 使用 `case_library_rag_chunks` 保存真实公开案例和内置案例的 Markdown 分块、1024 维 embedding、分类/裁决元数据和全文索引。默认 embedding 服务为 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`，配置项为 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`CASE_RAG_ENABLED` 和 `CASE_RAG_TOP_K`。新增公开案例生成完整报告后会尝试自动索引；历史案例和内置案例可用 `python scripts/rebuild_case_rag_index.py --include-builtin --include-public` 回填。删除公开案例时必须同步删除 `source_kind=public` 且同 `case_id` 的 RAG chunks；历史遗留 chunks 可用 `python scripts/delete_public_case_rag_chunks.py --title-contains "案例标题" --apply` 清理。
 
-## 10. 暂不实现
+## 10. 个人经验库
+
+个人经验库是账号私有资产，不公开共享，也不进入公开案例库。
+
+- 数据表：`experience_library_entries` 保存经验条目，`experience_library_rag_chunks` 保存按目标 Agent 拆分的向量块。
+- 入口：`GET /api/v1/experiences`、`GET /api/v1/experiences/{entry_id}`、`POST /api/v1/experiences/confirm`、`DELETE /api/v1/experiences/{entry_id}`。
+- 前端：`/experiences` 展示个人经验库列表、搜索和 Agent 筛选，`/experiences/[entryId]` 展示详情和删除。页面需要登录，文案统一为“个人经验库”。
+- 入库：会诊摘要确认后前端展示待入库草稿，用户可编辑和删除草稿；确认入库时后端再次规范化、去重、写入经验表并创建向量块。
+- 删除：删除经验时先删 `experience_library_rag_chunks`，再删 `experience_library_entries`。
+- 隐私：经验只保存可复用方法、判据、适用场景、证据检查项、升级条件和限制，不保存具体检材名、链接、专家原话或可识别案件细节。
+
+## 11. 暂不实现
 
 - 不新增独立图数据库，图谱先复用现有 JSONB。
 - 不把 FedPaRS 训练/推理底座写成已运行实现；当前代码是 FedPaRS-compatible 运行时架构，底层检测器未来可替换为 FedPaRS 模型服务。

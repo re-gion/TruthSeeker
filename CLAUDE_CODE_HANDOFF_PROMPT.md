@@ -1,393 +1,282 @@
 # Claude Code Handoff Prompt
 
-你是接手 TruthSeeker 项目的本地工程代理。请在用户电脑上的真实终端、真实网络和可用浏览器环境里继续收尾、验证并必要时修复 Codex 已实现但仍未做真实远端验证的“公开案例库 RAG 工具化”工作。
+你是接手 TruthSeeker 项目的本地工程代理。用户现在需要你用可用的 Supabase MCP 帮他完成并验证“个人经验库”数据库迁移，因为前端访问个人经验库页面时显示“个人经验库暂时不可用”。
 
 ## 角色和沟通约定
 
-- 默认用通俗、清晰、自然的中文向用户汇报。
+- 默认用通俗、清晰、自然的中文汇报。
 - 汇报优先说明：做了什么、当前是否可用、实际验证、残留风险、是否需要用户介入。
 - 不要把计划、猜测或“理论上可行”说成已经完成。
-- 不要泄露 `.env`、`.env.local`、`.mcp.json`、Supabase service role key、JWT secret、SiliconFlow API key 或任何真实密钥。
-- 不要覆盖、回滚或混入用户无关改动；提交前必须用 `git status --short` 和选择性 staging 确认范围。
-- 用户偏好实际验证，不喜欢泛泛而谈。网络、沙箱、权限或依赖问题要用现场命令证据说明。
+- 不要泄露 `.env`、`.env.local`、`.mcp.json`、Supabase service role key、JWT secret 或任何真实密钥。
+- 不要覆盖、回滚或清空用户无关改动。
+- 当前任务只做 Supabase 迁移和验证，除非发现迁移 SQL 本身有明确错误，否则不要改业务代码。
 
 ## 当前环境和仓库状态
 
 - 项目路径：`D:\a311\系统赛\2026系统赛\信安`
-- 操作系统：Windows
-- 常用 shell：PowerShell
-- 当前分支：`codex/case-rag-tooling`
-- 当前 HEAD：`716bea4`
-- Codex 本轮没有提交，工作区有未提交改动。
-- 这台机器历史上存在 Codex 沙盒网络/DNS/权限问题。浏览器或普通 PowerShell 能联网，不代表 Codex 沙盒里的 `npm`、`pip`、`git`、`curl`、Supabase REST 或外部 API 可用。
+- 当前分支：`main`
+- 当前 HEAD：`275b9ec`
+- 当前日期：2026-06-04
+- 用户截图现象：前端打开“个人经验库”页面，筛选栏下方显示黄色提示“个人经验库暂时不可用”。
+- Codex 已做代码级排查：前后端代码已经有个人经验库功能，最可疑原因是 Supabase 里还没有执行 `20260603_experience_library.sql`，或执行不完整。
 
-### 当前 `git status --short --branch`
-
-```text
-## codex/case-rag-tooling
- M docs/APP_FLOW.md
- M docs/BACKEND_STRUCTURE.md
- M docs/TECH_STACK.md
- M lessons.md
- M task.md
- M truthseeker-api/.env.example
- M truthseeker-api/app/agents/nodes/forensics.py
- M truthseeker-api/app/agents/nodes/osint.py
- M truthseeker-api/app/agents/tools/llm_client.py
- M truthseeker-api/app/api/v1/cases.py
- M truthseeker-api/app/config.py
- M truthseeker-api/app/services/analysis_persistence.py
- M truthseeker-api/app/services/case_library.py
- M truthseeker-api/app/services/report_generator.py
- M truthseeker-web/components/cases/CaseDetailClient.tsx
- M truthseeker-web/components/cases/CaseLibraryClient.tsx
- M truthseeker-web/lib/cases.test.ts
- M truthseeker-web/lib/cases.ts
-?? truthseeker-api/app/services/builtin_cases.py
-?? truthseeker-api/app/services/case_rag.py
-?? truthseeker-api/scripts/
-?? truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
-?? truthseeker-api/tests/test_agent_case_rag.py
-?? truthseeker-api/tests/test_case_rag.py
-?? truthseeker-api/tests/test_case_rag_report.py
-```
-
-没有发现本轮之外的明显无关脏文件，但你仍需在提交前重新检查 `git status --short`。
-
-## 用户目标和补充要求
-
-用户最初目标：把之前做的公开案例库升级成一个 RAG，让电子取证 Agent 和情报溯源 Agent 在鉴伪与溯源过程中多一个“公开案例搜索工具”，能检索已有公开案例进行推理分析借鉴，并在研判报告中展示工具调用情况和分析汇报。
-
-本轮规划中已经确定：
-
-- 语料范围：真实公开案例 + 4 个内置展示案例。
-- 检索底座：Supabase Postgres + pgvector 混合检索。
-- embedding 配置：独立 embedding 配置，不复用 Kimi 推理配置。
-- embedding 模型：SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`。
-- API 文档：`https://api-docs.siliconflow.cn/docs/api/embeddings-post`
-- 默认 endpoint：`https://api.siliconflow.cn/v1/embeddings`
-- embedding 维度：1024。
-- RAG 影响边界：只做类案参考，不直接改变裁决分数，不作为当前检材的强证据。
-- 调用位置：Forensics + OSINT，Commander 汇总但不重复检索。
-- 展示范围：报告 + agent/audit 日志，不新增检测台相似案例卡片。
-- 内置展示案例：后端补齐 Markdown 报告，前端也要能点击进入详情页查看报告。
-- API key：用户最后再填；你只需把基础设施搭好，填 key 后能直接接入。
-
-## Codex 已完成的文件改动
-
-### 后端 RAG 基础设施
-
-- 新增 `truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql`
-  - `create extension if not exists vector`
-  - 新增 `case_library_rag_chunks`
-  - `embedding vector(1024)`
-  - HNSW cosine 索引
-  - 全文 GIN 索引
-  - `match_case_library_rag_chunks(...)` RPC
-- 新增 `truthseeker-api/app/services/case_rag.py`
-  - Markdown 分块
-  - `build_chunk_hash`
-  - SiliconFlow/OpenAI-compatible embedding client
-  - vector + keyword 混合检索
-  - `case_rag_search`
-  - `index_case_record`
-  - `rebuild_case_rag_index`
-- 新增 `truthseeker-api/scripts/rebuild_case_rag_index.py`
-  - 用法：`python scripts/rebuild_case_rag_index.py --include-builtin --include-public`
-- 修改 `truthseeker-api/app/config.py`
-  - 新增 `CASE_RAG_ENABLED`
-  - 新增 `CASE_RAG_TOP_K`
-  - 新增 `EMBEDDING_BASE_URL`
-  - 新增 `EMBEDDING_API_KEY`
-  - 新增 `EMBEDDING_MODEL=Qwen/Qwen3-VL-Embedding-8B`
-  - 新增 `EMBEDDING_DIMENSIONS=1024`
-- 修改 `truthseeker-api/.env.example`
-  - 补充上述 RAG/embedding 示例配置。
-
-### 内置案例资料源和公开案例 API
-
-- 新增 `truthseeker-api/app/services/builtin_cases.py`
-  - 4 个内置案例：
-    - `builtin-audio-scam`
-    - `builtin-video-faceswap`
-    - `builtin-mixed-phishing`
-    - `builtin-text-news`
-  - 每个内置案例都有 Markdown 研判报告。
-- 修改 `truthseeker-api/app/api/v1/cases.py`
-  - `GET /api/v1/cases/{case_id}` 支持 `builtin-*` 内置案例详情。
-- 修改 `truthseeker-api/app/services/case_library.py`
-  - API 响应新增 `source_kind`，真实公开案例默认为 `public`。
-
-### Agent 接入
-
-- 修改 `truthseeker-api/app/agents/nodes/forensics.py`
-  - 调用 `case_rag_search`
-  - RAG 结果写入 `tool_results`
-  - RAG 状态写入 `tool_summary.case_rag_status` 和 `tool_summary.case_rag_matches`
-  - 写入 `forensics_result.case_rag`
-  - RAG 不参与取证降级分数统计
-  - 记录 `case_rag.<status>` audit event
-- 修改 `truthseeker-api/app/agents/nodes/osint.py`
-  - 同样接入 `case_rag_search`
-  - 写入 `osint_result.case_rag`
-  - RAG 不参与 OSINT 工具降级分数统计
-  - 记录 `case_rag.<status>` audit event
-- 修改 `truthseeker-api/app/agents/tools/llm_client.py`
-  - Forensics、OSINT、Commander prompt 都明确：相似案例只作类案参考，不能当作当前任务事实或强证据。
-
-### 持久化与报告
-
-- 修改 `truthseeker-api/app/services/analysis_persistence.py`
-  - 新增公开案例创建后自动尝试索引 RAG chunk。
-  - 失败只 warning，不阻断检测/报告。
-- 修改 `truthseeker-api/app/services/report_generator.py`
-  - 新增“公开案例 RAG 调用情况”章节。
-  - 显示 Forensics / OSINT 调用状态、命中案例、相似度、可借鉴点和边界说明。
-  - 降级或无命中也会写清楚。
-  - `_dict_to_markdown` 跳过 `case_rag` 原始对象，避免报告重复 dump。
-
-### 前端
-
-- 修改 `truthseeker-web/lib/cases.ts`
-  - 增加 `sourceKind`
-  - 增加 `normalizeCaseDetail`
-- 修改 `truthseeker-web/components/cases/CaseLibraryClient.tsx`
-  - 4 个内置展示案例 ID 改为 `builtin-*`
-  - 内置卡片从不可点击展示改为链接到 `/cases/{id}`
-- 修改 `truthseeker-web/components/cases/CaseDetailClient.tsx`
-  - 内置案例不显示删除按钮。
-  - 内置案例不显示短期预览按钮。
-- 修改 `truthseeker-web/lib/cases.test.ts`
-  - 覆盖内置案例 `source_kind` 映射。
-
-### 测试
-
-- 新增 `truthseeker-api/tests/test_case_rag.py`
-- 新增 `truthseeker-api/tests/test_agent_case_rag.py`
-- 新增 `truthseeker-api/tests/test_case_rag_report.py`
-- 已有 `truthseeker-api/tests/test_case_library.py` 仍通过。
-
-### 文档和项目状态
-
-- 修改 `docs/APP_FLOW.md`
-  - 写入公开案例 RAG 数据流、内置案例详情、回填脚本和 pgvector 状态。
-- 修改 `docs/BACKEND_STRUCTURE.md`
-  - 写入 `case_rag.py`、`builtin_cases.py`、pgvector 和 SiliconFlow embedding 配置。
-- 修改 `docs/TECH_STACK.md`
-  - 写入 pgvector 和 embedding 环境变量。
-- 修改 `task.md`
-  - 将“pgvector/向量库暂不实现”更新为公开案例库 RAG 工具化已实现。
-- 修改 `lessons.md`
-  - 记录 RAG 只能做类案参考、不可作为当前事实证据。
-
-## Codex 已完成且验证通过的内容
-
-已通过：
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_case_library.py tests/test_case_rag.py tests/test_agent_case_rag.py tests/test_case_rag_report.py -q
-```
-
-结果：`14 passed in 4.79s`
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm run test:unit -- lib/cases.test.ts
-```
-
-结果：`4 passed`
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm run typecheck
-```
-
-结果：通过。
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-python -c "import ast, pathlib; files=[...]; [ast.parse(pathlib.Path(f).read_text(encoding='utf-8'), filename=f) for f in files]; print('ast-parse-ok', len(files))"
-```
-
-结果：`ast-parse-ok 14`
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安
-git diff --check
-```
-
-结果：退出码 0，无 whitespace 错误；只有 Git 的 CRLF 提示。
-
-## Codex 尝试过但失败或受限的内容
-
-- 普通全局 `python -m pytest ...` 失败：`C:\Python313\python.exe: No module named pytest`
-- `python -m pip install pytest` 在普通沙盒里失败过：用户 site-packages 权限问题。
-- 后来使用宿主/已批准方式确认用户目录里有 pytest，但全局 `python` 的 `sys.path` 仍不包含用户 site-packages。
-- 正确可用测试入口是项目虚拟环境：`truthseeker-api\venv_new\Scripts\python.exe`
-- `python -m compileall app tests scripts` 失败过，原因是写 `tests\__pycache__` 权限被拒绝。Codex 改用 AST parse 做语法检查并通过。
-- 没有执行真实 Supabase 迁移。
-- 没有真实调用 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding API，因为用户还没填 API key。
-- 没有做浏览器端真实页面验证。
-- 没有运行完整后端测试全集，也没有跑前端生产 build。
-
-## Claude Code 需要继续做的任务，按优先级排序
-
-### P0：复核当前代码并确认没有明显实现问题
-
-1. 先运行：
+开始前请先运行：
 
 ```powershell
 cd D:\a311\系统赛\2026系统赛\信安
 git status --short --branch
-git diff --check
 ```
 
-2. 快速审查以下关键文件：
+当前工作区有大量未提交改动，其中个人经验库相关文件包含未跟踪文件。不要误删、回滚或覆盖这些改动。
+
+## 用户问题的代码级根因线索
+
+前端页面和请求：
+
+- 页面：`truthseeker-web/app/experiences/page.tsx`
+- 客户端组件：`truthseeker-web/components/experiences/ExperienceLibraryClient.tsx`
+- 请求封装：`truthseeker-web/lib/experiences.ts`
+- 请求地址：`GET ${NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/api/v1/experiences?agent=all&q=&page=1&page_size=9`
+- 前端在接口非 2xx 时会显示：`个人经验库暂时不可用`
+
+后端接口：
+
+- 路由文件：`truthseeker-api/app/api/v1/experiences.py`
+- 路由挂载：`truthseeker-api/app/api/v1/router.py`
+- 路径：`GET /api/v1/experiences`
+- 后端会读取 `request.state.user_id`，匿名用户返回 401 `需要登录`
+- 已登录用户会查询 Supabase 表：`experience_library_entries`
+- 查询失败时后端日志会出现类似：`Failed to list experiences for user ...`
+- 查询失败时后端返回 503：`个人经验库暂时不可用`
+
+数据库迁移文件：
 
 ```text
-truthseeker-api/app/services/case_rag.py
-truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
-truthseeker-api/app/agents/nodes/forensics.py
-truthseeker-api/app/agents/nodes/osint.py
-truthseeker-api/app/services/report_generator.py
-truthseeker-web/components/cases/CaseLibraryClient.tsx
-truthseeker-web/components/cases/CaseDetailClient.tsx
-truthseeker-web/lib/cases.ts
+truthseeker-api/sql/migrations/20260603_experience_library.sql
 ```
 
-重点确认：
+这份迁移会创建：
 
-- RAG 结果不直接改变裁决分数。
-- RAG 失败不会阻断检测。
-- prompt 没把相似案例当当前事实。
-- 内置案例没有删除/短期预览按钮。
-- `source_kind` 不破坏真实公开案例列表。
+- `public.experience_library_entries`
+- `public.experience_library_rag_chunks`
+- `public.match_experience_library_rag_chunks(...)`
+- `vector` 扩展
+- 两张表的索引、RLS policy、updated_at trigger
 
-### P1：运行更完整的本地验证
+## 你需要完成的任务
 
-优先使用项目虚拟环境，不要用全局 Python：
+### 1. 用 Supabase MCP 先检查真实数据库状态
 
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_case_library.py tests/test_case_rag.py tests/test_agent_case_rag.py tests/test_case_rag_report.py -q
+请先查这些对象是否存在，不要直接盲跑迁移：
+
+```sql
+select
+  to_regclass('public.experience_library_entries') as experience_entries,
+  to_regclass('public.experience_library_rag_chunks') as experience_rag_chunks;
 ```
 
-如果环境允许，再跑：
-
-```powershell
-.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests -q
-```
-
-前端：
-
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
-npm run test:unit -- lib/cases.test.ts
-npm run typecheck
-npm run lint
-npm run build
-```
-
-如果完整测试/build 失败，先区分是代码问题还是 Windows/依赖/网络/权限问题，不要直接归咎代码。
-
-### P2：真实 Supabase 迁移和 pgvector 验证
-
-需要在真实 Supabase 项目执行：
-
-```text
-truthseeker-api/sql/migrations/20260601_case_library_rag_chunks.sql
-```
-
-执行后验证：
+再查函数和扩展：
 
 ```sql
 select extname from pg_extension where extname = 'vector';
-select count(*) from public.case_library_rag_chunks;
-select indexname from pg_indexes where tablename = 'case_library_rag_chunks';
-select proname from pg_proc where proname = 'match_case_library_rag_chunks';
+
+select
+  n.nspname as schema_name,
+  p.proname as function_name,
+  pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'match_experience_library_rag_chunks';
 ```
 
-注意：不要把 service role key 或 JWT secret 输出到聊天。
+如果表已存在，还要查列是否齐全：
 
-### P3：接入 SiliconFlow embedding API 并回填索引
-
-用户计划使用 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B`。
-
-后端 `.env` 至少需要：
-
-```env
-CASE_RAG_ENABLED=true
-CASE_RAG_TOP_K=5
-EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
-EMBEDDING_API_KEY=<用户真实 key>
-EMBEDDING_MODEL=Qwen/Qwen3-VL-Embedding-8B
-EMBEDDING_DIMENSIONS=1024
+```sql
+select column_name, data_type, udt_name
+from information_schema.columns
+where table_schema = 'public'
+  and table_name in ('experience_library_entries', 'experience_library_rag_chunks')
+order by table_name, ordinal_position;
 ```
 
-回填命令：
+再查 policy，避免重复创建 policy 报错：
 
-```powershell
-cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
-.\venv_new\Scripts\python.exe scripts\rebuild_case_rag_index.py --include-builtin --include-public
+```sql
+select schemaname, tablename, policyname, cmd
+from pg_policies
+where schemaname = 'public'
+  and tablename in ('experience_library_entries', 'experience_library_rag_chunks')
+order by tablename, policyname;
 ```
+
+### 2. 根据检查结果执行迁移
+
+如果两张表和函数都不存在，优先执行完整迁移文件：
+
+```text
+D:\a311\系统赛\2026系统赛\信安\truthseeker-api\sql\migrations\20260603_experience_library.sql
+```
+
+如果数据库处于“部分迁移”状态，不要重复执行整份 SQL，因为 `create policy ...` 没有 `if not exists`，重复跑可能报 `policy already exists`。这种情况下请只补缺失对象，或者先明确列出哪些对象已存在、哪些缺失，再执行最小 SQL。
+
+重要依赖：
+
+- `public.profiles(id)` 必须存在。
+- `public.tasks(id)` 必须存在。
+- `public.consultation_sessions(id)` 必须存在。
+- `public.set_updated_at()` 必须存在。
+- Supabase 项目需要支持 `pgvector` / `vector` 扩展。
+
+如果 `create extension if not exists vector;` 失败，先确认 Supabase 项目是否启用 pgvector。不要改代码绕过，因为个人经验检索需要 `embedding vector(1024)`。
+
+### 3. 迁移后做数据库验证
+
+迁移完成后重新执行：
+
+```sql
+select
+  to_regclass('public.experience_library_entries') as experience_entries,
+  to_regclass('public.experience_library_rag_chunks') as experience_rag_chunks;
+```
+
+确认 `experience_library_rag_chunks.embedding` 是 `vector`：
+
+```sql
+select column_name, udt_name
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'experience_library_rag_chunks'
+  and column_name = 'embedding';
+```
+
+确认函数存在：
+
+```sql
+select
+  n.nspname as schema_name,
+  p.proname as function_name,
+  pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'match_experience_library_rag_chunks';
+```
+
+预期结果：
+
+- 两张表都返回 `public.xxx`，不是 `null`
+- `embedding` 的 `udt_name` 应该是 `vector`
+- 函数存在，参数包含 `query_embedding vector(1024), match_user_id uuid, match_agent text, match_count integer`
+
+### 4. 验证后端接口
+
+需要验证真实接口从 503 恢复为可用。
+
+优先用浏览器登录态或用户提供的本地前端页面验证。也可以从前端 Network 面板看：
+
+- 请求：`GET /api/v1/experiences?agent=all&q=&page=1&page_size=9`
+- 预期：200
+- 响应示例：
+
+```json
+{
+  "items": [],
+  "page": 1,
+  "page_size": 9,
+  "total": 0
+}
+```
+
+注意：
+
+- 空数组是正常状态，表示当前账号还没有个人经验。
+- 401 `需要登录` 表示没有登录或 token 没传，不是数据库迁移问题。
+- 503 `个人经验库暂时不可用` 才是当前要解决的主要症状。
+
+如果能查看后端日志，请确认不再出现：
+
+```text
+Failed to list experiences for user ...
+```
+
+### 5. 验证前端页面
+
+打开：
+
+```text
+http://localhost:3000/experiences
+```
+
+或用户当前运行的前端地址对应的 `/experiences`。
 
 预期：
 
-- 至少 4 个内置案例被索引。
-- 如果 Supabase 里已有 `case_library_entries` 且含 `report_markdown`，真实公开案例也应被索引。
-- 如果 embedding API key 不对、额度不足、网络失败，脚本应报告错误而不是伪装成功。
+- 已登录时不再显示“个人经验库暂时不可用”。
+- 如果还没有数据，应显示“当前筛选下还没有个人经验”。
+- 筛选按钮“全部 / 取证 Agent / 溯源 Agent / 质询 Agent”和搜索框应保留可操作。
 
-### P4：真实检测流验证
+如果页面仍报错，请用浏览器 Network 面板区分：
 
-建议最小真实验证：
+- 后端是否仍返回 503
+- 是否变成 401 登录问题
+- 是否前端 `NEXT_PUBLIC_API_BASE_URL` 指错后端
+- 后端服务是否没启动或 CORS 失败
 
-1. 启动后端。
-2. 启动前端。
-3. 打开 `/cases`。
-4. 点击 4 个内置案例任意一个，确认进入 `/cases/builtin-*` 并渲染 Markdown 报告。
-5. 创建一个小型检测任务，触发 Forensics/OSINT。
-6. 确认 agent log 或 audit log 有 `case_rag.<status>`。
-7. 下载 Markdown 报告，确认出现“公开案例 RAG 调用情况”章节。
-8. 确认 RAG 命中只作为类案参考，没有直接改最终裁决分数。
+## 建议运行的本地代码检查
 
-### P5：提交、推送或交给用户决策
+如果你需要确认代码侧没有明显问题，可以运行这些局部测试。
 
-只有在你完成必要验证并确认无严重问题后再提交。
-
-提交信息必须用 Angular 风格且 subject 用中文，例如：
-
-```text
-feat: 实现公开案例库 RAG 工具化
-```
-
-提交前：
+后端优先使用项目虚拟环境：
 
 ```powershell
-git status --short
-git diff --check
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-api
+.\venv_new\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_experience_library.py -q
 ```
 
-选择性 staging，不要混入无关文件。
+前端局部测试：
 
-## 需要避免的事项
+```powershell
+cd D:\a311\系统赛\2026系统赛\信安\truthseeker-web
+npm run test:unit -- lib/experiences.test.ts
+```
 
-- 不要把历史相似案例写成当前检材事实。
-- 不要让 RAG 命中直接改变 `confidence`、`deepfake_score`、`risk_score` 或最终 verdict。
-- 不要在 `.env.example` 之外提交真实 API key。
-- 不要把完整 signed URL、token、service role key、JWT secret 写进报告、日志或测试输出。
-- 不要在未执行 Supabase 迁移前宣称 RAG 远端可用。
-- 不要在未填 `EMBEDDING_API_KEY` 前宣称 SiliconFlow embedding 已真实可用。
-- 不要覆盖旧的公开案例库真实化能力；本轮是在其基础上新增 RAG。
-- 不要把 Codex 沙盒里的网络/权限失败误判为项目代码失败。
+如果本地测试因为依赖、网络、权限或环境失败，请记录真实错误，不要把它混同为迁移失败。
 
-## 预期最终交付
+## 不要做的事
 
-你完成后请用中文简洁汇报：
+- 不要推送 `main`，除非用户明确要求并确认。
+- 不要把真实 Supabase key、JWT、token 写入交接文档或聊天。
+- 不要删除未跟踪文件。
+- 不要重置工作区。
+- 不要为了让页面不报错而把前端 503 文案改成空状态；必须先解决数据库对象缺失或后端查询失败的根因。
+- 不要在没有验证接口状态的情况下告诉用户“已经好了”。
 
-1. 做了什么。
-2. 当前结果是否可直接使用。
-3. 实际验证命令和结果。
-4. 未验证或失败的内容及原因。
-5. 是否需要用户提供 SiliconFlow key、Supabase 权限或其他外部资源。
-6. 如已提交/推送，说明 commit SHA 和分支。
+## 最终汇报格式
+
+请按下面结构向用户汇报：
+
+### 1. 完成了什么
+
+说明检查了哪些 Supabase 对象，执行了哪些迁移或补齐了哪些缺失对象。
+
+### 2. 当前结果是否可用
+
+明确写：
+
+- 已可直接使用，或
+- 基本可用但还有限制，或
+- 尚未完成，暂不能直接使用
+
+### 3. 实际验证
+
+只写真正执行过的验证，例如：
+
+- Supabase 表/函数/扩展查询结果
+- `GET /api/v1/experiences` 的 HTTP 状态和响应
+- 前端 `/experiences` 页面的实际显示
+- 后端或前端测试命令结果
+
+### 4. 残留问题与是否需要用户介入
+
+如果需要用户登录、提供 Supabase 权限、填写 env、启动服务或确认生产项目，请明确写清楚。

@@ -1,6 +1,5 @@
 """报告生成服务 — Markdown + PDF 报告"""
 import asyncio
-import importlib
 import io
 import inspect
 import json
@@ -8,6 +7,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -165,6 +165,11 @@ async def generate_markdown_report(task_id: str) -> str:
     audit_logs = data.get("audit_logs") or []
     consultation_sessions = data.get("consultation_sessions") or []
     consultation_messages = data.get("consultation_messages") or []
+    detection_run_id = _resolve_final_detection_run_id(task, report, analysis_states, agent_logs, audit_logs)
+    if detection_run_id:
+        analysis_states = _filter_rows_by_detection_run_id(analysis_states, detection_run_id)
+        agent_logs = _filter_rows_by_detection_run_id(agent_logs, detection_run_id)
+        audit_logs = _filter_audit_logs_for_detection_run(audit_logs, detection_run_id)
 
     lines: list[str] = []
 
@@ -182,7 +187,7 @@ async def generate_markdown_report(task_id: str) -> str:
     lines.append(f"| 输入类型 | {display_input_type(task.get('input_type'))} |")
     lines.append(f"| 状态 | {task.get('status', 'N/A')} |")
     lines.append(f"| 创建时间 | {_fmt_time(task.get('created_at'))} |")
-    lines.append(f"| 更新时间 | {_fmt_time(task.get('updated_at'))} |")
+    lines.append(f"| 完成时间 | {_fmt_time(task.get('completed_at'))} |")
     if report and report.get("report_hash"):
         lines.append(f"| 报告 Hash | `{report.get('report_hash')}` |")
     lines.append("")
@@ -213,9 +218,28 @@ async def generate_markdown_report(task_id: str) -> str:
     forensics = _extract_agent_result(analysis_states, "forensics")
     osint = _extract_agent_result(analysis_states, "osint") or _derive_osint_result_from_final_verdict(result)
     degraded_items: list[str] = []
-    tool_failures: list[str] = []
+    tool_limitations: list[str] = []
 
-    def _collect_tool_failures(agent_result: dict | None) -> None:
+    def _format_tool_summary(tool_summary: dict) -> str:
+        total = int(tool_summary.get("total", 0) or 0)
+        success = int(tool_summary.get("success", 0) or 0)
+        partial = int(tool_summary.get("partial", 0) or 0)
+        available = int(tool_summary.get("available", success + partial) or 0)
+        degraded = int(tool_summary.get("degraded", 0) or 0)
+        failed = int(tool_summary.get("failed", 0) or 0)
+        other = int(tool_summary.get("other", max(0, total - available - degraded - failed)) or 0)
+        parts = [
+            f"可用 {available}/{total or '?'}",
+            f"完整成功 {success}",
+        ]
+        if partial:
+            parts.append(f"部分可用 {partial}")
+        if other:
+            parts.append(f"其他 {other}")
+        parts.extend([f"降级 {degraded}", f"失败 {failed}"])
+        return "，".join(parts)
+
+    def _collect_tool_limitations(agent_result: dict | None) -> None:
         if not agent_result:
             return
         tool_results = agent_result.get("tool_results") or agent_result.get("tool_matrix") or []
@@ -223,32 +247,27 @@ async def generate_markdown_report(task_id: str) -> str:
             if not isinstance(item, dict):
                 continue
             status = item.get("status")
-            if status in ("degraded", "failed"):
+            if status in ("partial", "degraded", "failed"):
                 tool_name = item.get("tool", "unknown")
                 target = item.get("target", "")
                 error = item.get("error", "")
                 summary = item.get("summary", "")
-                detail = f"{tool_name} ({target})"
+                status_label = {"partial": "部分可用", "degraded": "降级", "failed": "失败"}.get(status, str(status))
+                detail = f"{tool_name} [{status_label}] ({target})"
                 if error:
                     detail += f" — 错误: {error}"
                 elif summary:
                     detail += f" — {summary}"
-                tool_failures.append(detail)
+                tool_limitations.append(detail)
 
     if forensics and forensics.get("degraded"):
         tool_summary = forensics.get("tool_summary") or {}
-        degraded_items.append(
-            f"{_agent_display_name('forensics')} 降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
-            f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
-        )
-        _collect_tool_failures(forensics)
+        degraded_items.append(f"{_agent_display_name('forensics')} 降级（{_format_tool_summary(tool_summary)}）")
+        _collect_tool_limitations(forensics)
     if osint and osint.get("degraded"):
         tool_summary = osint.get("tool_summary") or {}
-        degraded_items.append(
-            f"{_agent_display_name('osint')} 降级（成功 {tool_summary.get('success', '?')}/{tool_summary.get('total', '?')}，"
-            f"降级 {tool_summary.get('degraded', 0)}，失败 {tool_summary.get('failed', 0)}）"
-        )
-        _collect_tool_failures(osint)
+        degraded_items.append(f"{_agent_display_name('osint')} 降级（{_format_tool_summary(tool_summary)}）")
+        _collect_tool_limitations(osint)
     if result:
         forensics_degraded = (result.get("forensics_summary") or {}).get("degraded")
         osint_degraded = (result.get("osint_summary") or {}).get("degraded")
@@ -261,16 +280,16 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("")
         for item in degraded_items:
             lines.append(f"- {item}")
-        if tool_failures:
+        if tool_limitations:
             lines.append("")
-            lines.append("**具体工具失败详情**:")
-            for detail in tool_failures[:10]:
+            lines.append("**具体工具受限/失败详情**:")
+            for detail in tool_limitations[:10]:
                 lines.append(f"  - {detail}")
-            if len(tool_failures) > 10:
-                lines.append(f"  - ... 及其他 {len(tool_failures) - 10} 个工具失败")
+            if len(tool_limitations) > 10:
+                lines.append(f"  - ... 及其他 {len(tool_limitations) - 10} 个工具受限或失败")
         lines.append("")
-        lines.append("> **注意**: 降级模式下部分结果基于启发式模拟或本地推理，可靠性低于完整外部检测。"
-                    "建议在网络恢复或服务正常后重新检测。")
+        lines.append("> **注意**: 降级或部分可用表示外部工具权限、额度、网络或接口返回不完整；"
+                    "已取得的数据仍会保留，但缺失部分需要在服务恢复或权限补齐后复核。")
         lines.append("")
 
     # ---- Forensics 分析 ----
@@ -368,10 +387,24 @@ async def generate_audit_log_markdown(task_id: str) -> str:
     data_or_coro = _fetch_task_data(task_id)
     data = await data_or_coro if inspect.isawaitable(data_or_coro) else data_or_coro
     task = data["task"]
-    entries = _collect_audit_entries(
-        data.get("agent_logs") or [],
+    audit_logs = data.get("audit_logs") or []
+    detection_run_id = _resolve_final_detection_run_id(
+        task,
+        data.get("report"),
         data.get("analysis_states") or [],
-        data.get("audit_logs") or [],
+        data.get("agent_logs") or [],
+        audit_logs,
+    )
+    analysis_states = data.get("analysis_states") or []
+    agent_logs = data.get("agent_logs") or []
+    if detection_run_id:
+        analysis_states = _filter_rows_by_detection_run_id(analysis_states, detection_run_id)
+        agent_logs = _filter_rows_by_detection_run_id(agent_logs, detection_run_id)
+        audit_logs = _filter_audit_logs_for_detection_run(audit_logs, detection_run_id)
+    entries = _collect_audit_entries(
+        agent_logs,
+        analysis_states,
+        audit_logs,
     )
     lines = [
         "# TruthSeeker 全程审计日志",
@@ -390,6 +423,12 @@ async def generate_audit_log_markdown(task_id: str) -> str:
     return "\n".join(lines)
 
 
+async def generate_audit_log_pdf(task_id: str) -> bytes:
+    """Generate the complete audit log as a PDF file."""
+    md_content = await generate_audit_log_markdown(task_id)
+    return _render_markdown_pdf_with_fpdf_or_pillow(md_content)
+
+
 # ---------------------------------------------------------------------------
 # PDF 报告
 # ---------------------------------------------------------------------------
@@ -397,36 +436,7 @@ async def generate_audit_log_markdown(task_id: str) -> str:
 async def generate_pdf_report(task_id: str) -> bytes:
     """生成 PDF 格式的鉴伪与溯源分析报告"""
     md_content = await generate_markdown_report(task_id)
-
-    # MD -> HTML
-    try:
-        import markdown as md_lib
-        html_body = md_lib.markdown(
-            md_content,
-            extensions=["tables", "fenced_code", "toc"],
-        )
-    except ImportError:
-        # 极简 fallback
-        html_body = f"<pre>{md_content}</pre>"
-
-    html_full = _wrap_html_template(html_body)
-
-    # HTML -> PDF
-    try:
-        HTML = importlib.import_module("weasyprint").HTML
-
-        pdf_bytes = HTML(string=html_full).write_pdf()
-        return pdf_bytes
-    except ImportError as exc:
-        logger.warning("weasyprint not installed, using Pillow PDF fallback: %s", exc)
-        return _render_markdown_pdf_with_pillow(md_content)
-    except Exception as e:
-        logger.warning("weasyprint PDF generation failed, using Pillow PDF fallback: %s", e)
-        try:
-            return _render_markdown_pdf_with_pillow(md_content)
-        except Exception as fallback_exc:
-            logger.error("Pillow PDF fallback failed: %s", fallback_exc)
-            raise HTTPException(status_code=500, detail="PDF 生成失败")
+    return _render_markdown_pdf_with_fpdf_or_pillow(md_content)
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +460,152 @@ def _fmt_confidence(value) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.1%}"
     return str(value)
+
+
+def _metadata_detection_run_id(value) -> str | None:
+    metadata = _as_dict(value)
+    run_id = metadata.get("detection_run_id")
+    return str(run_id) if run_id else None
+
+
+def _row_detection_run_id(row: dict) -> str | None:
+    if not isinstance(row, dict):
+        return None
+    direct = row.get("detection_run_id")
+    if direct:
+        return str(direct)
+    metadata_id = _metadata_detection_run_id(row.get("metadata"))
+    if metadata_id:
+        return metadata_id
+    snapshot = _as_dict(row.get("result_snapshot"))
+    snapshot_id = snapshot.get("detection_run_id")
+    if snapshot_id:
+        return str(snapshot_id)
+    final_verdict = _as_dict(snapshot.get("final_verdict"))
+    verdict_run_id = final_verdict.get("detection_run_id")
+    if verdict_run_id:
+        return str(verdict_run_id)
+    board = _as_dict(row.get("evidence_board"))
+    board_run_id = board.get("detection_run_id")
+    if board_run_id:
+        return str(board_run_id)
+    payload = _as_dict(row.get("verdict_payload"))
+    payload_run_id = payload.get("detection_run_id")
+    if payload_run_id:
+        return str(payload_run_id)
+    result = _as_dict(row.get("result"))
+    result_run_id = result.get("detection_run_id")
+    return str(result_run_id) if result_run_id else None
+
+
+def _resolve_final_detection_run_id(
+    task: dict,
+    report: dict | None,
+    analysis_states: list,
+    agent_logs: list,
+    audit_logs: list,
+) -> str | None:
+    report_run_id = _row_detection_run_id(report or {})
+    if report_run_id:
+        return report_run_id
+
+    task_result = _as_dict(task.get("result"))
+    task_result_id = task_result.get("detection_run_id")
+    if task_result_id:
+        return str(task_result_id)
+
+    metadata = _as_dict(task.get("metadata"))
+    metadata_run_id = metadata.get("last_detection_run_id") or metadata.get("active_detection_run_id")
+    if metadata_run_id:
+        return str(metadata_run_id)
+
+    for row in reversed(analysis_states):
+        run_id = _row_detection_run_id(row)
+        snapshot = _as_dict(row.get("result_snapshot") if isinstance(row, dict) else None)
+        if run_id and _as_dict(snapshot.get("final_verdict")).get("verdict"):
+            return run_id
+
+    for row in reversed(audit_logs):
+        if not isinstance(row, dict):
+            continue
+        action = str(row.get("action") or "")
+        if action in {"detect_completed", "report_generated"}:
+            run_id = _row_detection_run_id(row)
+            if run_id:
+                return run_id
+
+    for row in reversed(agent_logs):
+        run_id = _row_detection_run_id(row)
+        if run_id:
+            return run_id
+    return None
+
+
+def _filter_rows_by_detection_run_id(rows: list, detection_run_id: str) -> list:
+    if not detection_run_id:
+        return rows
+    row_run_ids = [_row_detection_run_id(row) for row in rows if isinstance(row, dict)]
+    if not any(row_run_ids):
+        return rows
+    return [
+        row for row in rows
+        if isinstance(row, dict) and _row_detection_run_id(row) == detection_run_id
+    ]
+
+
+def _row_time(row: dict) -> datetime:
+    if not isinstance(row, dict):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return _parse_timeline_time(
+        row.get("created_at")
+        or row.get("timestamp")
+        or row.get("updated_at")
+        or row.get("generated_at")
+    )
+
+
+def _filter_audit_logs_for_detection_run(audit_logs: list, detection_run_id: str) -> list:
+    if not detection_run_id:
+        return audit_logs
+    explicit_ids = [_row_detection_run_id(row) for row in audit_logs if isinstance(row, dict)]
+    if not any(explicit_ids):
+        return audit_logs
+
+    matching = [
+        row for row in audit_logs
+        if isinstance(row, dict) and _row_detection_run_id(row) == detection_run_id
+    ]
+    starts = [
+        row for row in matching
+        if str(row.get("action") or "") == "detect_start"
+    ]
+    terminals = [
+        row for row in matching
+        if str(row.get("action") or "") in {
+            "detect_completed",
+            "detect_failed",
+            "detect_cancelled",
+            "report_generated",
+        }
+    ]
+    if not starts:
+        return matching
+
+    start_time = min(_row_time(row) for row in starts)
+    end_time = max((_row_time(row) for row in terminals), default=datetime.max.replace(tzinfo=timezone.utc))
+    filtered: list = []
+    for row in audit_logs:
+        if not isinstance(row, dict):
+            continue
+        row_run_id = _row_detection_run_id(row)
+        if row_run_id:
+            if row_run_id == detection_run_id:
+                filtered.append(row)
+            continue
+        row_time = _row_time(row)
+        if start_time <= row_time <= end_time:
+            filtered.append(row)
+    return filtered
 
 
 def _agent_display_name(agent_name: str) -> str:
@@ -960,18 +1116,27 @@ def _group_logs_by_round(logs: list) -> dict:
     return dict(sorted(grouped.items()))
 
 
+PDF_FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\simhei.ttf",
+    r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\msyhbd.ttc",
+    r"C:\Windows\Fonts\simsun.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/PingFang.ttc",
+]
+
+
+def _find_pdf_font_path() -> str | None:
+    for path in PDF_FONT_CANDIDATES:
+        if Path(path).exists():
+            return path
+    return None
+
+
 def _load_pdf_font(size: int):
     from PIL import ImageFont
 
-    candidates = [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyhbd.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/System/Library/Fonts/PingFang.ttc",
-    ]
-    for path in candidates:
+    for path in PDF_FONT_CANDIDATES:
         try:
             return ImageFont.truetype(path, size=size)
         except Exception:
@@ -979,40 +1144,124 @@ def _load_pdf_font(size: int):
     return ImageFont.load_default()
 
 
-def _clean_markdown_markup(text: str) -> str:
-    """移除 Markdown 标记符号，用于纯文本 / Pillow PDF fallback 渲染"""
-    # 粗体 **text**
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    # 斜体 *text*（确保不处理已被替换的或连续 *）
-    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
-    # 行内代码 `text`
-    text = re.sub(r"`(.+?)`", r"\1", text)
-    # 链接 [text](url) -> text
-    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
-    return text
+def _render_markdown_pdf_with_fpdf_or_pillow(markdown_content: str) -> bytes:
+    try:
+        return _render_markdown_pdf_with_fpdf(markdown_content)
+    except Exception as exc:
+        logger.warning("Text PDF generation failed, using Pillow PDF fallback: %s", exc)
+        try:
+            return _render_markdown_pdf_with_pillow(markdown_content)
+        except Exception as fallback_exc:
+            logger.error("Pillow PDF fallback failed: %s", fallback_exc)
+            raise HTTPException(status_code=500, detail="PDF 生成失败")
 
 
-def _display_markdown_line(line: str) -> tuple[str, int]:
-    stripped = line.strip()
-    if not stripped:
-        return "", 0
-    if stripped.startswith("#"):
-        level = len(stripped) - len(stripped.lstrip("#"))
-        text = _clean_markdown_markup(stripped[level:].strip())
-        return text, min(level, 3)
-    if stripped.startswith("|"):
-        text = stripped.replace("|", "  ")
-        text = _clean_markdown_markup(text)
-        return text, 0
-    # 移除列表与引用标记
-    if stripped.startswith("- "):
-        stripped = stripped[2:]
-    elif stripped.startswith("* "):
-        stripped = stripped[2:]
-    elif stripped.startswith("> "):
-        stripped = stripped[2:]
-    text = _clean_markdown_markup(stripped)
-    return text, 0
+def _render_markdown_pdf_with_fpdf(markdown_content: str) -> bytes:
+    from fpdf import FPDF
+
+    font_path = _find_pdf_font_path()
+    if not font_path:
+        raise RuntimeError("No usable PDF font found")
+
+    pdf = FPDF(format="A4", unit="mm")
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_margins(left=16, top=16, right=16)
+    pdf.add_page()
+    pdf.add_font("TruthSeeker", "", font_path)
+
+    text_width = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def add_line(text: str, level: int) -> None:
+        style = _fpdf_text_style(level, text)
+        pdf.set_font("TruthSeeker", size=style["size"])
+        pdf.set_text_color(*style["color"])
+        if style["before"]:
+            pdf.ln(style["before"])
+        for wrapped in _wrap_fpdf_text_for_width(text, pdf, text_width):
+            pdf.cell(w=text_width, h=style["height"], text=wrapped, new_x="LMARGIN", new_y="NEXT")
+        if style["rule"]:
+            y = pdf.get_y() + 1
+            pdf.set_draw_color(*style["rule_color"])
+            pdf.set_line_width(0.25)
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.ln(3)
+        elif style["after"]:
+            pdf.ln(style["after"])
+
+    for raw_line in markdown_content.splitlines():
+        text, level = _display_markdown_line(raw_line)
+        if not text:
+            pdf.ln(3)
+            continue
+        add_line(text, level)
+
+    return bytes(pdf.output())
+
+
+def _fpdf_text_style(level: int, text: str) -> dict:
+    body_color = (17, 24, 39)
+    if level == 1:
+        return {
+            "size": 17,
+            "height": 9,
+            "color": (15, 59, 95),
+            "before": 1,
+            "after": 0,
+            "rule": True,
+            "rule_color": (37, 99, 135),
+        }
+    if level == 2:
+        return {
+            "size": 14,
+            "height": 8,
+            "color": (15, 59, 95),
+            "before": 3,
+            "after": 1,
+            "rule": False,
+            "rule_color": (37, 99, 135),
+        }
+    if level == 3:
+        return {
+            "size": 12,
+            "height": 7,
+            "color": (31, 95, 133),
+            "before": 2,
+            "after": 1,
+            "rule": False,
+            "rule_color": (37, 99, 135),
+        }
+    warning_markers = ("注意", "降级", "失败", "错误", "风险")
+    if any(marker in text for marker in warning_markers):
+        color = (146, 64, 14)
+    else:
+        color = body_color
+    return {
+        "size": 10.5,
+        "height": 6,
+        "color": color,
+        "before": 0,
+        "after": 0,
+        "rule": False,
+        "rule_color": (37, 99, 135),
+    }
+
+
+def _wrap_fpdf_text_for_width(text: str, pdf, max_width: float) -> list[str]:
+    if not text:
+        return [""]
+
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        candidate = f"{current}{char}"
+        if current and pdf.get_string_width(candidate) > max_width:
+            lines.append(current.rstrip())
+            current = char.lstrip()
+        else:
+            current = candidate
+    if current:
+        lines.append(current.rstrip())
+    return lines or [""]
 
 
 def _wrap_text_for_width(text: str, font, max_width: int, draw) -> list[str]:
@@ -1094,89 +1343,41 @@ def _resolve_final_result(task: dict, report: dict | None) -> Optional[dict]:
     return None
 
 
-def _wrap_html_template(body: str) -> str:
-    """将 HTML body 包裹在带暗色主题样式的完整 HTML 模板中"""
-    return f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>TruthSeeker 鉴伪与溯源分析报告</title>
-<style>
-  @page {{
-    size: A4;
-    margin: 2cm;
-  }}
-  body {{
-    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-    font-size: 12pt;
-    line-height: 1.7;
-    color: #e0e0e0;
-    background-color: #1a1a2e;
-    padding: 2rem;
-  }}
-  h1 {{
-    color: #00d4ff;
-    border-bottom: 2px solid #00d4ff;
-    padding-bottom: 0.4em;
-    text-align: center;
-  }}
-  h2 {{
-    color: #0abde3;
-    border-bottom: 1px solid #333;
-    padding-bottom: 0.3em;
-    margin-top: 1.8em;
-  }}
-  h3 {{
-    color: #48dbfb;
-    margin-top: 1.2em;
-  }}
-  table {{
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1em 0;
-    background-color: #16213e;
-  }}
-  th, td {{
-    border: 1px solid #333;
-    padding: 0.5em 0.8em;
-    text-align: left;
-  }}
-  th {{
-    background-color: #0f3460;
-    color: #48dbfb;
-  }}
-  tr:nth-child(even) {{
-    background-color: #1a1a3e;
-  }}
-  code {{
-    background-color: #2d2d44;
-    padding: 0.15em 0.4em;
-    border-radius: 3px;
-    font-size: 0.9em;
-  }}
-  pre {{
-    background-color: #0f0f23;
-    padding: 1em;
-    border-radius: 5px;
-    overflow-x: auto;
-  }}
-  strong {{
-    color: #feca57;
-  }}
-  a {{
-    color: #54a0ff;
-  }}
-  hr {{
-    border: none;
-    border-top: 1px solid #333;
-    margin: 2em 0;
-  }}
-  em {{
-    color: #a0a0b0;
-  }}
-</style>
-</head>
-<body>
-{body}
-</body>
-</html>"""
+def _clean_markdown_markup(text: str) -> str:
+    """移除 Markdown 标记符号，用于纯文本 / Pillow PDF fallback 渲染"""
+    # 粗体 **text**
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    # 斜体 *text*（确保不处理已被替换的或连续 *）
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
+    # 行内代码 `text`
+    text = re.sub(r"`(.+?)`", r"\1", text)
+    # 链接 [text](url) -> text
+    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
+    text = text.replace("⚠️", "注意").replace("⚠", "注意")
+    text = text.replace("↔", "<->").replace("Δ", "Delta")
+    return text
+
+
+def _display_markdown_line(line: str) -> tuple[str, int]:
+    stripped = line.strip()
+    if not stripped:
+        return "", 0
+    if re.fullmatch(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", stripped):
+        return "", 0
+    if stripped.startswith("#"):
+        level = len(stripped) - len(stripped.lstrip("#"))
+        text = _clean_markdown_markup(stripped[level:].strip())
+        return text, min(level, 3)
+    if stripped.startswith("|"):
+        text = stripped.replace("|", "  ")
+        text = _clean_markdown_markup(text)
+        return text, 0
+    # 移除列表与引用标记
+    if stripped.startswith("- "):
+        stripped = stripped[2:]
+    elif stripped.startswith("* "):
+        stripped = stripped[2:]
+    elif stripped.startswith("> "):
+        stripped = stripped[2:]
+    text = _clean_markdown_markup(stripped)
+    return text, 0

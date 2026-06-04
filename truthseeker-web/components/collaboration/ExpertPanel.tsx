@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getAuthToken } from "@/lib/auth"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import { canModerateConsultation, ConsultationState } from "@/hooks/useAgentStream"
+import { confirmExperienceDrafts, type ExperienceDraft } from "@/lib/experiences"
 import {
     filterDisplayComments,
     mergeConsultationComments,
@@ -149,6 +150,17 @@ function readExpertTasks(context: ConsultationState["context"] | undefined): Exp
         .filter((item): item is ExpertTask => item !== null)
 }
 
+function firstHelpNeeded(context: ConsultationState["context"] | undefined) {
+    return helpNeededItems(context)[0]
+}
+
+function helpNeededItems(context: ConsultationState["context"] | undefined): string[] {
+    const value = context?.helpNeeded as unknown
+    if (Array.isArray(value)) return value
+    if (typeof value === "string" && value.trim()) return [value.trim()]
+    return []
+}
+
 export function ExpertPanel({
     taskId,
     inviteToken,
@@ -166,6 +178,9 @@ export function ExpertPanel({
     const [inputValue, setInputValue] = useState("")
     const [contextExpanded, setContextExpanded] = useState(false)
     const [editableSummary, setEditableSummary] = useState("")
+    const [editableExperienceDrafts, setEditableExperienceDrafts] = useState<ExperienceDraft[]>([])
+    const [experiencePending, setExperiencePending] = useState(false)
+    const [experienceStatus, setExperienceStatus] = useState<string | null>(null)
     const [statusOverride, setStatusOverride] = useState<ConsultationState["status"] | null>(null)
     const [moderationPending, setModerationPending] = useState(false)
     const sentIdsRef = useRef<Set<string>>(new Set())
@@ -201,6 +216,11 @@ export function ExpertPanel({
             setEditableSummary(consultationState.summaryDraft)
         }
     }, [consultationState?.summaryDraft])
+
+    useEffect(() => {
+        setEditableExperienceDrafts(consultationState?.experienceDrafts ?? [])
+        setExperienceStatus(null)
+    }, [consultationState?.lastEventType, consultationState?.experienceDrafts])
 
     useEffect(() => {
         setStatusOverride(null)
@@ -372,6 +392,53 @@ export function ExpertPanel({
         return response.json() as Promise<{ session?: Record<string, unknown> }>
     }
 
+    const updateExperienceDraft = (index: number, patch: Partial<ExperienceDraft>) => {
+        setEditableExperienceDrafts((current) => current.map((item, itemIndex) => (
+            itemIndex === index ? { ...item, ...patch } : item
+        )))
+    }
+
+    const removeExperienceDraft = (index: number) => {
+        setEditableExperienceDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    }
+
+    const handleConfirmExperienceDrafts = async () => {
+        const sessionId = getSessionId(consultationState)
+        if (!sessionId || experiencePending) return
+        const drafts = editableExperienceDrafts
+            .map((draft) => ({
+                ...draft,
+                title: draft.title.trim(),
+                target_agents: draft.target_agents.map((agent) => agent.trim()).filter(Boolean),
+                problem_pattern: draft.problem_pattern.trim(),
+                recommended_method: draft.recommended_method.trim(),
+                evidence_to_check: draft.evidence_to_check.map((item) => item.trim()).filter(Boolean),
+                when_to_escalate: draft.when_to_escalate.trim(),
+                limitations: draft.limitations.trim(),
+            }))
+            .filter((draft) => draft.title && draft.target_agents.length > 0 && draft.problem_pattern && draft.recommended_method)
+        if (drafts.length === 0) {
+            setExperienceStatus("没有可入库的个人经验草稿")
+            return
+        }
+        setExperiencePending(true)
+        try {
+            const token = await getAuthToken()
+            if (!token) throw new Error("请先登录")
+            const result = await confirmExperienceDrafts({
+                task_id: taskId,
+                session_id: sessionId,
+                drafts,
+            }, token)
+            setEditableExperienceDrafts([])
+            setExperienceStatus(`已入库 ${result.inserted} 条个人经验，索引 ${result.indexed_chunks} 个向量块`)
+        } catch (err) {
+            setExperienceStatus(err instanceof Error ? err.message : "个人经验入库失败")
+        } finally {
+            setExperiencePending(false)
+        }
+    }
+
     const handleModerationAction = async (action: "approve" | "skip" | "end_consultation" | "confirm_summary") => {
         if (!canModerate || moderationPending) return
         setModerationPending(true)
@@ -437,6 +504,7 @@ export function ExpertPanel({
 
     const context = consultationState?.context
     const expertTasks = readExpertTasks(context)
+    const helpNeeded = helpNeededItems(context)
     const showApprovalActions = canModerate && effectiveStatus === "approval_required"
     const canEndConsultation = canModerate && effectiveStatus === "started"
     const canConfirmSummary = canModerate && effectiveStatus === "summary_pending"
@@ -444,7 +512,7 @@ export function ExpertPanel({
         expertTasks.length > 0 ||
         context?.background ||
         context?.progress ||
-        context?.helpNeeded ||
+        helpNeeded.length > 0 ||
         (context?.blockers.length ?? 0) > 0 ||
         (context?.sampleLinks.length ?? 0) > 0,
     )
@@ -489,7 +557,7 @@ export function ExpertPanel({
                                 <p className="text-[11px] leading-relaxed text-[#FCD34D]">{consultationState.reason}</p>
                             )}
                             <p className="line-clamp-2 text-[11px] leading-relaxed text-white/55">
-                                {context?.progress ?? context?.helpNeeded ?? context?.background ?? context?.blockers?.[0] ?? "等待 Commander 补充会诊上下文。"}
+                                {context?.progress ?? firstHelpNeeded(context) ?? context?.background ?? context?.blockers?.[0] ?? "等待 Commander 补充会诊上下文。"}
                             </p>
                         </div>
                     )}
@@ -516,7 +584,16 @@ export function ExpertPanel({
                                 {context?.background && <div><span className="text-white/35">背景：</span>{context.background}</div>}
                                 {context?.progress && <div><span className="text-white/35">进展：</span>{context.progress}</div>}
                                 {(context?.blockers.length ?? 0) > 0 && <div><span className="text-white/35">阻塞：</span>{context?.blockers.join("；")}</div>}
-                                {context?.helpNeeded && <div><span className="text-white/35">需要帮助：</span>{context.helpNeeded}</div>}
+                                {helpNeeded.length > 0 && (
+                                    <div>
+                                        <span className="text-white/35">需要帮助：</span>
+                                        <ol className="mt-1 space-y-1 pl-5 list-decimal">
+                                            {helpNeeded.map((item) => (
+                                                <li key={item}>{item}</li>
+                                            ))}
+                                        </ol>
+                                    </div>
+                                )}
                             </div>
                             {(context?.sampleLinks.length ?? 0) > 0 && (
                                 <div className="flex flex-wrap gap-1.5">
@@ -664,6 +741,85 @@ export function ExpertPanel({
                                         确认摘要并交给 Commander
                                     </button>
                                 </>
+                            )}
+                            {editableExperienceDrafts.length > 0 && (
+                                <div className="space-y-2 rounded-lg border border-[#06B6D4]/20 bg-[#06B6D4]/5 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[10px] font-semibold text-[#67E8F9]">待入库个人经验草稿</span>
+                                        <span className="text-[10px] text-white/40">{editableExperienceDrafts.length} 条</span>
+                                    </div>
+                                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                                        {editableExperienceDrafts.map((draft, index) => (
+                                            <div key={`${draft.title}-${index}`} className="space-y-1.5 rounded-lg border border-white/10 bg-black/25 p-2">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-[10px] text-white/45">经验 {index + 1}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeExperienceDraft(index)}
+                                                        className="rounded-full border border-red-400/25 px-2 py-0.5 text-[10px] text-red-300 hover:bg-red-500/10"
+                                                    >
+                                                        删除草稿
+                                                    </button>
+                                                </div>
+                                                <input
+                                                    value={draft.title}
+                                                    onChange={(e) => updateExperienceDraft(index, { title: e.target.value })}
+                                                    className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="经验标题"
+                                                />
+                                                <input
+                                                    value={draft.target_agents.join(", ")}
+                                                    onChange={(e) => updateExperienceDraft(index, { target_agents: e.target.value.split(",").map((item) => item.trim()).filter(Boolean) })}
+                                                    className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="适用 Agent，例如 forensics, osint, challenger"
+                                                />
+                                                <textarea
+                                                    value={draft.problem_pattern}
+                                                    onChange={(e) => updateExperienceDraft(index, { problem_pattern: e.target.value })}
+                                                    className="min-h-14 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="适用问题模式"
+                                                />
+                                                <textarea
+                                                    value={draft.recommended_method}
+                                                    onChange={(e) => updateExperienceDraft(index, { recommended_method: e.target.value })}
+                                                    className="min-h-14 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="推荐处理方法"
+                                                />
+                                                <textarea
+                                                    value={draft.evidence_to_check.join("\n")}
+                                                    onChange={(e) => updateExperienceDraft(index, { evidence_to_check: e.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })}
+                                                    className="min-h-12 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="需要核验的证据，每行一项"
+                                                />
+                                                <textarea
+                                                    value={draft.when_to_escalate}
+                                                    onChange={(e) => updateExperienceDraft(index, { when_to_escalate: e.target.value })}
+                                                    className="min-h-10 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="什么时候仍需专家会诊"
+                                                />
+                                                <textarea
+                                                    value={draft.limitations}
+                                                    onChange={(e) => updateExperienceDraft(index, { limitations: e.target.value })}
+                                                    className="min-h-10 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="限制与误用风险"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {experienceStatus && (
+                                        <div className="rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/60">
+                                            {experienceStatus}
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={handleConfirmExperienceDrafts}
+                                        disabled={experiencePending}
+                                        className="w-full rounded-full border border-[#06B6D4]/30 bg-[#06B6D4]/12 px-2 py-1 text-[10px] font-semibold text-[#67E8F9] hover:bg-[#06B6D4]/18 disabled:opacity-40"
+                                    >
+                                        {experiencePending ? "正在入库" : "确认入库个人经验库"}
+                                    </button>
+                                </div>
                             )}
                         </div>
                     )}

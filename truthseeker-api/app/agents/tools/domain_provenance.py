@@ -13,7 +13,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 WHOISXML_WHOIS_URL = "https://www.whoisxmlapi.com/whoisserver/WhoisService"
-WHOISXML_DNS_HISTORY_URL = "https://dns-history.whoisxmlapi.com/api/v1"
+WHOISXML_DNS_LOOKUP_URL = "https://www.whoisxmlapi.com/whoisserver/DNSService"
 WHOISXML_IP_GEOLOCATION_URL = "https://ip-geolocation.whoisxmlapi.com/api/v1"
 
 SECOND_LEVEL_SUFFIXES = {"com.br", "net.br", "org.br", "co.uk", "com.cn", "net.cn", "org.cn"}
@@ -35,6 +35,12 @@ def extract_registered_domain(value: str) -> str:
     if suffix2 in SECOND_LEVEL_SUFFIXES and len(parts) >= 3:
         return ".".join(parts[-3:])
     return ".".join(parts[-2:])
+
+
+def extract_hostname(value: str) -> str:
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    host = (parsed.hostname or value or "").strip(".").lower()
+    return host
 
 
 def _as_record(value: Any) -> dict[str, Any]:
@@ -63,32 +69,36 @@ def _normalize_whois(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_dns_history(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = payload.get("records") or payload.get("result") or payload.get("dnsRecords") or []
+def _normalize_dns_records(payload: dict[str, Any], *, source: str, queried_name: str) -> list[dict[str, Any]]:
+    dns_data = _as_record(payload.get("DNSData") or payload.get("dnsData"))
+    rows = dns_data.get("dnsRecords") or payload.get("dnsRecords") or payload.get("records") or []
     if isinstance(rows, dict):
         rows = rows.get("records") or []
     result: list[dict[str, Any]] = []
     for item in rows[:20] if isinstance(rows, list) else []:
         if not isinstance(item, dict):
             continue
-        ips = item.get("ips")
-        if isinstance(ips, list):
-            for ip_item in ips:
-                ip_value = ip_item.get("ip") if isinstance(ip_item, dict) else ip_item
-                if ip_value:
-                    result.append({
-                        "type": "A",
-                        "value": ip_value,
-                        "first_seen": item.get("date") or item.get("firstSeen") or item.get("first_seen"),
-                        "last_seen": item.get("lastSeen") or item.get("last_seen"),
-                    })
+        record_type = str(item.get("dnsType") or item.get("rrtype") or item.get("type") or item.get("recordType") or "").upper()
+        value = (
+            item.get("address")
+            or item.get("target")
+            or item.get("alias")
+            or item.get("canonicalName")
+            or item.get("value")
+            or item.get("data")
+        )
+        if not record_type or value is None:
             continue
-        result.append({
-            "type": item.get("rrtype") or item.get("type") or item.get("recordType"),
-            "value": item.get("value") or item.get("address") or item.get("data"),
-            "first_seen": item.get("firstSeen") or item.get("first_seen") or item.get("date"),
-            "last_seen": item.get("lastSeen") or item.get("last_seen"),
-        })
+        result.append(
+            {
+                "type": record_type,
+                "name": item.get("name") or queried_name,
+                "value": str(value).strip(".").lower() if record_type == "CNAME" else str(value),
+                "ttl": item.get("ttl"),
+                "source": source,
+                "queried_name": queried_name,
+            }
+        )
     return result
 
 
@@ -107,32 +117,105 @@ def _normalize_ip_geolocation(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_ips(whois: dict[str, Any], dns_history: list[dict[str, Any]]) -> list[str]:
+def _format_component_error(component: str, exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code == 403:
+            return f"{component}:http_403_access_restricted"
+        if status_code == 401:
+            return f"{component}:http_401_invalid_api_key"
+        return f"{component}:http_{status_code}"
+    return f"{component}:{type(exc).__name__}: {exc}"
+
+
+def _summarize_partial_limitations(errors: list[str], dns_lookup: list[dict[str, Any]], ip_geolocation: list[dict[str, Any]]) -> str:
+    notes: list[str] = []
+    if any(error.startswith("dns_lookup:http_403") for error in errors):
+        notes.append("DNS Lookup 接口访问受限，请检查 WhoisXML DNS Lookup 权限或额度")
+    elif any(error.startswith("dns_lookup:") for error in errors):
+        notes.append("DNS Lookup 未返回完整结果")
+    if not _extract_ips_from_dns_lookup(dns_lookup) and not ip_geolocation:
+        notes.append("未获得可用于 IP 归属查询的当前 A/AAAA 记录")
+    elif any(error.startswith("ip_geolocation:") and "http_403" in error for error in errors):
+        notes.append("IP Geolocation 接口访问受限，请检查该产品权限或额度")
+    elif any(error.startswith("ip_geolocation:") for error in errors):
+        notes.append("部分 IP 归属信息未返回")
+    return "；".join(dict.fromkeys(notes))
+
+
+def _extract_ips_from_dns_lookup(dns_lookup: list[dict[str, Any]]) -> list[str]:
     ips: list[str] = []
-    raw_whois_ips = whois.get("ips") or []
-    if isinstance(raw_whois_ips, str):
-        raw_whois_ips = [raw_whois_ips]
-    for value in raw_whois_ips if isinstance(raw_whois_ips, list) else []:
-        if value:
-            ips.append(str(value))
-    for row in dns_history:
+    for row in dns_lookup:
         if str(row.get("type") or "").upper() in {"A", "AAAA"} and row.get("value"):
             ips.append(str(row["value"]))
     return list(dict.fromkeys(ips))[:5]
 
 
+async def _dns_lookup(client: httpx.AsyncClient, name: str, record_type: str, source: str) -> list[dict[str, Any]]:
+    resp = await client.get(
+        WHOISXML_DNS_LOOKUP_URL,
+        params={
+            "apiKey": settings.WHOISXML_API_KEY,
+            "domainName": name,
+            "type": record_type,
+            "outputFormat": "JSON",
+        },
+    )
+    resp.raise_for_status()
+    return _normalize_dns_records(resp.json(), source=source, queried_name=name)
+
+
+async def _resolve_current_dns(client: httpx.AsyncClient, *, hostname: str, registered_domain: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    queried_address_names: set[str] = set()
+
+    async def query_addresses(name: str, source: str) -> list[dict[str, Any]]:
+        if name in queried_address_names:
+            return []
+        queried_address_names.add(name)
+        return await _dns_lookup(client, name, "A,AAAA", source)
+
+    current_name = hostname or registered_domain
+    address_records = await query_addresses(current_name, "hostname")
+    records.extend(address_records)
+    if _extract_ips_from_dns_lookup(address_records):
+        return records
+
+    for _ in range(3):
+        cname_records = await _dns_lookup(client, current_name, "CNAME", "hostname" if current_name == hostname else "cname")
+        if not cname_records:
+            break
+        records.extend(cname_records)
+        cname_targets = [row["value"] for row in cname_records if row.get("type") == "CNAME" and row.get("value")]
+        if not cname_targets:
+            break
+        current_name = str(cname_targets[0]).strip(".").lower()
+        address_records = await query_addresses(current_name, "cname")
+        records.extend(address_records)
+        if _extract_ips_from_dns_lookup(address_records):
+            return records
+        break
+
+    if registered_domain and registered_domain not in queried_address_names:
+        records.extend(await query_addresses(registered_domain, "registered_domain"))
+    return records
+
+
 async def analyze_domain_provenance(value: str) -> dict[str, Any]:
     domain = extract_registered_domain(value)
+    hostname = extract_hostname(value)
     started_at = _now()
     if not settings.DOMAIN_PROVENANCE_ENABLED:
         return {
             "tool": "whoisxml_domain_provenance",
             "target": value,
             "domain": domain,
+            "hostname": hostname,
             "status": "disabled",
             "degraded": True,
             "summary": "域名溯源未启用",
             "whois": {},
+            "dns_lookup": [],
             "dns_history": [],
             "ip_geolocation": [],
             "started_at": started_at,
@@ -143,10 +226,12 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
             "tool": "whoisxml_domain_provenance",
             "target": value,
             "domain": "",
+            "hostname": hostname,
             "status": "degraded",
             "degraded": True,
             "summary": "未能抽取可查询域名",
             "whois": {},
+            "dns_lookup": [],
             "dns_history": [],
             "ip_geolocation": [],
             "started_at": started_at,
@@ -157,10 +242,12 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
             "tool": "whoisxml_domain_provenance",
             "target": value,
             "domain": domain,
+            "hostname": hostname,
             "status": "no_key",
             "degraded": True,
-            "summary": "未配置 WhoisXML API Key，域名注册与 DNS 历史不可用",
+            "summary": "未配置 WhoisXML API Key，域名注册、当前 DNS 与 IP 地理位置不可用",
             "whois": {},
+            "dns_lookup": [],
             "dns_history": [],
             "ip_geolocation": [],
             "started_at": started_at,
@@ -168,7 +255,7 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
         }
 
     whois: dict[str, Any] = {}
-    dns_history: list[dict[str, Any]] = []
+    dns_lookup: list[dict[str, Any]] = []
     ip_geolocation: list[dict[str, Any]] = []
     errors: list[str] = []
 
@@ -182,27 +269,15 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
             whois = _normalize_whois(whois_resp.json())
         except Exception as exc:
             logger.warning("WhoisXML WHOIS degraded for %s: %s", domain, exc)
-            errors.append(f"whois:{type(exc).__name__}: {exc}")
+            errors.append(_format_component_error("whois", exc))
 
         try:
-            dns_resp = await client.post(
-                WHOISXML_DNS_HISTORY_URL,
-                json={
-                    "apiKey": settings.WHOISXML_API_KEY,
-                    "searchType": "forward",
-                    "recordType": "a",
-                    "domainName": domain,
-                    "outputFormat": "JSON",
-                    "limit": 20,
-                },
-            )
-            dns_resp.raise_for_status()
-            dns_history = _normalize_dns_history(dns_resp.json())
+            dns_lookup = await _resolve_current_dns(client, hostname=hostname, registered_domain=domain)
         except Exception as exc:
-            logger.warning("WhoisXML DNS history degraded for %s: %s", domain, exc)
-            errors.append(f"dns_history:{type(exc).__name__}: {exc}")
+            logger.warning("WhoisXML DNS lookup degraded for %s: %s", hostname or domain, exc)
+            errors.append(_format_component_error("dns_lookup", exc))
 
-        for ip in _extract_ips(whois, dns_history):
+        for ip in _extract_ips_from_dns_lookup(dns_lookup):
             try:
                 geo_resp = await client.get(
                     WHOISXML_IP_GEOLOCATION_URL,
@@ -214,24 +289,33 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
                     ip_geolocation.append(geo)
             except Exception as exc:
                 logger.warning("WhoisXML IP geolocation degraded for %s: %s", ip, exc)
-                errors.append(f"ip_geolocation:{ip}:{type(exc).__name__}: {exc}")
+                errors.append(_format_component_error(f"ip_geolocation:{ip}", exc))
 
-    has_data = bool(whois or dns_history or ip_geolocation)
+    has_data = bool(whois or dns_lookup or ip_geolocation)
     if has_data:
         status = "partial" if errors else "success"
         created = whois.get("created_date") or "未知注册时间"
         registrar = whois.get("registrar") or "未知注册商"
+        limitation_summary = _summarize_partial_limitations(errors, dns_lookup, ip_geolocation) if errors else ""
+        status_text = "部分完成，WHOIS 主查询成功" if errors and whois else ("部分完成" if errors else "完成")
+        summary = f"WhoisXML 查询{status_text}: {domain}，注册时间={created}，注册商={registrar}，当前DNS {len(dns_lookup)} 条，IP归属 {len(ip_geolocation)} 条"
+        if limitation_summary:
+            summary += f"；{limitation_summary}"
         return {
             "tool": "whoisxml_domain_provenance",
             "target": value,
             "domain": domain,
+            "hostname": hostname,
             "status": status,
             "degraded": bool(errors),
-            "summary": f"WhoisXML 查询{('部分' if errors else '')}完成: {domain}，注册时间={created}，注册商={registrar}，DNS历史 {len(dns_history)} 条，IP归属 {len(ip_geolocation)} 条",
+            "summary": summary,
             "whois": whois,
-            "dns_history": dns_history,
+            "dns_lookup": dns_lookup,
+            "dns_history": [],
             "ip_geolocation": ip_geolocation,
             "errors": errors,
+            "partial_success": bool(errors),
+            "limitation_summary": limitation_summary,
             "started_at": started_at,
             "completed_at": _now(),
         }
@@ -242,11 +326,13 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
         "tool": "whoisxml_domain_provenance",
         "target": value,
         "domain": domain,
+        "hostname": hostname,
         "status": "degraded",
         "degraded": True,
         "summary": "WhoisXML 域名溯源不可用",
         "error": error_text,
         "whois": {},
+        "dns_lookup": [],
         "dns_history": [],
         "ip_geolocation": [],
         "started_at": started_at,

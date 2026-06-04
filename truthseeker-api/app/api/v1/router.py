@@ -9,6 +9,7 @@ from app.api.v1.consultation import router as consultation_router
 from app.api.v1.share import router as share_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.cases import router as cases_router
+from app.api.v1.experiences import router as experiences_router
 
 api_router = APIRouter()
 api_router.include_router(detect_router, prefix="/detect", tags=["detection"])
@@ -19,3 +20,4 @@ api_router.include_router(consultation_router, prefix="/consultation", tags=["co
 api_router.include_router(share_router, prefix="/share", tags=["share"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(cases_router, prefix="/cases", tags=["cases"])
+api_router.include_router(experiences_router, prefix="/experiences", tags=["experiences"])

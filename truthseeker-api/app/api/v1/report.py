@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from app.services.audit_log import record_audit_event
 from app.services.report_generator import (
     _execute_supabase_query,
+    generate_audit_log_pdf,
     generate_audit_log_markdown,
     generate_markdown_report,
     generate_pdf_report,
@@ -119,5 +120,33 @@ async def download_audit_log_markdown(task_id: str, request: Request):
         media_type="text/markdown; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="truthseeker-audit-log-{task_id}.md"',
+        },
+    )
+
+
+@router.get("/{task_id}/audit-log.pdf")
+async def download_audit_log_pdf(task_id: str, request: Request):
+    """下载完整 PDF 审计日志"""
+    _assert_task_owner(task_id, request)
+    try:
+        pdf_bytes = await generate_audit_log_pdf(task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to generate audit log pdf for %s: %s", task_id, e)
+        raise HTTPException(status_code=500, detail="审计日志 PDF 生成失败")
+
+    record_audit_event(
+        action="audit_log_downloaded",
+        task_id=task_id,
+        user_id=getattr(request.state, "user_id", None),
+        metadata={"format": "pdf"},
+    )
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="truthseeker-audit-log-{task_id}.pdf"',
         },
     )

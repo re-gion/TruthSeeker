@@ -200,6 +200,10 @@ def build_report_row(
 
 def build_agent_log_rows(task_id: str, node_name: str, updates: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    detection_run_id = updates.get("detection_run_id")
+    metadata = {"node": node_name}
+    if detection_run_id:
+        metadata["detection_run_id"] = detection_run_id
     for log_entry in updates.get("logs", []):
         rows.append(
             {
@@ -208,7 +212,7 @@ def build_agent_log_rows(task_id: str, node_name: str, updates: dict[str, Any]) 
                 "agent_name": log_entry.get("agent", node_name),
                 "log_type": log_entry.get("type", "action"),
                 "content": log_entry.get("content", ""),
-                "metadata": {"node": node_name},
+                "metadata": metadata,
                 "timestamp": log_entry.get("timestamp", utc_now_iso()),
             }
         )
@@ -222,7 +226,9 @@ def build_analysis_state_row(
     *,
     created_at: str | None = None,
 ) -> dict[str, Any]:
+    detection_run_id = updates.get("detection_run_id")
     result_snapshot = {
+        "detection_run_id": detection_run_id,
         "forensics": updates.get("forensics_result"),
         "osint": updates.get("osint_result"),
         "challenger": updates.get("challenger_feedback"),
@@ -249,6 +255,7 @@ def build_analysis_state_row(
         "osint_score": osint_result.get("confidence", osint_result.get("threat_score")),
         "convergence_delta": None,
         "evidence_board": {
+            "detection_run_id": detection_run_id,
             "evidence": updates.get("evidence_board") or [],
             "challenges": updates.get("challenges") or [],
             "timeline_events": updates.get("timeline_events") or [],
@@ -352,7 +359,11 @@ class AnalysisPersistenceService:
         record_audit_event(
             action="report_generated",
             task_id=task_id,
-            metadata={"report_hash": report_row.get("report_hash"), "verdict": report_row.get("verdict")},
+            metadata={
+                "report_hash": report_row.get("report_hash"),
+                "verdict": report_row.get("verdict"),
+                "detection_run_id": final_verdict.get("detection_run_id"),
+            },
             client=self.client,
         )
 

@@ -16,6 +16,7 @@ import httpx
 
 from app.agents.tools.fallback import shared_degradation
 from app.config import settings
+from app.services.evidence_access import download_evidence_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -80,20 +81,10 @@ def _get_sightengine_credentials() -> tuple[str, str]:
 
 async def _download_file(file_url: str) -> tuple[bytes, str]:
     """从 Supabase 签名 URL 下载文件，返回 (字节数据, 文件名)"""
-    async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS) as client:
-        resp = await client.get(file_url, follow_redirects=True)
-        if hasattr(resp, "raise_for_status"):
-            resp.raise_for_status()
-
-        # 尝试从 Content-Disposition 或 URL 路径提取文件名
-        filename = "upload.mp4"
-        cd = resp.headers.get("content-disposition", "")
-        if "filename=" in cd:
-            filename = cd.split("filename=")[-1].strip('"\'')
-        elif "/" in file_url:
-            filename = file_url.split("/")[-1].split("?")[0] or "upload.mp4"
-
-        return resp.content, filename
+    return await download_evidence_bytes(
+        file_url,
+        timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS,
+    )
 
 
 async def _request_presigned_url(

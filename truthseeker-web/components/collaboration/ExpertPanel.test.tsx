@@ -35,7 +35,7 @@ const consultationState = {
     background: "公开视频疑似经过二次编辑。",
     progress: "Challenger 已完成三轮质询。",
     blockers: ["取证置信度与溯源链路冲突"],
-    helpNeeded: "请判断是否需要补充来源链路。",
+    helpNeeded: ["请判断是否需要补充来源链路。"],
     sampleLinks: [{ label: "样本 A", url: "https://example.invalid/a" }],
     expertTasks: [
       { question: "核实来源链路是否可靠", expectedOutput: "给出可采信或不可采信判断" },

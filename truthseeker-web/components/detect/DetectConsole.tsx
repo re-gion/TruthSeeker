@@ -3,6 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "motion/react"
 import Image from "next/image"
+import { Loader2 } from "lucide-react"
 import { useAgentStream, type CaseImportStatus } from "@/hooks/useAgentStream"
 import { useRealtimeSession, UserRole } from "@/hooks/useRealtimeSession"
 import { AgentLog } from "@/components/agents/AgentLog"
@@ -16,6 +17,7 @@ import { BrandLogo } from "@/components/logo/BrandLogo"
 import dynamic from "next/dynamic"
 const BentoScene = dynamic(() => import("@/components/bento/BentoScene").then(mod => mod.BentoScene), { ssr: false })
 import { extractAnalysisSnapshot, extractChallengerSnapshot, extractVerdictSnapshot, downloadCanonicalMarkdownReportWithAuditLog, downloadPdfReportWithAuditLog } from "@/lib/report"
+import { createReportShareLink } from "@/lib/share"
 import type { ProvenanceGraph } from "@/lib/provenance-graph"
 
 import Link from "next/link"
@@ -111,6 +113,7 @@ const CHALLENGER_TARGET_LABELS: Record<string, string> = {
 
 const DETECTION_AGENT_KEYS = ["forensics", "osint", "challenger", "commander"] as const
 type DetectionAgentKey = (typeof DETECTION_AGENT_KEYS)[number]
+type ReportAction = "md" | "pdf" | "share"
 
 const READ_ACTIVITY_PATTERN = /读取|加载|调用|检索|查询|审查|分析|输入|上下文|证据板|工具|来源/
 const WRITE_ACTIVITY_PATTERN = /写入|完成|生成|输出|结论|裁决|报告|置信度|问题|判定|回填/
@@ -428,6 +431,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     })
     const [taskLoaded, setTaskLoaded] = useState(role === "expert")
     const [taskLoadError, setTaskLoadError] = useState<string | null>(null)
+    const [pendingReportAction, setPendingReportAction] = useState<ReportAction | null>(null)
 
     const { channel, onlineUsers } = useRealtimeSession(taskId, role)
 
@@ -493,6 +497,16 @@ export function DetectConsole({ taskId }: { taskId: string }) {
     const backgroundStarSpeed = viewMode === "timeline" ? 0.0015 : 0.15
     const backgroundAnimationSpeed = viewMode === "timeline" ? 0.0035 : 0.35
     const backgroundRotationSpeed = viewMode === "timeline" ? 0 : 0.05
+
+    const runReportAction = async (action: ReportAction, task: () => Promise<void>) => {
+        if (pendingReportAction !== null) return
+        setPendingReportAction(action)
+        try {
+            await task()
+        } finally {
+            setPendingReportAction(null)
+        }
+    }
 
     useEffect(() => {
         if (role === "expert") {
@@ -646,43 +660,46 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         )}
                         {isReportReady && (
                             <button
-                                onClick={async () => downloadCanonicalMarkdownReportWithAuditLog(taskId, await getAuthToken())}
-                                className="text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors"
+                                onClick={() => runReportAction("md", async () => {
+                                    await downloadCanonicalMarkdownReportWithAuditLog(taskId, await getAuthToken())
+                                })}
+                                disabled={pendingReportAction !== null}
+                                className="inline-flex items-center gap-1.5 text-xs text-[#10B981] border border-[#10B981]/30 px-3 py-1.5 rounded-full hover:bg-[#10B981]/10 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                MD 报告与审计日志
+                                {pendingReportAction === "md" && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                                {pendingReportAction === "md" ? "MD 生成中" : "MD 报告与审计日志"}
                             </button>
                         )}
                         {isReportReady && (
                             <button
-                                onClick={async () => downloadPdfReportWithAuditLog(taskId, await getAuthToken())}
-                                className="text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors"
+                                onClick={() => runReportAction("pdf", async () => {
+                                    await downloadPdfReportWithAuditLog(taskId, await getAuthToken())
+                                })}
+                                disabled={pendingReportAction !== null}
+                                className="inline-flex items-center gap-1.5 text-xs text-[#EF4444] border border-[#EF4444]/30 px-3 py-1.5 rounded-full hover:bg-[#EF4444]/10 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                PDF 报告与审计日志
+                                {pendingReportAction === "pdf" && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                                {pendingReportAction === "pdf" ? "PDF 生成中" : "PDF 报告与审计日志"}
                             </button>
                         )}
                         {isReportReady && (
                             <button
-                                onClick={async () => {
+                                onClick={() => runReportAction("share", async () => {
                                     try {
                                         const authToken = await getAuthToken()
-                                        const headers: Record<string, string> = {}
-                                        if (authToken) headers.Authorization = `Bearer ${authToken}`
-                                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"}/api/v1/share/${taskId}`, {
-                                            method: "POST",
-                                            headers,
-                                        })
-                                        if (!res.ok) throw new Error("分享失败")
-                                        const { share_url } = await res.json()
+                                        const share_url = await createReportShareLink(taskId, authToken)
                                         const url = new URL(share_url, window.location.origin)
                                         await navigator.clipboard.writeText(url.toString())
                                         alert("分享链接已复制到剪贴板！")
                                     } catch {
                                         alert("生成分享链接失败，请稍后重试")
                                     }
-                                }}
-                                className="text-xs text-[#6366F1] border border-[#6366F1]/30 px-3 py-1.5 rounded-full hover:bg-[#6366F1]/10 transition-colors"
+                                })}
+                                disabled={pendingReportAction !== null}
+                                className="inline-flex items-center gap-1.5 text-xs text-[#6366F1] border border-[#6366F1]/30 px-3 py-1.5 rounded-full hover:bg-[#6366F1]/10 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                分享报告
+                                {pendingReportAction === "share" && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                                {pendingReportAction === "share" ? "分享生成中" : "分享报告"}
                             </button>
                         )}
                         <PresenceAvatars users={onlineUsers} />

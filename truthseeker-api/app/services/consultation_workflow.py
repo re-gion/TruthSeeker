@@ -198,8 +198,16 @@ def _adjacent_confidence_deltas_are_stable(records: list[dict[str, Any]], delta_
     return all(abs(scores[index] - scores[index - 1]) < delta_threshold for index in range(1, len(scores)))
 
 
-def _completed_session_count(existing_sessions: list[dict[str, Any]]) -> int:
-    return sum(1 for item in existing_sessions if item.get("status") in {"summary_confirmed", "skipped"})
+def _completed_session_count(existing_sessions: list[dict[str, Any]], target_agent: str | None = None) -> int:
+    count = 0
+    for item in existing_sessions:
+        if item.get("status") not in {"summary_confirmed", "skipped"}:
+            continue
+        session_target = str(item.get("triggered_by_agent") or item.get("trigger_phase") or "").strip()
+        if target_agent and session_target and session_target != target_agent:
+            continue
+        count += 1
+    return count
 
 
 def evaluate_consultation_trigger(
@@ -209,11 +217,13 @@ def evaluate_consultation_trigger(
     stuck_rounds: int | None = None,
     confidence_threshold: float | None = None,
     delta_threshold: float | None = None,
+    max_rounds: int | None = None,
 ) -> dict[str, Any]:
     """Decide whether Challenger should pause for human/expert consultation."""
     stuck_rounds = int(stuck_rounds or settings.CONSULTATION_STUCK_ROUNDS)
     confidence_threshold = float(confidence_threshold or settings.CONSULTATION_CONFIDENCE_THRESHOLD)
     delta_threshold = float(delta_threshold or settings.CONSULTATION_DELTA_THRESHOLD)
+    max_rounds = int(max_rounds or settings.MAX_ROUNDS)
     existing_sessions = existing_sessions or []
 
     recent = _same_target_recent_records(challenge_records, stuck_rounds)
@@ -228,9 +238,18 @@ def evaluate_consultation_trigger(
     if not _adjacent_confidence_deltas_are_stable(recent, delta_threshold):
         return {"should_pause": False, "reason": "最近三轮相邻置信度变化未持续小于阈值"}
 
-    repeat_index = _completed_session_count(existing_sessions) + 1
-    requires_user_approval = repeat_index > 1
+    current_phase_round = int(current.get("phase_round") or current.get("round") or 0)
+    if current_phase_round >= max_rounds:
+        return {"should_pause": False, "reason": "当前阶段已达到最大轮次，直接放行并保留残留风险"}
+
     target_agent = str(current.get("target_agent") or current.get("phase") or "unknown")
+    completed_sessions = _completed_session_count(existing_sessions, target_agent)
+    max_consultations = max(0, max_rounds - stuck_rounds)
+    if completed_sessions >= max_consultations:
+        return {"should_pause": False, "reason": "当前阶段会诊次数已达上限，直接放行并保留残留风险"}
+
+    repeat_index = completed_sessions + 1
+    requires_user_approval = repeat_index > 1
     event_type = "consultation_approval_required" if requires_user_approval else "consultation_required"
     return {
         "should_pause": True,

@@ -41,6 +41,13 @@ export function HeaderClient({ user }: HeaderClientProps) {
                     公开案例库
                 </Link>
                 <Link
+                    href="/experiences"
+                    className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
+                >
+                    <Image src="/nav-icons/experiences.svg" alt="个人经验库图标" width={16} height={16} className="size-4" />
+                    个人经验库
+                </Link>
+                <Link
                     href="/dashboard"
                     className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
                 >

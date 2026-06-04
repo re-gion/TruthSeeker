@@ -1,14 +1,15 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-06-02
+> 更新时间：2026-06-04
 
 ## 1. 当前运行时边界
 
 TruthSeeker 当前运行时是 **FedPaRS-compatible 多智能体研判架构**：
 
-- Kimi 2.5 作为四个 Agent 共享的原生多模态推理基座，并禁用 thinking。
+- 四个 Agent 共享可配置的原生多模态推理基座；默认 Kimi 2.5，调用 Kimi K2.5 时禁用 thinking，也可切换小米 MiMo Token Plan。
 - Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 等外部工具提供专业取证、威胁情报、联网搜索和域名溯源能力；文本 AIGC 检测改为内部工具。
 - 公开案例 RAG 使用 Supabase pgvector 和 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding，为 Forensics/OSINT 提供类案参考。
+- 个人经验库使用同一 embedding 技术栈，为当前账号的 Forensics/OSINT/Challenger 提供私有方法参考。
 - LangGraph 负责阶段式 Agent 编排和收敛路由。
 - Supabase 保存任务、分析快照、日志、报告、会诊和审计记录。
 
@@ -25,6 +26,7 @@ truthseeker-api/
 │   │   ├── tasks.py
 │   │   ├── detect.py
 │   │   ├── consultation.py
+│   │   ├── experiences.py
 │   │   ├── report.py
 │   │   ├── share.py
 │   │   └── dashboard.py
@@ -49,6 +51,7 @@ truthseeker-api/
 │   ├── services/
 │   │   ├── builtin_cases.py
 │   │   ├── case_rag.py
+│   │   ├── experience_library.py
 │   │   ├── evidence_files.py
 │   │   ├── text_validation.py
 │   │   ├── auth_config.py       # 认证配置辅助（JWT 设置、公开路由白名单）
@@ -113,10 +116,15 @@ flowchart TD
 
 ## 5. 工具与 LLM
 
-Kimi 2.5：
+Agent LLM：
 
 - 默认 `KIMI_MODEL=kimi-k2.5`，调用时禁用 thinking。
-- 多模态输入通过短期 signed URL 引用传递。
+- `AGENT_LLM_PROVIDER=kimi-k2.5|mimo` 控制四个 Agent 的底层全模态模型入口；选择 K2.5 时，`KIMI_PROVIDER=official|coding|siliconflow` 选择具体渠道；选择 `mimo` 时，使用 `MIMO_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5`。
+- `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 控制 TruthSeeker 单次 Agent LLM 输出上限。
+- Kimi K2.5：输入 `text,image,video`，上下文 262144 tokens，本系统固定 `thinking=disabled`。
+- MiMo `mimo-v2.5`：输入 `text,image`，官方上下文 1048576 tokens，官方输出上限 131072 tokens；`MIMO_THINKING=enabled|disabled` 可显式控制思考模式，本系统默认 enabled。MiMo 不作为视频/音频原生理解底座，视频/音频仍依赖工具结果、文本摘要或抽帧图片。
+- Agent LLM provider 只影响 Forensics/OSINT/Challenger/Commander 的模型推理和摘要生成，不替换 Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 或 embedding API。
+- 多模态输入通过短期 signed URL 引用或 base64 图片内联传递。
 - 日志、报告和持久化不保存 signed URL 明文。
 
 Sightengine / Reality Defender：
@@ -141,8 +149,10 @@ VirusTotal：
 
 WhoisXML：
 
-- OSINT 阶段对 URL/域名线索查询 WHOIS 注册信息和 DNS 历史记录。
+- OSINT 阶段对 URL/域名线索查询 WHOIS 注册信息、DNS Lookup 当前 A/AAAA/CNAME 记录和 IP Geolocation 归属信息。
+- DNS Lookup 优先查询完整主机名；完整主机名没有 A/AAAA 时查询 CNAME 并解析 CNAME 目标；仍没有 IP 时再回退到注册域。
 - 未配置 key、超时或网络失败时返回结构化降级结果，不把“缺数据”写成“无异常”。
+- WHOIS 主查询成功但 DNS Lookup 或 IP Geolocation 返回 403 时记录为 `partial`：报告保留注册时间/注册商等已取得信息，并提示子产品权限或额度受限，而不是写成整个 WhoisXML 工具失败。
 
 Exa：
 
@@ -157,6 +167,15 @@ Exa：
 - Forensics 和 OSINT 运行时调用 `case_rag_search`，混合 vector 召回与关键词召回。结果只作为类案参考，不直接改变当前裁决分数。
 - `scripts/rebuild_case_rag_index.py --include-builtin --include-public` 用于回填内置案例和历史公开案例。
 - `scripts/delete_public_case_rag_chunks.py --title-contains "案例标题" --apply` 用于清理已删除公开案例遗留的向量 chunks；默认 dry-run。
+
+个人经验库 RAG：
+
+- `experience_library_entries` 保存当前账号确认入库的经验条目，字段包括来源 task/session、目标 agents、标题、适用问题、推荐方法、证据检查项、升级条件、限制和内容 hash。
+- `experience_library_rag_chunks` 保存按 `target_agent` 拆分的向量块，RLS 按 `user_id = auth.uid()` 隔离。
+- `build_experience_drafts()` 在会诊结束后调用 Commander LLM 抽取 0/1/N 条草稿，并在展示给用户前按 `user_id + target_agents` 过滤已有相似经验。
+- `confirm_experience_drafts()` 在用户确认入库时再次规范化和去重，写入经验表并为每个目标 Agent 创建向量块。
+- `experience_rag_search()` 按 `user_id + target_agent` 检索，仅返回当前账号、当前 Agent 的个人经验。
+- `delete_experience()` 先删除经验向量块，再删除经验条目。
 
 ## 6. 持久化与报告
 
@@ -178,8 +197,10 @@ Exa：
 会诊恢复：
 
 - 首次满足“同一目标最近 3 轮 high 质询、本轮置信度 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `consultation_required` 并写入 active session。
-- 同一任务再次满足门槛时，后端发送 `consultation_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
-- 用户结束会诊后，Commander 生成 `summary_pending` 摘要；用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- 同一目标 Agent 在第 3 轮和第 4 轮最多触发两次会诊；第 5 轮达到阶段最大轮次时不再会诊，直接放行并把未解决 high 质询写入残留风险。会诊次数按 `triggered_by_agent` 分别统计，不能让 Forensics 的会诊占用 OSINT 的会诊额度。
+- 同一目标 Agent 再次满足门槛时，后端发送 `consultation_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
+- 用户结束会诊后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和会诊消息，生成 `summary_pending` 摘要；固定结构摘要仅作为 LLM 不可用时的兜底。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- 用户结束会诊后，Commander 同步抽取个人经验草稿。摘要确认不会自动入库；前端展示草稿给用户编辑、删除和单独确认。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
 - `resume=true` 时读取 `consultation_messages`、`consultation_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。
 - 报告必须保留会诊触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。
 

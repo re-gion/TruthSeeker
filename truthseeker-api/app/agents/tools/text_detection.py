@@ -375,7 +375,7 @@ def analyze_social_engineering_risk(text: str, urls: list[str]) -> dict:
 # 4. Main entry point
 # ---------------------------------------------------------------------------
 
-async def analyze_text(text_content: str) -> dict:
+async def analyze_text(text_content: str, *, use_llm: bool = True) -> dict:
     """文本检测主入口，编排三种分析维度。
 
     1. 并发执行 LLM 分析和结构分析
@@ -387,16 +387,28 @@ async def analyze_text(text_content: str) -> dict:
         structural_analysis, key_claims, anomalies, extracted_urls,
         confidence, timestamp 的字典。
     """
-    # 并发执行 LLM 分析和结构分析
-    # analyze_text_structure 是同步函数，需包装为协程
+    # 并发执行 LLM 分析和结构分析。内部 AIGC 工具可关闭 LLM，使同一文本概率稳定。
     async def _run_structural():
         return analyze_text_structure(text_content)
 
-    llm_result, structural_result = await asyncio.gather(
-        analyze_text_llm(text_content),
-        _run_structural(),
-        return_exceptions=True,
-    )
+    if use_llm:
+        llm_result, structural_result = await asyncio.gather(
+            analyze_text_llm(text_content),
+            _run_structural(),
+            return_exceptions=True,
+        )
+    else:
+        structural_result = await _run_structural()
+        local_score = float(structural_result.get("local_ai_score", structural_result.get("length_uniformity_score", 0.0)) or 0.0)
+        llm_result = {
+            "ai_probability": local_score,
+            "manipulation_score": 0.0,
+            "key_claims": [],
+            "anomalies": [],
+            "writing_style_analysis": "内部文本 AIGC 检测使用确定性本地结构特征，未调用 LLM。",
+            "degraded": False,
+            "llm_skipped": True,
+        }
 
     # 处理可能的异常
     if isinstance(llm_result, Exception):

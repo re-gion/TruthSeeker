@@ -68,6 +68,8 @@ def _sse(data: dict[str, Any]) -> str:
 AUDIT_ACTION_LABELS = {
     "detect_start": "检测流程启动",
     "detect_completed": "检测流程完成",
+    "detect_reused_completed": "复用已完成研判",
+    "detect_reuse_failed": "复用已完成研判失败",
     "detect_failed": "检测流程失败",
     "detect_cancelled": "检测流程取消",
     "consultation_resume": "专家会诊恢复",
@@ -124,6 +126,91 @@ def _safe_storage_paths(task: dict[str, Any] | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _task_status(task: dict[str, Any] | None) -> str:
+    return str((task or {}).get("status") or "").lower()
+
+
+def _active_detection_run_id(task: dict[str, Any] | None) -> str | None:
+    metadata = _safe_metadata(task)
+    value = metadata.get("active_detection_run_id")
+    return str(value) if value else None
+
+
+def _latest_detection_run_id(task: dict[str, Any] | None) -> str | None:
+    metadata = _safe_metadata(task)
+    value = metadata.get("last_detection_run_id") or metadata.get("active_detection_run_id")
+    return str(value) if value else None
+
+
+def _is_active_analyzing_task(task: dict[str, Any] | None) -> bool:
+    return _task_status(task) == "analyzing" and bool(_active_detection_run_id(task))
+
+
+def _next_detection_run_metadata(
+    task: dict[str, Any] | None,
+    *,
+    detection_run_id: str,
+    case_prompt: str,
+    evidence_files: list[UploadedEvidenceFile],
+    started_at: str,
+) -> dict[str, Any]:
+    metadata = _safe_metadata(task)
+    return {
+        **metadata,
+        "case_prompt": case_prompt,
+        "files": _task_storage_files(evidence_files),
+        "active_detection_run_id": detection_run_id,
+        "last_detection_run_id": detection_run_id,
+        "active_detection_started_at": started_at,
+        "detection_run_count": _safe_int(metadata.get("detection_run_count")) + 1,
+    }
+
+
+def _resume_detection_run_metadata(
+    task: dict[str, Any] | None,
+    *,
+    detection_run_id: str,
+    case_prompt: str,
+    evidence_files: list[UploadedEvidenceFile],
+    started_at: str,
+) -> dict[str, Any]:
+    metadata = _safe_metadata(task)
+    return {
+        **metadata,
+        "case_prompt": case_prompt,
+        "files": _task_storage_files(evidence_files),
+        "active_detection_run_id": detection_run_id,
+        "last_detection_run_id": detection_run_id,
+        "active_detection_started_at": metadata.get("active_detection_started_at") or started_at,
+        "detection_run_count": _safe_int(metadata.get("detection_run_count"), 1),
+        "waiting_consultation": False,
+        "waiting_consultation_approval": False,
+    }
+
+
+def _stamp_updates_with_detection_run_id(
+    updates: dict[str, Any],
+    detection_run_id: str,
+) -> dict[str, Any]:
+    if not isinstance(updates, dict):
+        return updates
+    stamped = {**updates, "detection_run_id": detection_run_id}
+    final_verdict = stamped.get("final_verdict")
+    if isinstance(final_verdict, dict):
+        stamped["final_verdict"] = {
+            **final_verdict,
+            "detection_run_id": detection_run_id,
+        }
+    return stamped
+
+
 def _fetch_task(task_id: str) -> dict[str, Any] | None:
     resp = supabase.table("tasks").select("*").eq("id", task_id).execute()
     return resp.data[0] if resp.data else None
@@ -166,6 +253,64 @@ def _recover_persisted_final_verdict(task_id: str, task: dict[str, Any] | None) 
             return normalize_final_verdict(final_verdict)
 
     return None
+
+
+def _is_completed_task(task: dict[str, Any] | None) -> bool:
+    return isinstance(task, dict) and _task_status(task) == "completed"
+
+
+async def _reuse_completed_task_stream(
+    task_id: str,
+    task: dict[str, Any] | None,
+    user_id: str,
+) -> AsyncGenerator[str, None]:
+    final_verdict = _recover_persisted_final_verdict(task_id, task)
+    if not final_verdict:
+        record_audit_event(
+            action="detect_reuse_failed",
+            task_id=task_id,
+            user_id=user_id,
+            metadata={"reason": "missing_persisted_final_verdict"},
+        )
+        yield _sse({
+            "type": "task_failed",
+            "task_id": task_id,
+            "message": "已完成任务缺少持久化最终裁决，无法安全复用",
+        })
+        yield _sse({
+            "type": "error",
+            "task_id": task_id,
+            "message": "已完成任务缺少持久化最终裁决，无法安全复用",
+        })
+        return
+
+    record_audit_event(
+        action="detect_reused_completed",
+        task_id=task_id,
+        user_id=user_id,
+        metadata={
+            "verdict": final_verdict.get("verdict"),
+            "detection_run_id": final_verdict.get("detection_run_id") or _latest_detection_run_id(task),
+        },
+    )
+    yield _sse({
+        "type": "final_verdict",
+        "task_id": task_id,
+        "verdict": final_verdict,
+        "reused": True,
+    })
+    yield _sse({
+        "type": "case_import_skipped",
+        "task_id": task_id,
+        "reason": "already_completed",
+        "reused": True,
+    })
+    yield _sse({
+        "type": "complete",
+        "task_id": task_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "reused": True,
+    })
 
 
 def _insert_report(task_id: str, final_verdict_data: dict[str, Any]) -> dict[str, Any]:
@@ -218,7 +363,10 @@ async def _run_case_import_phase(
             action=f"case_import_{import_status}",
             task_id=task_id,
             user_id=user_id,
-            metadata={"import_status": import_status},
+            metadata={
+                "import_status": import_status,
+                "detection_run_id": final_verdict_data.get("detection_run_id"),
+            },
         )
     except Exception as exc:
         logger.error("Case import failed for task %s: %s", task_id, exc)
@@ -436,11 +584,21 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
     task_id = request.task_id or str(uuid.uuid4())
     task = _fetch_task(task_id) if request.task_id else None
     _assert_task_owner(task, user_id)
+    if request.task_id and not request.resume and _is_completed_task(task):
+        async for event in _reuse_completed_task_stream(task_id, task, user_id):
+            yield event
+        return
 
     evidence_files = _resolve_evidence_files(request, task)
     case_prompt = _resolve_case_prompt(request, task)
     input_type = derive_input_type(evidence_files)
     input_files = build_input_files(evidence_files)
+    detection_run_id = (
+        _latest_detection_run_id(task)
+        if request.resume
+        else str(uuid.uuid4())
+    ) or str(uuid.uuid4())
+    detection_started_at = datetime.now(timezone.utc).isoformat()
 
     queue: asyncio.Queue[str] = asyncio.Queue()
     stop_heartbeat = asyncio.Event()
@@ -485,6 +643,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
         "pending_consultation_approval": None,
         "confirmed_consultation_summary": None,
         "timeline_events": [],
+        "detection_run_id": detection_run_id,
     }
 
     hb_task = asyncio.create_task(_heartbeat_sender(queue, stop_heartbeat))
@@ -535,12 +694,15 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 persisted_consultation_sessions=sessions,
                 persisted_consultation_summary=confirmed_summary,
             )
+            resume_state["detection_run_id"] = detection_run_id
             updates = await commander_node(resume_state)  # type: ignore[arg-type]
+            updates = _stamp_updates_with_detection_run_id(updates, detection_run_id)
 
             await queue.put(_sse({
                 "type": "consultation_resumed",
                 "task_id": task_id,
                 "mode": "persistence_recovery",
+                "detection_run_id": detection_run_id,
             }))
 
             for log_entry in updates.get("logs", []):
@@ -554,7 +716,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 return False
 
             final_verdict_data = normalize_final_verdict(updates["final_verdict"])
-            await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
+            await queue.put(_sse({
+                "type": "final_verdict",
+                "verdict": final_verdict_data,
+                "detection_run_id": detection_run_id,
+            }))
 
             persistence.persist_update(task_id, "commander", updates)
             persistence.mark_task_completed(task_id, final_verdict_data)
@@ -565,13 +731,18 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 metadata={
                     "mode": "persistence_recovery",
                     "expert_message_count": len(expert_messages),
+                    "detection_run_id": detection_run_id,
                 },
             )
             await queue.put(_sse({
                 "type": "timeline_update",
                 "events": [audit_timeline_event(
                     "consultation_resume",
-                    metadata={"mode": "persistence_recovery", "expert_message_count": len(expert_messages)},
+                    metadata={
+                        "mode": "persistence_recovery",
+                        "expert_message_count": len(expert_messages),
+                        "detection_run_id": detection_run_id,
+                    },
                 )],
             }))
             await _run_case_import_phase(queue, task_id, task, final_verdict_data, user_id)
@@ -595,25 +766,29 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         "expert_messages": expert_messages,
                         "consultation_sessions": resume_payload.get("consultation_sessions") or [],
                         "confirmed_consultation_summary": resume_payload.get("confirmed_consultation_summary"),
+                        "detection_run_id": detection_run_id,
                     },
                 )
                 persistence.mark_task_started(
                     task_id,
                     input_files={"files": _task_storage_files(evidence_files)},
                     priority_focus=request.priority_focus,
-                    metadata={
-                        **_safe_metadata(task),
-                        "case_prompt": case_prompt,
-                        "files": _task_storage_files(evidence_files),
-                        "waiting_consultation": False,
-                        "waiting_consultation_approval": False,
-                    },
+                    metadata=_resume_detection_run_metadata(
+                        task,
+                        detection_run_id=detection_run_id,
+                        case_prompt=case_prompt,
+                        evidence_files=evidence_files,
+                        started_at=detection_started_at,
+                    ),
                 )
                 record_audit_event(
                     action="consultation_resume",
                     task_id=task_id,
                     user_id=user_id,
-                    metadata={"expert_message_count": len(expert_messages)},
+                    metadata={
+                        "expert_message_count": len(expert_messages),
+                        "detection_run_id": detection_run_id,
+                    },
                 )
                 latest_session = resume_payload.get("latest_consultation_session")
                 if isinstance(latest_session, dict) and resume_payload.get("action") == "skip_consultation":
@@ -640,7 +815,10 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     "type": "timeline_update",
                     "events": [audit_timeline_event(
                         "consultation_resume",
-                        metadata={"expert_message_count": len(expert_messages)},
+                        metadata={
+                            "expert_message_count": len(expert_messages),
+                            "detection_run_id": detection_run_id,
+                        },
                     )],
                 }))
             else:
@@ -651,28 +829,39 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "max_rounds": initial_state["max_rounds"],
                     "input_type": input_type,
+                    "detection_run_id": detection_run_id,
                 }))
                 persistence.mark_task_started(
                     task_id,
                     input_files={"files": _task_storage_files(evidence_files)},
                     priority_focus=request.priority_focus,
-                    metadata={
-                        **_safe_metadata(task),
-                        "case_prompt": case_prompt,
-                        "files": _task_storage_files(evidence_files),
-                    },
+                    metadata=_next_detection_run_metadata(
+                        task,
+                        detection_run_id=detection_run_id,
+                        case_prompt=case_prompt,
+                        evidence_files=evidence_files,
+                        started_at=detection_started_at,
+                    ),
                 )
                 record_audit_event(
                     action="detect_start",
                     task_id=task_id,
                     user_id=user_id,
-                    metadata={"input_type": input_type, "file_count": len(evidence_files)},
+                    metadata={
+                        "input_type": input_type,
+                        "file_count": len(evidence_files),
+                        "detection_run_id": detection_run_id,
+                    },
                 )
                 await queue.put(_sse({
                     "type": "timeline_update",
                     "events": [audit_timeline_event(
                         "detect_start",
-                        metadata={"input_type": input_type, "file_count": len(evidence_files)},
+                        metadata={
+                            "input_type": input_type,
+                            "file_count": len(evidence_files),
+                            "detection_run_id": detection_run_id,
+                        },
                     )],
                 }))
 
@@ -697,6 +886,10 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         **_safe_metadata(task),
                         "case_prompt": case_prompt,
                         "files": _task_storage_files(evidence_files),
+                        "active_detection_run_id": detection_run_id,
+                        "last_detection_run_id": detection_run_id,
+                        "active_detection_started_at": detection_started_at,
+                        "detection_run_count": _safe_int(_safe_metadata(task).get("detection_run_count"), 1),
                         "waiting_consultation": waiting_status == "waiting_consultation",
                         "waiting_consultation_approval": waiting_status == "waiting_consultation_approval",
                         "consultation_session_id": (session or {}).get("id"),
@@ -715,7 +908,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         task_id=task_id,
                         user_id=user_id,
                         agent="challenger",
-                        metadata={"session_id": (session or {}).get("id"), "reason": reason},
+                        metadata={
+                            "session_id": (session or {}).get("id"),
+                            "reason": reason,
+                            "detection_run_id": detection_run_id,
+                        },
                     )
                     await queue.put(_sse({
                         "type": event_type,
@@ -735,6 +932,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     return
 
                 for node_name, updates in chunk.items():
+                    updates = _stamp_updates_with_detection_run_id(updates, detection_run_id)
                     await queue.put(_sse({"type": "node_start", "node": node_name}))
 
                     for log_entry in updates.get("logs", []):
@@ -768,13 +966,18 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
 
                     if updates.get("final_verdict"):
                         final_verdict_data = normalize_final_verdict(updates["final_verdict"])
-                        await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
+                        await queue.put(_sse({
+                            "type": "final_verdict",
+                            "verdict": final_verdict_data,
+                            "detection_run_id": detection_run_id,
+                        }))
 
                     persistence.persist_update(task_id, node_name, updates)
                     await queue.put(_sse({"type": "node_complete", "node": node_name}))
                     node_audit_metadata = {
                         "round": updates.get("current_round"),
                         "has_final_verdict": bool(updates.get("final_verdict")),
+                        "detection_run_id": detection_run_id,
                     }
                     record_audit_event(
                         action=f"node_complete.{node_name}",
@@ -798,19 +1001,29 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             if completion_verdict_data:
                 if final_verdict_data is None:
                     final_verdict_data = completion_verdict_data
-                    await queue.put(_sse({"type": "final_verdict", "verdict": final_verdict_data}))
+                    await queue.put(_sse({
+                        "type": "final_verdict",
+                        "verdict": final_verdict_data,
+                        "detection_run_id": detection_run_id,
+                    }))
                 persistence.mark_task_completed(task_id, final_verdict_data)
                 record_audit_event(
                     action="detect_completed",
                     task_id=task_id,
                     user_id=user_id,
-                    metadata={"verdict": final_verdict_data.get("verdict")},
+                    metadata={
+                        "verdict": final_verdict_data.get("verdict"),
+                        "detection_run_id": detection_run_id,
+                    },
                 )
                 await queue.put(_sse({
                     "type": "timeline_update",
                     "events": [audit_timeline_event(
                         "detect_completed",
-                        metadata={"verdict": final_verdict_data.get("verdict")},
+                        metadata={
+                            "verdict": final_verdict_data.get("verdict"),
+                            "detection_run_id": detection_run_id,
+                        },
                     )],
                 }))
                 await _run_case_import_phase(queue, task_id, task, final_verdict_data, user_id)
@@ -821,10 +1034,18 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 }))
             elif not interrupted:
                 persistence.mark_task_failed(task_id, error_summary="检测流程未生成最终裁决")
-                record_audit_event(action="detect_failed", task_id=task_id, user_id=user_id)
+                record_audit_event(
+                    action="detect_failed",
+                    task_id=task_id,
+                    user_id=user_id,
+                    metadata={"detection_run_id": detection_run_id},
+                )
                 await queue.put(_sse({
                     "type": "timeline_update",
-                    "events": [audit_timeline_event("detect_failed")],
+                    "events": [audit_timeline_event(
+                        "detect_failed",
+                        metadata={"detection_run_id": detection_run_id},
+                    )],
                 }))
                 await queue.put(_sse({
                     "type": "task_failed",
@@ -837,7 +1058,10 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 action="detect_cancelled",
                 task_id=task_id,
                 user_id=user_id,
-                metadata={"reason": "client_disconnect"},
+                metadata={
+                    "reason": "client_disconnect",
+                    "detection_run_id": detection_run_id,
+                },
             )
             raise
         except Exception as exc:
@@ -849,13 +1073,19 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 action="detect_failed",
                 task_id=task_id,
                 user_id=user_id,
-                metadata={"error_type": type(exc).__name__},
+                metadata={
+                    "error_type": type(exc).__name__,
+                    "detection_run_id": detection_run_id,
+                },
             )
             await queue.put(_sse({
                 "type": "timeline_update",
                 "events": [audit_timeline_event(
                     "detect_failed",
-                    metadata={"error_type": type(exc).__name__},
+                    metadata={
+                        "error_type": type(exc).__name__,
+                        "detection_run_id": detection_run_id,
+                    },
                 )],
             }))
             await queue.put(_sse({
@@ -896,6 +1126,11 @@ async def detect_stream(request: DetectRequest, raw_request: Request):
         if not task:
             raise HTTPException(status_code=404, detail="检测任务不存在")
         _assert_task_owner(task, user_id)
+        if not request.resume and _is_active_analyzing_task(task):
+            raise HTTPException(
+                status_code=409,
+                detail="任务已有正在运行的检测流，为避免重复研判已拒绝本次启动",
+            )
 
     return StreamingResponse(
         sse_event_generator(request, user_id),

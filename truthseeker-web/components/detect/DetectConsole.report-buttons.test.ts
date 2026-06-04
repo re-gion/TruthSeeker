@@ -10,4 +10,16 @@ describe("DetectConsole report buttons", () => {
     expect(source).toContain("PDF 报告与审计日志")
     expect(source).toContain("downloadPdfReportWithAuditLog")
   })
+
+  it("shows a per-action spinner and disables report actions while generating", () => {
+    const source = readFileSync(join(process.cwd(), "components/detect/DetectConsole.tsx"), "utf8")
+
+    expect(source).toContain("pendingReportAction")
+    expect(source).toContain("Loader2")
+    expect(source).toContain("animate-spin")
+    expect(source).toContain('disabled={pendingReportAction !== null}')
+    expect(source).toContain('pendingReportAction === "md"')
+    expect(source).toContain('pendingReportAction === "pdf"')
+    expect(source).toContain('pendingReportAction === "share"')
+  })
 })

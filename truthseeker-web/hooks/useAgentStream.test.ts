@@ -234,7 +234,7 @@ describe("consultation event helpers", () => {
     expect(state.context.background).toBe("疑似公开视频二次编辑")
     expect(state.context.progress).toBe("Challenger 已完成三轮质询")
     expect(state.context.blockers).toEqual(["取证分数与溯源证据冲突"])
-    expect(state.context.helpNeeded).toBe("请判断是否需要补充来源链路")
+    expect(state.context.helpNeeded).toEqual(["请判断是否需要补充来源链路"])
     expect(state.context.sampleLinks).toEqual([
       { label: "样本 A", url: "https://example.invalid/a" },
       { label: "样本 2", url: "https://example.invalid/b" },
@@ -246,5 +246,25 @@ describe("consultation event helpers", () => {
     expect(canModerateConsultation("host")).toBe(true)
     expect(canModerateConsultation("expert")).toBe(false)
     expect(canModerateConsultation("viewer")).toBe(false)
+  })
+
+  it("keeps array help-needed items as numbered display items", () => {
+    const state = normalizeConsultationEvent({
+      type: "consultation_required",
+      task_id: "task-1",
+      payload: {
+        context: {
+          help_needed: [
+            "明确文本AIGC检测概率差异的技术根因",
+            "补充图片像素级深度取证分析",
+          ],
+        },
+      },
+    })
+
+    expect(state.context.helpNeeded).toEqual([
+      "明确文本AIGC检测概率差异的技术根因",
+      "补充图片像素级深度取证分析",
+    ])
   })
 })

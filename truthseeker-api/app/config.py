@@ -10,13 +10,15 @@ _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
 def _read_kimi_env() -> dict[str, str]:
-    """每次调用时重新读取 .env 中的 Kimi 相关配置，实现热加载。"""
+    """每次调用时重新读取 .env 中的 Agent LLM 相关配置，实现热加载。"""
     raw = dotenv_values(str(_ENV_PATH))
     result: dict[str, str] = {}
     for key in (
+        "AGENT_LLM_PROVIDER", "AGENT_LLM_MAX_OUTPUT_TOKENS",
         "KIMI_PROVIDER", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_MODEL",
         "KIMI_CODING_API_KEY", "KIMI_CODING_BASE_URL", "KIMI_CODING_MODEL",
         "KIMI_SILICONFLOW_API_KEY", "KIMI_SILICONFLOW_BASE_URL", "KIMI_SILICONFLOW_MODEL",
+        "MIMO_API_KEY", "MIMO_BASE_URL", "MIMO_MODEL", "MIMO_THINKING",
         "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
         "EMBEDDING_DIMENSIONS", "CASE_RAG_ENABLED", "CASE_RAG_TOP_K",
         "AIGC_IMAGE_PROVIDER", "AIGC_IMAGE_FALLBACK_PROVIDER",
@@ -61,6 +63,14 @@ class Settings(BaseSettings):
             "VirusTotal_API_KEY",
         ),
     )
+    AGENT_LLM_PROVIDER: str = Field(
+        default="kimi-k2.5",
+        validation_alias=AliasChoices("AGENT_LLM_PROVIDER", "Agent_LLM_Provider"),
+    )
+    AGENT_LLM_MAX_OUTPUT_TOKENS: int = Field(
+        default=4096,
+        validation_alias=AliasChoices("AGENT_LLM_MAX_OUTPUT_TOKENS", "Agent_LLM_Max_Output_Tokens"),
+    )
     KIMI_PROVIDER: str = Field(default="official", validation_alias=AliasChoices("KIMI_PROVIDER", "Kimi_Provider"))
     KIMI_API_KEY: str = Field(default="", validation_alias=AliasChoices("KIMI_API_KEY", "Kimi_API_KEY"))
     KIMI_BASE_URL: str = Field(
@@ -91,6 +101,19 @@ class Settings(BaseSettings):
     KIMI_SILICONFLOW_MODEL: str = Field(
         default="Pro/moonshotai/Kimi-K2.5",
         validation_alias=AliasChoices("KIMI_SILICONFLOW_MODEL"),
+    )
+    MIMO_API_KEY: str = Field(default="", validation_alias=AliasChoices("MIMO_API_KEY", "MiMo_API_KEY"))
+    MIMO_BASE_URL: str = Field(
+        default="https://token-plan-cn.xiaomimimo.com/v1",
+        validation_alias=AliasChoices("MIMO_BASE_URL", "MiMo_Base_URL"),
+    )
+    MIMO_MODEL: str = Field(
+        default="mimo-v2.5",
+        validation_alias=AliasChoices("MIMO_MODEL", "MiMo_Model"),
+    )
+    MIMO_THINKING: str = Field(
+        default="enabled",
+        validation_alias=AliasChoices("MIMO_THINKING", "MiMo_Thinking"),
     )
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
@@ -150,7 +173,31 @@ def _normalize_kimi_provider(provider: str) -> str:
         return "coding"
     if value in {"siliconflow", "silicon_flow"}:
         return "siliconflow"
+    if value in {"mimo", "xiaomi_mimo", "mimo_token_plan", "xiaomi_token_plan"}:
+        return "mimo"
     return "official"
+
+
+def _normalize_agent_llm_provider(provider: str) -> str:
+    value = (provider or "kimi-k2.5").strip().lower().replace("-", "_")
+    if value in {"mimo", "xiaomi_mimo", "mimo_v2.5", "mimo_v2_5", "mimo_token_plan", "xiaomi_token_plan"}:
+        return "mimo"
+    return "kimi"
+
+
+def _normalize_thinking_mode(value: str) -> str:
+    normalized = (value or "enabled").strip().lower()
+    if normalized in {"disabled", "disable", "off", "false", "0", "no"}:
+        return "disabled"
+    return "enabled"
+
+
+def _parse_positive_int(value: str | int | None, default: int) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
 
 
 def _normalize_kimi_base_url(base_url: str, provider: str) -> str:
@@ -163,17 +210,40 @@ def _normalize_kimi_base_url(base_url: str, provider: str) -> str:
 
 
 def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
-    """Resolve the active Kimi endpoint, hot-reloading from .env on every call."""
+    """Resolve the active Agent LLM endpoint, hot-reloading from .env on every call."""
     cfg = config or settings
     env = _read_kimi_env()  # 每次都从 .env 文件重新读取，实现 Key 热切换
 
+    agent_provider_raw = env.get("AGENT_LLM_PROVIDER") or cfg.AGENT_LLM_PROVIDER
+    agent_provider = _normalize_agent_llm_provider(agent_provider_raw)
     provider_raw = env.get("KIMI_PROVIDER") or cfg.KIMI_PROVIDER
     provider = _normalize_kimi_provider(provider_raw)
+    if provider == "mimo":
+        agent_provider = "mimo"
 
     official_key = env.get("KIMI_API_KEY") or cfg.KIMI_API_KEY
     official_model = (env.get("KIMI_MODEL") or cfg.KIMI_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
     official_base = _normalize_kimi_base_url(env.get("KIMI_BASE_URL") or cfg.KIMI_BASE_URL, "official")
 
+    if agent_provider == "mimo":
+        mimo_key = env.get("MIMO_API_KEY") or cfg.MIMO_API_KEY
+        mimo_model = (env.get("MIMO_MODEL") or cfg.MIMO_MODEL or "mimo-v2.5").strip() or "mimo-v2.5"
+        mimo_base = (
+            env.get("MIMO_BASE_URL")
+            or cfg.MIMO_BASE_URL
+            or "https://token-plan-cn.xiaomimimo.com/v1"
+        ).strip().rstrip("/")
+        return {
+            "provider": "mimo",
+            "model": mimo_model,
+            "base_url": mimo_base,
+            "api_key": mimo_key,
+            "thinking": _normalize_thinking_mode(env.get("MIMO_THINKING") or cfg.MIMO_THINKING),
+            "max_output_tokens": str(_parse_positive_int(
+                env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
+                4096,
+            )),
+        }
     if provider == "coding":
         coding_key = env.get("KIMI_CODING_API_KEY") or cfg.KIMI_CODING_API_KEY or official_key
         coding_model = (env.get("KIMI_CODING_MODEL") or cfg.KIMI_CODING_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
@@ -183,6 +253,11 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
             "model": coding_model,
             "base_url": coding_base,
             "api_key": coding_key,
+            "thinking": "disabled",
+            "max_output_tokens": str(_parse_positive_int(
+                env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
+                4096,
+            )),
         }
     if provider == "siliconflow":
         sf_key = env.get("KIMI_SILICONFLOW_API_KEY") or cfg.KIMI_SILICONFLOW_API_KEY or official_key
@@ -193,12 +268,22 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
             "model": sf_model,
             "base_url": sf_base,
             "api_key": sf_key,
+            "thinking": "disabled",
+            "max_output_tokens": str(_parse_positive_int(
+                env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
+                4096,
+            )),
         }
     return {
         "provider": "official",
         "model": official_model,
         "base_url": official_base,
         "api_key": official_key,
+        "thinking": "disabled",
+        "max_output_tokens": str(_parse_positive_int(
+            env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
+            4096,
+        )),
     }
 
 

@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-06-01（公开案例库 RAG 工具化）
+> **最后审查日期**: 2026-06-04（个人经验库功能补齐）
 
 ---
 
@@ -22,7 +22,7 @@
 - [x] 文本框改为全局检测提示词，不再允许仅凭提示词创建检测任务。
 - [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> END。
 - [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
-- [x] Kimi 2.5 作为四 Agent 共享多模态推理基座，禁用 thinking，工具结果 all-settled 后再进入 Agent 推理。
+- [x] 可配置全模态 Agent LLM 作为四 Agent 共享多模态推理基座；默认 Kimi 2.5，工具结果 all-settled 后再进入 Agent 推理。
 - [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
 - [x] 安装 `@xyflow/react` ^12.10.2 并将图谱视图替换为 React Flow 交互渲染（支持拖拽、缩放、节点详情面板）。
 - [x] 任务创建保存 `case_prompt`、文件清单、模态和 storage path。
@@ -48,6 +48,7 @@
 - [x] `docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md` 已同步最新流程。
 - [x] 公开案例库真实加载：用户授权公开后，完整报告生成才入库，支持去重、分页筛选和短期检材预览。
 - [x] 公开案例库 RAG 工具化：pgvector 分块索引、SiliconFlow embedding 配置、Forensics/OSINT 内部检索、报告展示调用情况。
+- [x] 个人经验库：会诊结束后生成可编辑经验草稿，按账号和目标 Agent 去重后展示；用户单独确认入库，Forensics/OSINT/Challenger 按账号私有检索；支持列表、详情和删除。
 
 ## 2026-04-21 调研报告问题修复 ✅
 
@@ -217,8 +218,8 @@
 - [x] **Commander Agent 重写** — 动态降级权重+LLM裁决报告+时间轴事件
 
 ### P2 — 端到端闭环（2026-04-15 完成）
-- [x] **后端报告生成** — `report_generator.py`，Markdown+PDF（weasyprint）生成
-- [x] **报告下载 API** — `report.py`，GET /md + GET /pdf 端点
+- [x] **后端报告生成** — `report_generator.py`，Markdown + fpdf2 文本型 PDF 生成，Pillow 图像 PDF 兜底
+- [x] **报告下载 API** — `report.py`，GET /md + GET /pdf + GET /audit-log.md + GET /audit-log.pdf 端点
 - [x] **证据时间轴前端** — `EvidenceTimeline.tsx`，垂直时间轴+Agent颜色编码+动画
 - [x] **专家会诊后端闭环** — `consultation.py`，消息注入+Supabase持久化+Agent读取
 - [x] **DetectConsole 集成** — 时间轴视图切换 + PDF下载按钮
@@ -255,10 +256,11 @@
 - [x] 删除检测页 2D Agent 视图，仅保留 3D、时间轴、图谱入口
 
 ### 2026-04-29 Agent 自主推理与 Kimi coding plan 适配
-- [x] 开发文档统一为“四个 Agent 先基于 Kimi 2.5 自主推理，再按角色调用外部工具，最后融合两部分结果”
-- [x] 后端 LLM 配置支持 `KIMI_PROVIDER=official|coding` 手动选择官方 API 或 Kimi coding plan
+- [x] 开发文档统一为“四个 Agent 先基于当前配置的全模态 Agent LLM 自主推理，再按角色调用外部工具，最后融合两部分结果”
+- [x] 后端 LLM 配置支持 `AGENT_LLM_PROVIDER=kimi-k2.5|mimo` 选择 Agent 底层全模态模型；K2.5 通过 `KIMI_PROVIDER=official|coding|siliconflow` 选择官方 API、Kimi coding plan 或 SiliconFlow 渠道
 - [x] 删除 `KIMI_FALLBACK_MODEL=moonshot-v1-128k` 模型级回退配置，LLM 不可用时只进入本地结构化降级
 - [x] `.env.example` 补充官方 API 与 coding plan 的示例配置
+- [x] `.env.example` 补充小米 MiMo Token Plan 示例配置，`AGENT_LLM_PROVIDER=mimo` 时使用 `MIMO_MODEL=mimo-v2.5`，不替换检测 API 和 embedding API
 - [x] 检测页右上角改为系统流程展板，按上传输入、创建任务、开始检测、Agent 执行、局部质询轮次、报告生成展示全流程
 - [x] 修复官方 Kimi API 地址归一、K2.5 thinking/temperature 参数风险，以及多轮质询重复调用成功外部工具导致的误降级
 - [x] Forensics / OSINT 接入内部文本 AIGC 检测工具矩阵（不再依赖外部文本检测 API）

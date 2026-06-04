@@ -12,6 +12,8 @@ from app.services.consultation_workflow import (
     build_moderator_summary,
     utc_now_iso,
 )
+from app.services.experience_library import build_experience_drafts
+from app.agents.tools.llm_client import commander_summarize_consultation
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -345,7 +347,28 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
     if session.get("status") not in {"active", "requested", "waiting_user_approval", "summary_pending"}:
         raise HTTPException(status_code=400, detail="当前会诊状态不能结束")
     messages = _session_messages(task_id, session_id)
-    summary_payload = build_moderator_summary(messages=messages)
+    fallback_summary = build_moderator_summary(messages=messages)
+    summary_payload = await commander_summarize_consultation(
+        messages=messages,
+        context_payload=session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {},
+        fallback_summary=fallback_summary,
+        case_prompt=(session.get("context_payload") or {}).get("case_prompt", "") if isinstance(session.get("context_payload"), dict) else "",
+    )
+    user_id = str(task.get("user_id") or getattr(request.state, "user_id", "") or "")
+    if user_id:
+        try:
+            summary_payload["experience_drafts"] = await build_experience_drafts(
+                user_id=user_id,
+                task_id=task_id,
+                session_id=session_id,
+                messages=messages,
+                context_payload=session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {},
+                summary_payload=summary_payload,
+            )
+        except Exception as exc:
+            logger.error("Failed to build experience drafts for consultation %s: %s", session_id, exc)
+            summary_payload["experience_drafts"] = []
+            summary_payload["experience_drafts_error"] = "个人经验库草稿生成失败"
     updated = _update_session(session_id, {
         "status": "summary_pending",
         "closed_at": utc_now_iso(),
@@ -381,10 +404,16 @@ async def confirm_consultation_summary(
     if session.get("status") not in {"summary_pending", "summary_confirmed"}:
         raise HTTPException(status_code=400, detail="当前会诊摘要不能确认")
     messages = _session_messages(task_id, session_id)
+    previous_summary_payload = session.get("summary_payload") if isinstance(session.get("summary_payload"), dict) else {}
     summary_payload = build_moderator_summary(
         messages=messages,
         user_confirmed_summary=req.summary,
     )
+    if isinstance(previous_summary_payload, dict):
+        if "experience_drafts" in previous_summary_payload:
+            summary_payload["experience_drafts"] = previous_summary_payload["experience_drafts"]
+        if "experience_drafts_error" in previous_summary_payload:
+            summary_payload["experience_drafts_error"] = previous_summary_payload["experience_drafts_error"]
     updated = _update_session(session_id, {
         "status": "summary_confirmed",
         "summary_payload": summary_payload,

@@ -7,8 +7,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable
 
-import httpx
-
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text
@@ -18,6 +16,8 @@ from app.config import settings
 from app.services.audit_log import record_audit_event
 from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
+from app.services.evidence_access import download_evidence_bytes
+from app.services.experience_library import experience_rag_search
 from app.services.text_validation import decode_text_bytes
 
 logger = logging.getLogger(__name__)
@@ -94,10 +94,8 @@ async def _read_text_sample(file_info: dict[str, Any]) -> dict[str, str]:
     url = file_info.get("file_url") or file_info.get("storage_path")
     if not isinstance(url, str) or not url or url.startswith("mock://"):
         return {"text": "", "encoding": "", "charset": ""}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, follow_redirects=True)
-        resp.raise_for_status()
-        return decode_text_bytes(resp.content, max_chars=TEXT_MAX_CHARS)
+    content, _ = await download_evidence_bytes(url, timeout=30.0)
+    return decode_text_bytes(content, max_chars=TEXT_MAX_CHARS)
 
 
 async def _settle_tool(
@@ -425,8 +423,25 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             "degraded": bool(case_rag.get("degraded")),
         },
     )
+    experience_rag = await experience_rag_search(
+        query=rag_query,
+        user_id=str(state.get("user_id") or ""),
+        agent="forensics",
+        top_k=settings.CASE_RAG_TOP_K,
+    )
+    settled_results.append(experience_rag)
+    log("action", f"个人经验库检索完成: {experience_rag.get('summary', '无摘要')}")
+    record_audit_event(
+        action=f"experience_rag.{experience_rag.get('status', 'unknown')}",
+        task_id=task_id,
+        agent="forensics",
+        metadata={
+            "match_count": len(experience_rag.get("matches") or []),
+            "degraded": bool(experience_rag.get("degraded")),
+        },
+    )
 
-    scoring_tools = [item for item in settled_results if item.get("tool") != "case_rag_search"]
+    scoring_tools = [item for item in settled_results if item.get("tool") not in {"case_rag_search", "experience_rag_search"}]
     degraded = any(item.get("status") in {"degraded", "failed"} for item in scoring_tools)
     failed_count = sum(1 for item in scoring_tools if item.get("status") == "failed")
     degraded_count = sum(1 for item in scoring_tools if item.get("status") == "degraded")
@@ -470,6 +485,8 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "degraded": degraded,
         "text_samples": text_contents,
         "case_rag": case_rag,
+        "experience_rag": experience_rag,
+        "timestamp": _now(),
     }
     reinforcement_context = _build_reinforcement_context(state, "forensics", state.get("forensics_result") or {})
     if reinforcement_context:
@@ -505,8 +522,11 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             "reused": sum(1 for item in settled_results if item.get("reused")),
             "case_rag_status": case_rag.get("status"),
             "case_rag_matches": len(case_rag.get("matches") or []),
+            "experience_rag_status": experience_rag.get("status"),
+            "experience_rag_matches": len(experience_rag.get("matches") or []),
         },
         "case_rag": case_rag,
+        "experience_rag": experience_rag,
         "sample_refs": sample_refs,
         "degraded": degraded,
         "degradation_status": degradation_level,

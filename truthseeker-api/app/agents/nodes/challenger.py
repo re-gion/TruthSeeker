@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,7 @@ from app.services.consultation_workflow import (
     filter_human_consultation_messages,
     latest_human_consultation_messages,
 )
+from app.services.experience_library import experience_rag_search
 from app.utils.supabase_client import supabase
 
 try:
@@ -145,6 +147,24 @@ def _normalize_target_agent(value: Any, fallback: str) -> str:
     return fallback if fallback in {"forensics", "osint", "commander"} else "forensics"
 
 
+def _issue_target_agent(issue: dict[str, Any]) -> str:
+    return str(issue.get("agent") or issue.get("target_agent") or "").strip()
+
+
+def _current_phase_issues(issues: list[dict[str, Any]], phase: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    current: list[dict[str, Any]] = []
+    cross_phase: list[dict[str, Any]] = []
+    for issue in issues:
+        target = _issue_target_agent(issue)
+        if target and target != phase:
+            cross_phase.append(issue)
+            continue
+        normalized = dict(issue)
+        normalized["agent"] = phase
+        current.append(normalized)
+    return current, cross_phase
+
+
 def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
     try:
         resp = _execute_supabase_query(
@@ -190,6 +210,51 @@ def _resume_consultation_context(
         "expert_messages": expert_messages,
         "confirmed_summary": confirmed_summary,
     }
+
+
+def _experience_query(*, phase: str, case_prompt: str, issues: list[dict[str, Any]], llm_cross_validation: str) -> str:
+    issue_text = "；".join(
+        str(item.get("description") or item.get("summary") or item.get("type") or "")
+        for item in issues[:5]
+        if isinstance(item, dict)
+    )
+    return "\n".join([
+        f"agent={phase}",
+        f"case_prompt={case_prompt}",
+        f"issues={issue_text}",
+        f"challenger_review={llm_cross_validation[:1200]}",
+    ])
+
+
+def _phase_already_experience_assisted(state: TruthSeekerState, phase: str) -> bool:
+    feedback = state.get("challenger_feedback") or {}
+    if feedback.get("phase") == phase and feedback.get("experience_assisted"):
+        return True
+    for item in state.get("consultation_trigger_history") or []:
+        if isinstance(item, dict) and item.get("phase") == phase and item.get("experience_assisted"):
+            return True
+    return False
+
+
+def _should_suppress_issue_by_experience(issue: dict[str, Any], matches: list[dict[str, Any]]) -> bool:
+    issue_text = str(issue.get("description") or issue.get("summary") or issue.get("type") or "")
+    issue_tokens = set(re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]", issue_text.lower()))
+    if not issue_tokens:
+        return False
+    for match in matches:
+        text = " ".join(str(match.get(key) or "") for key in ("title", "chunk_text", "snippet"))
+        if not text:
+            continue
+        lowered = text.lower()
+        if not any(marker in text for marker in ("不用", "不必", "无需", "不再", "可以不")):
+            continue
+        if not any(marker in text for marker in ("质询", "打回", "补强", "作为质询点")):
+            continue
+        match_tokens = set(re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]", lowered))
+        overlap = len(issue_tokens & match_tokens) / max(1, min(len(issue_tokens), 24))
+        if overlap >= 0.18:
+            return True
+    return False
 
 
 def _forensics_issues(forensics: dict[str, Any]) -> list[dict[str, Any]]:
@@ -409,6 +474,40 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         log("action", f"LLM 逻辑审查异常: {type(exc).__name__}")
 
     issues_found = _merge_issues(issues_found, model_issues)
+    challenger_experience = await experience_rag_search(
+        query=_experience_query(
+            phase="challenger",
+            case_prompt=case_prompt,
+            issues=issues_found,
+            llm_cross_validation=llm_cross_validation,
+        ),
+        user_id=str(state.get("user_id") or ""),
+        agent="challenger",
+    )
+    suppressed_issues = [
+        issue for issue in issues_found
+        if _should_suppress_issue_by_experience(issue, challenger_experience.get("matches") or [])
+    ]
+    if suppressed_issues:
+        suppressed_ids = {id(issue) for issue in suppressed_issues}
+        issues_found = [issue for issue in issues_found if id(issue) not in suppressed_ids]
+        model_requires_more_evidence = False if not issues_found else model_requires_more_evidence
+        log("thinking", f"个人经验库命中，压低 {len(suppressed_issues)} 个冗余质询点")
+        record_audit_event(
+            action="experience_rag.guided_challenger",
+            task_id=task_id,
+            agent="challenger",
+            metadata={
+                "phase": phase,
+                "suppressed_issue_count": len(suppressed_issues),
+                "match_count": len(challenger_experience.get("matches") or []),
+            },
+        )
+    issues_found, cross_phase_issues = _current_phase_issues(issues_found, phase)
+    if cross_phase_issues:
+        model_requires_more_evidence = False
+        model_target_agent = phase
+        log("thinking", f"忽略 {len(cross_phase_issues)} 个跨阶段质询点，当前仅审查 {phase} 阶段")
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
     confidence = _score_issues(issues_found, base=model_confidence)
@@ -502,11 +601,51 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     db_sessions = _fetch_consultation_sessions(task_id)
     if db_sessions:
         consultation_sessions = db_sessions
+    current_phase_trigger_history = [
+        item for item in consultation_trigger_history
+        if isinstance(item, dict) and item.get("phase") == phase and item.get("target_agent") == phase
+    ]
     consultation_trigger = evaluate_consultation_trigger(
-        consultation_trigger_history,
+        current_phase_trigger_history,
         existing_sessions=consultation_sessions,
+        max_rounds=max_rounds,
     )
     consultation_required = bool(consultation_trigger.get("should_pause"))
+    experience_assist = None
+    if consultation_required and phase in {"forensics", "osint"} and not _phase_already_experience_assisted(state, phase):
+        experience_assist = await experience_rag_search(
+            query=_experience_query(
+                phase=phase,
+                case_prompt=case_prompt,
+                issues=high or issues_found,
+                llm_cross_validation=llm_cross_validation,
+            ),
+            user_id=str(state.get("user_id") or ""),
+            agent=phase,
+        )
+        if experience_assist.get("matches"):
+            consultation_required = False
+            requires_more_evidence = True
+            target_agent = phase
+            challenge_record["experience_assisted"] = True
+            challenge_record["experience_rag"] = experience_assist
+            consultation_trigger = {
+                **consultation_trigger,
+                "should_pause": False,
+                "deferred_by_experience": True,
+                "experience_match_count": len(experience_assist.get("matches") or []),
+            }
+            log("thinking", f"命中个人经验 {len(experience_assist.get('matches') or [])} 条，先打回 {phase} 按经验补强一轮")
+            record_audit_event(
+                action="experience_rag.assisted",
+                task_id=task_id,
+                agent="challenger",
+                metadata={
+                    "phase": phase,
+                    "match_count": len(experience_assist.get("matches") or []),
+                    "degraded": bool(experience_assist.get("degraded")),
+                },
+            )
     consultation_resumed = False
     consultation_resume_payload = None
     if consultation_required and interrupt is not None:
@@ -603,7 +742,13 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "maxed_rounds": maxed,
         "residual_risks": residual_risks,
         "llm_cross_validation": llm_cross_validation,
+        "experience_guided": bool(challenger_experience.get("matches")),
+        "challenger_experience_rag": challenger_experience,
+        "suppressed_issue_count": len(suppressed_issues),
+        "suppressed_issues": suppressed_issues,
         "consultation_required": consultation_required,
+        "experience_assisted": bool(experience_assist and experience_assist.get("matches")),
+        "experience_rag": experience_assist,
         "consultation_resumed": consultation_resumed,
         "consultation_resume_payload": consultation_resume_payload if isinstance(consultation_resume_payload, dict) else None,
         "consultation_event_type": consultation_trigger.get("event_type") if consultation_required else None,

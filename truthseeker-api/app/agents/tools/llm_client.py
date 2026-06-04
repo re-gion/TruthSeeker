@@ -1,6 +1,6 @@
 """LLM client wrapper for TruthSeeker multi-agent malicious AIGC detection system.
 
-Wraps the selected Kimi API endpoint (OpenAI-compatible) using langchain-openai's ChatOpenAI.
+Wraps the selected Agent LLM endpoint (OpenAI-compatible) using langchain-openai's ChatOpenAI.
 Each agent-specific function builds a prompt chain and invokes the LLM asynchronously.
 On failure, gracefully degrades to a local rule-based fallback string.
 """
@@ -10,7 +10,9 @@ import base64
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -30,22 +32,32 @@ _llm_cache: dict[tuple[str, str, str, str], ChatOpenAI] = {}
 
 
 def get_llm(model_name: str | None = None) -> ChatOpenAI:
-    """Return a cached ChatOpenAI instance configured for the selected Kimi endpoint."""
+    """Return a cached ChatOpenAI instance configured for the selected Agent LLM endpoint."""
     runtime = resolve_kimi_runtime()
     name = model_name or runtime["model"]
     cache_key = (runtime["provider"], runtime["base_url"], name, runtime["api_key"])
     if cache_key not in _llm_cache:
         # Kimi K2.5 在关闭 thinking 后固定 temperature=0.6。
         temperature = 0.6 if name.startswith("kimi-k2.5") else 0.3
+        extra_body = {"thinking": {"type": "disabled"}} if name.startswith("kimi-k2.5") else None
+        default_headers = {"api-key": runtime["api_key"]} if runtime["provider"] == "mimo" else None
+        # Xiaomi MiMo Token Plan 的全模态模型默认使用 mimo-v2.5。
+        # mimo-v2.5 支持显式 thinking enabled/disabled；thinking enabled 时官方不支持自定义 temperature。
+        if runtime["provider"] == "mimo":
+            thinking_mode = runtime.get("thinking") or "enabled"
+            extra_body = {"thinking": {"type": thinking_mode}}
+            temperature = 1.0 if thinking_mode == "enabled" else 0.3
+        max_output_tokens = int(runtime.get("max_output_tokens") or settings.AGENT_LLM_MAX_OUTPUT_TOKENS)
         _llm_cache[cache_key] = ChatOpenAI(
             model=name,
             base_url=runtime["base_url"],
             api_key=runtime["api_key"],
             temperature=temperature,
-            max_tokens=2048,
+            max_tokens=max_output_tokens,
             request_timeout=120.0,
             max_retries=1,
-            extra_body={"thinking": {"type": "disabled"}} if name.startswith("kimi-k2.5") else None,
+            extra_body=extra_body,
+            default_headers=default_headers,
         )
     return _llm_cache[cache_key]
 
@@ -193,6 +205,13 @@ def _default_challenger_markdown(
 _MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
 _IMAGE_FETCH_TIMEOUT = 60.0  # Supabase signed URL 下载较慢，给足时间
 _IMAGE_FETCH_MAX_RETRIES = 2
+_CN_TZ = ZoneInfo("Asia/Shanghai")
+_TEMPORAL_PATTERN = re.compile(
+    r"(?P<label>[\u4e00-\u9fffA-Za-z0-9_·/\-]{0,16}时间)?"
+    r"[：:\s]*"
+    r"(?P<date>20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)"
+    r"(?:[ T　]*(?P<time>\d{1,2}:\d{2}(?::\d{2})?))?"
+)
 
 
 async def _fetch_image_base64(url: str) -> str | None:
@@ -259,6 +278,99 @@ def _build_multimodal_parts(text: str, sample_refs: list[dict] | None) -> list[d
                 "text": f"样本引用: {name} ({modality}) signed_url={url}",
             })
     return parts
+
+
+def _parse_reference_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_CN_TZ)
+    return parsed.astimezone(_CN_TZ)
+
+
+def _parse_sample_time(date_part: str, time_part: str | None) -> datetime | None:
+    normalized = (
+        date_part.replace("年", "-")
+        .replace("月", "-")
+        .replace("日", "")
+        .replace("/", "-")
+        .replace(".", "-")
+    )
+    pieces = normalized.split("-")
+    if len(pieces) != 3:
+        return None
+    try:
+        year, month, day = (int(piece) for piece in pieces)
+        if time_part:
+            time_pieces = [int(piece) for piece in time_part.split(":")]
+            hour = time_pieces[0]
+            minute = time_pieces[1]
+            second = time_pieces[2] if len(time_pieces) > 2 else 0
+        else:
+            hour = minute = second = 0
+        return datetime(year, month, day, hour, minute, second, tzinfo=_CN_TZ)
+    except ValueError:
+        return None
+
+
+def _iter_text_sample_contents(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    contents: list[tuple[str, str]] = []
+    for key in ("text_samples", "text_contents"):
+        for index, item in enumerate(payload.get(key) or [], 1):
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content") or item.get("text")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            name = str(item.get("name") or f"{key}-{index}")
+            contents.append((name, content))
+    return contents
+
+
+def _build_temporal_fact_table(payload: dict[str, Any]) -> str:
+    """Build deterministic sample-time facts so LLM summaries cannot invert dates."""
+    reference = (
+        _parse_reference_time(payload.get("timestamp"))
+        or _parse_reference_time(payload.get("analysis_time"))
+        or _parse_reference_time(payload.get("generated_at"))
+        or datetime.now(timezone.utc).astimezone(_CN_TZ)
+    )
+    rows: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for name, content in _iter_text_sample_contents(payload):
+        for match in _TEMPORAL_PATTERN.finditer(content):
+            parsed = _parse_sample_time(match.group("date"), match.group("time"))
+            if parsed is None:
+                continue
+            original = match.group(0).strip(" ：:")
+            key = (name, original)
+            if key in seen:
+                continue
+            seen.add(key)
+            if parsed > reference:
+                relation = "晚于分析时间，是未来日期"
+                guard = "可称为未来日期，但必须说明比较基准"
+            elif parsed < reference:
+                relation = "早于分析时间，不是未来日期"
+                guard = "不得称为未来日期"
+            else:
+                relation = "等于分析时间，不是未来日期"
+                guard = "不得称为未来日期"
+            rows.append(
+                f"- {name}: {original} -> {parsed.strftime('%Y-%m-%d %H:%M:%S')}，"
+                f"{relation}；{guard}。"
+            )
+    if not rows:
+        return ""
+    return "\n".join([
+        "确定性时间校验（由代码生成，优先级高于模型推断）:",
+        f"- 分析时间（北京时间）: {reference.strftime('%Y-%m-%d %H:%M:%S')}",
+        *rows,
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +524,10 @@ async def forensics_interpret(
             "只能写成外部工具未取得真实结论，不得把降级占位字段解释为真实检测通过、面部自然或无伪影。"
             "如果传入 case_rag_search 或 case_rag 字段，相似公开案例只能作为类案参考和复核方向，"
             "不得写成当前检材事实，也不得替代本轮样本、Sightengine、Reality Defender 或 VirusTotal 证据。"
+            "如果传入 experience_rag_search 或 experience_rag 字段，个人经验只能作为用户私有的方法参考和检查清单，"
+            "不得写成当前检材事实，不得直接改变取证分数或替代本轮证据。"
             "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
+            "如果输入包含“确定性时间校验”，必须以该校验为准，不得输出与其相反的日期先后判断。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
@@ -423,12 +538,15 @@ async def forensics_interpret(
             name = tc.get("name", f"text-{i}")
             content = tc.get("content", "")
             text_section += f"--- {name} ---\n{content}\n\n"
+    temporal_facts = _build_temporal_fact_table(raw_api_result)
+    temporal_section = f"\n\n{temporal_facts}" if temporal_facts else ""
     human_text = (
         f"全局检测目标/案件背景：{case_prompt or '用户未补充额外提示。'}\n\n"
         f"输入类型：{input_type}\n\n"
         f"样本引用摘要：\n{_sample_references_text(sample_refs)}\n\n"
         f"原始检测结果：\n{json.dumps(raw_api_result, ensure_ascii=False, indent=2)}"
         f"{text_section}"
+        f"{temporal_section}"
     )
     return await _invoke_multimodal_llm(
         system_prompt=system_prompt,
@@ -462,7 +580,7 @@ async def osint_interpret(
     indicators = raw_intel.get("indicators", [])
     system_prompt = (
             "你是一位专攻威胁评估的开源情报(OSINT)分析师。"
-            "你需要对传入的原始情报数据、Exa 检索结果、VirusTotal、WhoisXML 域名注册/DNS历史结果和样本引用进行专业研判，"
+            "你需要对传入的原始情报数据、Exa 检索结果、VirusTotal、WhoisXML 域名注册/当前DNS/IP归属结果和样本引用进行专业研判，"
             "并说明情报溯源图谱的关键节点、关系和引用覆盖情况。"
             "必须输出 Markdown，并原样保留这些小标题："
             "### 自主情报推理；### 外部情报结果解读；### 来源可信度与图谱质量；### 关联风险与复核建议。"
@@ -472,15 +590,21 @@ async def osint_interpret(
             "不得把未实际调用的结果写成安全厂商未检出。"
             "如果传入 case_rag_search 或 case_rag 字段，相似公开案例只能作为攻击模式和溯源路径参考，"
             "不能替代当前 URL、域名、样本或外部来源的独立核验。"
+            "如果传入 experience_rag_search 或 experience_rag 字段，个人经验只能作为用户私有的溯源方法参考，"
+            "不得写成当前案件事实，不得直接改变威胁分数或替代当前 URL、域名、样本与外部来源核验。"
             "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
+            "如果输入包含“确定性时间校验”，必须以该校验为准，不得输出与其相反的日期先后判断。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
     )
+    temporal_facts = _build_temporal_fact_table(raw_intel)
+    temporal_section = f"\n\n{temporal_facts}" if temporal_facts else ""
     human_text = (
         f"全局检测目标/案件背景：{case_prompt or '用户未补充额外提示。'}\n\n"
         f"输入类型：{input_type}\n\n"
         f"样本引用摘要：\n{_sample_references_text(sample_refs)}\n\n"
         f"原始情报数据：\n{json.dumps(raw_intel, ensure_ascii=False, indent=2)}"
+        f"{temporal_section}"
     )
     return await _invoke_multimodal_llm(
         system_prompt=system_prompt,
@@ -771,6 +895,144 @@ async def commander_dedupe_consultation_context(
         "raw_response": raw[:1200],
     }
     return result
+
+
+def _consultation_message_for_summary(item: dict[str, Any]) -> dict[str, Any] | None:
+    role = str(item.get("role") or "").strip()
+    message = str(item.get("message") or item.get("content") or "").strip()
+    if not message:
+        return None
+    return {
+        "role": role or "participant",
+        "expert_name": item.get("expert_name"),
+        "message_type": item.get("message_type"),
+        "message": message[:1000],
+        "created_at": item.get("created_at"),
+    }
+
+
+async def commander_summarize_consultation(
+    *,
+    messages: list[dict[str, Any]],
+    context_payload: dict[str, Any] | None = None,
+    fallback_summary: dict[str, Any] | None = None,
+    case_prompt: str = "",
+) -> dict[str, Any]:
+    """Let Commander summarize expert consultation against the requested help items."""
+    fallback_summary = dict(fallback_summary or {})
+    context_payload = context_payload if isinstance(context_payload, dict) else {}
+    normalized_messages = [
+        normalized for item in messages
+        if isinstance(item, dict) and (normalized := _consultation_message_for_summary(item)) is not None
+    ]
+    if not normalized_messages:
+        fallback_summary.setdefault("summary_provider", "no_human_messages")
+        return fallback_summary
+
+    help_needed = _normalize_help_items(context_payload.get("help_needed"))
+    expert_tasks = context_payload.get("expert_tasks") if isinstance(context_payload.get("expert_tasks"), list) else []
+    fallback_generated = str(fallback_summary.get("generated_summary") or "本轮会诊已结束，但未生成有效摘要。")
+    system_prompt = (
+        "你是 TruthSeeker 的 Commander 会诊主持人。"
+        "用户点击结束会诊后，你必须阅读会诊上下文、需要帮助字段、专家任务、用户与专家对话，生成真正的摘要。"
+        "重点总结专家针对“需要帮助”字段中问题的回复、判断依据和下一步建议。"
+        "不要逐字复述完整聊天记录，不要只输出固定结构。"
+        "输出 JSON 对象，字段包括 generated_summary、expert_answer_summary、recommended_actions、unresolved_questions。"
+        "generated_summary 用 3 到 6 句中文自然段，必须可直接回注给后续 Agent 使用。"
+    )
+    human_text = (
+        f"案件背景：{case_prompt or context_payload.get('case_prompt') or '用户未补充额外背景。'}\n\n"
+        f"需要帮助字段：\n{json.dumps(help_needed, ensure_ascii=False, indent=2)}\n\n"
+        f"专家任务：\n{json.dumps(expert_tasks, ensure_ascii=False, indent=2)}\n\n"
+        f"会诊上下文：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:6000]}\n\n"
+        f"用户与专家对话：\n{json.dumps(normalized_messages, ensure_ascii=False, indent=2)}\n\n"
+        f"兜底机械摘要，仅供参考，不得照抄：\n{fallback_generated}"
+    )
+    fallback_payload = {
+        "generated_summary": fallback_generated,
+        "expert_answer_summary": "",
+        "recommended_actions": [],
+        "unresolved_questions": fallback_summary.get("unresolved_questions") or [],
+    }
+    raw = await _invoke_multimodal_llm(
+        system_prompt=system_prompt,
+        human_text=human_text,
+        sample_refs=None,
+        fallback_text=json.dumps(fallback_payload, ensure_ascii=False),
+    )
+    if raw.strip().startswith("[降级模式"):
+        fallback_summary.setdefault("summary_provider", "fallback_static")
+        fallback_summary["summary_degraded"] = True
+        return fallback_summary
+
+    parsed = _extract_json_object(raw)
+    if not parsed:
+        fallback_summary.setdefault("summary_provider", "fallback_static")
+        return fallback_summary
+
+    generated = str(parsed.get("generated_summary") or "").strip()
+    if not generated:
+        fallback_summary.setdefault("summary_provider", "fallback_static")
+        return fallback_summary
+
+    result = dict(fallback_summary)
+    result["generated_summary"] = generated[:2000]
+    result["confirmed_summary"] = generated[:2000]
+    result["summary_provider"] = "commander_llm"
+    result["summary_raw_response"] = raw[:1200]
+    if isinstance(parsed.get("expert_answer_summary"), str):
+        result["expert_answer_summary"] = parsed["expert_answer_summary"][:1200]
+    if isinstance(parsed.get("recommended_actions"), list):
+        result["recommended_actions"] = [str(item)[:300] for item in parsed["recommended_actions"][:6] if str(item).strip()]
+    if isinstance(parsed.get("unresolved_questions"), list):
+        result["unresolved_questions"] = [str(item)[:300] for item in parsed["unresolved_questions"][:6] if str(item).strip()]
+    result["help_needed"] = help_needed
+    return result
+
+
+async def commander_extract_experience_drafts(
+    *,
+    messages: list[dict[str, Any]],
+    context_payload: dict[str, Any] | None = None,
+    summary_payload: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract reusable, private experience drafts from a finished consultation."""
+    context_payload = context_payload if isinstance(context_payload, dict) else {}
+    summary_payload = summary_payload if isinstance(summary_payload, dict) else {}
+    normalized_messages = [
+        normalized for item in messages
+        if isinstance(item, dict) and (normalized := _consultation_message_for_summary(item)) is not None
+    ]
+    if not normalized_messages:
+        return []
+
+    system_prompt = (
+        "你是 TruthSeeker 的 Commander 主持人，负责从已结束的专家会诊中沉淀个人经验草稿。"
+        "只提取可复用的方法、判据、补证路径和升级会诊条件；不要保存具体检材名、链接、账号、专家原话或可识别案件细节。"
+        "一场会诊可以沉淀 0、1 或多条经验；如果专家回复没有可复用内容，输出空数组。"
+        "输出必须是 JSON 对象，字段 drafts 为数组。每条草稿必须包含："
+        "title、target_agents、problem_pattern、recommended_method、evidence_to_check、when_to_escalate、limitations。"
+        "target_agents 只能包含 forensics、osint、challenger。"
+    )
+    fallback_payload = {"drafts": []}
+    human_text = (
+        f"会诊上下文（已脱敏使用）：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:5000]}\n\n"
+        f"会诊摘要：\n{json.dumps(summary_payload, ensure_ascii=False, indent=2)[:3000]}\n\n"
+        f"用户与专家消息：\n{json.dumps(normalized_messages, ensure_ascii=False, indent=2)[:7000]}"
+    )
+    raw = await _invoke_multimodal_llm(
+        system_prompt=system_prompt,
+        human_text=human_text,
+        sample_refs=None,
+        fallback_text=json.dumps(fallback_payload, ensure_ascii=False),
+    )
+    if raw.strip().startswith("[降级模式"):
+        return []
+    parsed = _extract_json_object(raw)
+    drafts = parsed.get("drafts") if isinstance(parsed, dict) else None
+    if not isinstance(drafts, list):
+        return []
+    return [item for item in drafts if isinstance(item, dict)]
 
 
 # ---------------------------------------------------------------------------
