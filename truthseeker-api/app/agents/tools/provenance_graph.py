@@ -63,14 +63,26 @@ def _evidence_file_label(item: dict[str, Any], index: int) -> str:
     return str(item.get("name") or item.get("storage_path") or f"检材 {index}")
 
 
+def _append_citation(citations: list[dict[str, Any]], seen: set[str], citation: dict[str, Any]) -> str:
+    citation_id = str(citation.get("id") or _stable_id("citation", citation))
+    if citation_id in seen:
+        return citation_id
+    citation["id"] = citation_id
+    citations.append(citation)
+    seen.add(citation_id)
+    return citation_id
+
+
 def _build_file_citations(evidence_files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str]]:
     citations: list[dict[str, Any]] = []
+    seen: set[str] = set()
     file_citation_ids: dict[str, str] = {}
     for index, item in enumerate(evidence_files or [], 1):
         file_id = str(item.get("id") or f"file-{index}")
         citation_id = f"file:{file_id}"
-        citations.append({
+        _append_citation(citations, seen, {
             "id": citation_id,
+            "source_kind": "uploaded_file",
             "source_name": "上传检材",
             "retrieved_at": _now(),
             "summary": _evidence_file_label(item, index),
@@ -84,6 +96,139 @@ def _build_file_citations(evidence_files: list[dict[str, Any]]) -> tuple[list[di
         })
         file_citation_ids[file_id] = citation_id
     return citations, file_citation_ids
+
+
+def _tool_label(tool_result: dict[str, Any]) -> str:
+    tool = str(tool_result.get("tool") or "tool")
+    status = str(tool_result.get("status") or "unknown")
+    return f"{tool} {status}"
+
+
+def _tool_citation_id(tool_result: dict[str, Any]) -> str:
+    return _stable_id(
+        "tool",
+        {
+            "tool": tool_result.get("tool"),
+            "target": tool_result.get("target"),
+            "status": tool_result.get("status"),
+            "summary": tool_result.get("summary"),
+        },
+    )
+
+
+def _append_tool_result_citation(citations: list[dict[str, Any]], seen: set[str], tool_result: dict[str, Any]) -> str:
+    tool = str(tool_result.get("tool") or "tool")
+    return _append_citation(citations, seen, {
+        "id": _tool_citation_id(tool_result),
+        "source_kind": "tool_result",
+        "source_name": tool,
+        "retrieved_at": tool_result.get("retrieved_at") or _now(),
+        "summary": tool_result.get("summary") or _tool_label(tool_result),
+        "metadata": {
+            "tool": tool,
+            "target": tool_result.get("target"),
+            "status": tool_result.get("status"),
+            "confidence": tool_result.get("confidence"),
+            "degraded": tool_result.get("degraded", False),
+            "provider": (tool_result.get("result") or {}).get("provider") if isinstance(tool_result.get("result"), dict) else None,
+        },
+    })
+
+
+def _rag_source_kind(tool_name: str, match: dict[str, Any]) -> str | None:
+    explicit = str(match.get("source_kind") or "").strip().lower()
+    if explicit in {"case_rag", "experience_rag"}:
+        return explicit
+    if tool_name == "case_rag_search":
+        return "case_rag"
+    if tool_name == "experience_rag_search":
+        return "experience_rag"
+    return None
+
+
+def _append_rag_match_citations(
+    citations: list[dict[str, Any]],
+    seen: set[str],
+    *,
+    tool_name: str,
+    matches: list[dict[str, Any]],
+) -> list[str]:
+    citation_ids: list[str] = []
+    for index, match in enumerate(matches or [], 1):
+        if not isinstance(match, dict):
+            continue
+        source_kind = _rag_source_kind(tool_name, match)
+        if not source_kind:
+            continue
+        raw_id = (
+            match.get("chunk_id")
+            or match.get("case_id")
+            or match.get("entry_id")
+            or f"{tool_name}:{index}:{match.get('title')}"
+        )
+        citation_id = _stable_id(source_kind, raw_id)
+        citation_ids.append(_append_citation(citations, seen, {
+            "id": citation_id,
+            "source_kind": source_kind,
+            "source_name": match.get("title") or ("公开案例 RAG" if source_kind == "case_rag" else "个人经验 RAG"),
+            "retrieved_at": match.get("retrieved_at") or _now(),
+            "summary": match.get("snippet") or match.get("chunk_text") or match.get("summary") or "",
+            "metadata": {
+                "case_id": match.get("case_id"),
+                "entry_id": match.get("entry_id"),
+                "chunk_id": match.get("chunk_id"),
+                "score": match.get("score", match.get("similarity")),
+                "tool": tool_name,
+            },
+        }))
+    return citation_ids
+
+
+def _append_tool_finding(
+    *,
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    seen_nodes: set[str],
+    seen_edges: set[str],
+    citations: list[dict[str, Any]],
+    seen_citations: set[str],
+    tool_result: dict[str, Any],
+    root_event_id: str,
+    artifact_ref: str | None = None,
+) -> list[str]:
+    tool = str(tool_result.get("tool") or "tool")
+    target = str(tool_result.get("target") or "")
+    tool_citation_id = _append_tool_result_citation(citations, seen_citations, tool_result)
+    rag_citation_ids = _append_rag_match_citations(
+        citations,
+        seen_citations,
+        tool_name=tool,
+        matches=[item for item in (tool_result.get("matches") or []) if isinstance(item, dict)],
+    )
+    citation_ids = [tool_citation_id, *rag_citation_ids]
+    node_id = _stable_id("finding", f"{tool}:{target}:{tool_result.get('status')}")
+    _append_node(nodes, seen_nodes, {
+        "id": node_id,
+        "type": "finding",
+        "label": _tool_label(tool_result),
+        "confidence": _clamp_score(tool_result.get("confidence"), 0.55),
+        "citation_ids": citation_ids,
+        "metadata": {
+            "tool": tool,
+            "status": tool_result.get("status"),
+            "target": target,
+            "summary": tool_result.get("summary"),
+            "degraded": tool_result.get("degraded", False),
+        },
+    })
+    _append_edge(edges, seen_edges, {
+        "source": node_id,
+        "target": artifact_ref or root_event_id,
+        "type": "derived_from" if artifact_ref else "supports",
+        "citation_ids": citation_ids,
+        "model_inferred": False,
+    })
+    return citation_ids
 
 
 def build_provenance_graph(
@@ -109,6 +254,7 @@ def build_provenance_graph(
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     citations, file_citation_ids = _build_file_citations(evidence_files)
+    seen_citations: set[str] = {str(item.get("id")) for item in citations if item.get("id")}
     seen_nodes: set[str] = set()
     seen_edges: set[str] = set()
 
@@ -144,41 +290,33 @@ def build_provenance_graph(
             "model_inferred": False,
         })
 
+    first_artifact_ref = None
+    if evidence_files:
+        first_artifact_ref = f"artifact:{evidence_files[0].get('id') or 'file-1'}"
+
     for tool_result in forensics_result.get("tool_results") or []:
         if not isinstance(tool_result, dict):
             continue
-        tool = tool_result.get("tool", "tool")
-        target = tool_result.get("target", "")
-        node_id = _stable_id("finding", f"{tool}:{target}:{tool_result.get('status')}")
-        _append_node(nodes, seen_nodes, {
-            "id": node_id,
-            "type": "finding",
-            "label": f"{tool} {tool_result.get('status', 'unknown')}",
-            "confidence": _clamp_score(tool_result.get("confidence"), 0.55),
-            "metadata": {
-                "tool": tool,
-                "status": tool_result.get("status"),
-                "target": target,
-                "summary": tool_result.get("summary"),
-                "degraded": tool_result.get("degraded", False),
-            },
-        })
-        if evidence_files:
-            artifact_ref = f"artifact:{evidence_files[0].get('id') or 'file-1'}"
-            _append_edge(edges, seen_edges, {
-                "source": node_id,
-                "target": artifact_ref,
-                "type": "derived_from",
-                "model_inferred": False,
-            })
+        _append_tool_finding(
+            nodes=nodes,
+            edges=edges,
+            seen_nodes=seen_nodes,
+            seen_edges=seen_edges,
+            citations=citations,
+            seen_citations=seen_citations,
+            tool_result=tool_result,
+            root_event_id=root_event_id,
+            artifact_ref=first_artifact_ref,
+        )
 
     for index, result in enumerate(osint_result.get("search_results") or [], 1):
         if not isinstance(result, dict):
             continue
         url = result.get("url") or f"osint-result-{index}"
         citation_id = _stable_id("url", url)
-        citations.append({
+        _append_citation(citations, seen_citations, {
             "id": citation_id,
+            "source_kind": "external_source",
             "source_name": result.get("title") or "Exa 搜索结果",
             "url": result.get("url"),
             "retrieved_at": result.get("retrieved_at") or _now(),
@@ -201,6 +339,21 @@ def build_provenance_graph(
             "model_inferred": False,
         })
 
+    osint_tool_citation_ids: list[str] = []
+    for tool_result in osint_result.get("tool_results") or []:
+        if not isinstance(tool_result, dict):
+            continue
+        osint_tool_citation_ids.extend(_append_tool_finding(
+            nodes=nodes,
+            edges=edges,
+            seen_nodes=seen_nodes,
+            seen_edges=seen_edges,
+            citations=citations,
+            seen_citations=seen_citations,
+            tool_result=tool_result,
+            root_event_id=root_event_id,
+        ))
+
     claim_seed = osint_result.get("model_claims") or []
     if not claim_seed:
         for indicator in (osint_result.get("threat_indicators") or [])[:5]:
@@ -210,12 +363,24 @@ def build_provenance_graph(
                 "citation_ids": [],
             })
 
+    source_citation_ids = [
+        cid
+        for node in nodes
+        if node.get("type") == "source"
+        for cid in (node.get("citation_ids") or [])
+        if cid
+    ]
+    fallback_claim_citation_ids = list(dict.fromkeys([
+        *source_citation_ids,
+        *osint_tool_citation_ids,
+    ]))[:6]
+
     for index, claim in enumerate(claim_seed, 1):
         if not isinstance(claim, dict):
             continue
         label = str(claim.get("label") or claim.get("text") or f"模型声明 {index}")
         claim_id = str(claim.get("id") or _stable_id("claim", label))
-        citation_ids = [cid for cid in claim.get("citation_ids", []) if cid]
+        citation_ids = [cid for cid in claim.get("citation_ids", []) if cid] or fallback_claim_citation_ids
         model_inferred = len(citation_ids) == 0
         _append_node(nodes, seen_nodes, {
             "id": claim_id if claim_id.startswith("claim:") else f"claim:{claim_id}",

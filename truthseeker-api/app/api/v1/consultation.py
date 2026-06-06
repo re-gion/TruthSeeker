@@ -1,4 +1,8 @@
-"""专家会诊 API — 注入专家意见到 Agent 状态"""
+"""人机协同 API — 注入用户/专家意见到 Agent 状态。
+
+The module keeps the legacy consultation route names for compatibility, but
+new writes target collaboration_* tables.
+"""
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -21,6 +25,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 INVITE_TTL_HOURS = 24
+SESSION_TABLE = "collaboration_sessions"
+MESSAGE_TABLE = "collaboration_messages"
+INVITE_TABLE = "collaboration_invites"
+LEGACY_SESSION_TABLE = "consultation_sessions"
+LEGACY_MESSAGE_TABLE = "consultation_messages"
+LEGACY_INVITE_TABLE = "consultation_invites"
 
 
 class InjectMessageRequest(BaseModel):
@@ -47,7 +57,7 @@ class SummaryConfirmRequest(BaseModel):
 
 
 class ConsultationMessage(BaseModel):
-    """会诊消息模型"""
+    """协同消息模型"""
     id: Optional[str] = None
     task_id: str
     role: str
@@ -85,7 +95,7 @@ def _assert_task_owner(task: dict, request: Request) -> None:
         return
     task_user_id = task.get("user_id")
     if task_user_id and task_user_id != user_id:
-        raise HTTPException(status_code=403, detail="无权操作该任务会诊")
+        raise HTTPException(status_code=403, detail="无权操作该任务协同")
 
 
 def _fetch_task_or_404(task_id: str, columns: str = "id,status,user_id,metadata,storage_paths") -> dict:
@@ -95,28 +105,51 @@ def _fetch_task_or_404(task_id: str, columns: str = "id,status,user_id,metadata,
     return task_resp.data[0]
 
 
+def _select_rows(table_name: str, task_id: str, *, order_desc: bool = False) -> list[dict]:
+    try:
+        resp = (
+            supabase.table(table_name)
+            .select("*")
+            .eq("task_id", task_id)
+            .order("created_at", desc=order_desc)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        logger.warning("Failed to read %s for %s: %s", table_name, task_id, exc)
+        return []
+
+
 def _fetch_session_or_404(task_id: str, session_id: str) -> dict:
-    resp = (
-        supabase.table("consultation_sessions")
-        .select("*")
-        .eq("id", session_id)
-        .eq("task_id", task_id)
-        .execute()
-    )
-    if not resp.data:
-        raise HTTPException(status_code=404, detail="会诊会话不存在")
-    return resp.data[0]
+    for table_name in (SESSION_TABLE, LEGACY_SESSION_TABLE):
+        try:
+            resp = (
+                supabase.table(table_name)
+                .select("*")
+                .eq("id", session_id)
+                .eq("task_id", task_id)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("Failed to read %s session %s: %s", table_name, session_id, exc)
+            continue
+        if resp.data:
+            row = resp.data[0]
+            row["_source_table"] = table_name
+            return row
+    raise HTTPException(status_code=404, detail="协同会话不存在")
 
 
 def _latest_session(task_id: str) -> dict | None:
-    resp = (
-        supabase.table("consultation_sessions")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return resp.data[0] if resp.data else None
+    rows = _select_rows(SESSION_TABLE, task_id, order_desc=True)
+    if rows:
+        rows[0]["_source_table"] = SESSION_TABLE
+        return rows[0]
+    legacy_rows = _select_rows(LEGACY_SESSION_TABLE, task_id, order_desc=True)
+    if legacy_rows:
+        legacy_rows[0]["_source_table"] = LEGACY_SESSION_TABLE
+        return legacy_rows[0]
+    return None
 
 
 def _session_for_invite_or_latest(task_id: str, invite: dict | None = None) -> dict | None:
@@ -127,21 +160,36 @@ def _session_for_invite_or_latest(task_id: str, invite: dict | None = None) -> d
 
 
 def _update_session(session_id: str, payload: dict) -> dict:
-    resp = supabase.table("consultation_sessions").update(payload).eq("id", session_id).execute()
-    return resp.data[0] if resp.data else {**payload, "id": session_id}
+    for table_name in (SESSION_TABLE, LEGACY_SESSION_TABLE):
+        try:
+            resp = supabase.table(table_name).update(payload).eq("id", session_id).execute()
+            if resp.data:
+                return resp.data[0]
+        except Exception as exc:
+            logger.warning("Failed to update %s session %s: %s", table_name, session_id, exc)
+    return {**payload, "id": session_id}
 
 
 def _session_messages(task_id: str, session_id: str | None) -> list[dict]:
-    query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
-    if session_id:
-        query = query.eq("session_id", session_id)
-    resp = query.order("created_at", desc=False).execute()
-    return resp.data or []
+    rows: list[dict] = []
+    for table_name in (MESSAGE_TABLE, LEGACY_MESSAGE_TABLE):
+        query = supabase.table(table_name).select("*").eq("task_id", task_id)
+        if session_id:
+            query = query.eq("session_id", session_id)
+        try:
+            resp = query.order("created_at", desc=False).execute()
+            rows = resp.data or []
+        except Exception as exc:
+            logger.warning("Failed to read %s for %s: %s", table_name, task_id, exc)
+            rows = []
+        if rows:
+            return rows
+    return []
 
 
 def _insert_commander_message(task_id: str, session_id: str, message: str, message_type: str = "moderator_note") -> None:
     try:
-        supabase.table("consultation_messages").insert({
+        supabase.table(MESSAGE_TABLE).insert({
             "task_id": task_id,
             "session_id": session_id,
             "role": "commander",
@@ -158,12 +206,20 @@ def _insert_commander_message(task_id: str, session_id: str, message: str, messa
 async def inject_expert_message(task_id: str, req: InjectMessageRequest, request: Request):
     """注入专家意见到运行中的 Agent 状态
 
-    消息被写入 Supabase consultation_messages 表，
+    消息被写入 Supabase collaboration_messages 表，
     Agent 节点在下一轮开始时读取这些消息。
     """
     task = _fetch_task_or_404(task_id, "id,status,user_id")
     task_status = task.get("status", "")
-    if task_status not in ("analyzing", "deliberating", "pending", "waiting_consultation", "waiting_consultation_approval"):
+    if task_status not in (
+        "analyzing",
+        "deliberating",
+        "pending",
+        "waiting_collaboration",
+        "waiting_collaboration_approval",
+        "waiting_consultation",
+        "waiting_consultation_approval",
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"任务状态为 {task_status}，不接受新的专家意见"
@@ -177,13 +233,13 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
         if not session_id and invite.get("session_id"):
             session_id = invite.get("session_id")
     elif not is_authenticated:
-        raise HTTPException(status_code=401, detail="用户会诊消息需要登录")
+        raise HTTPException(status_code=401, detail="用户协同消息需要登录")
     else:
         _assert_task_owner(task, request)
         if session_id:
             _fetch_session_or_404(task_id, session_id)
 
-    # 写入 consultation_messages 表
+    # 写入 collaboration_messages 表
     message_record = {
         "task_id": task_id,
         "role": req.role,
@@ -200,9 +256,9 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
     }
 
     try:
-        resp = supabase.table("consultation_messages").insert(message_record).execute()
+        resp = supabase.table(MESSAGE_TABLE).insert(message_record).execute()
         record_audit_event(
-            action="consultation_message",
+            action="collaboration_message",
             task_id=task_id,
             user_id=request_user_id,
             actor_role=req.role,
@@ -237,9 +293,9 @@ async def create_consultation_invite(task_id: str, request: Request, session_id:
     }
 
     try:
-        supabase.table("consultation_invites").insert(invite_record).execute()
+        supabase.table(INVITE_TABLE).insert(invite_record).execute()
         record_audit_event(
-            action="consultation_invite_created",
+            action="collaboration_invite_created",
             task_id=task_id,
             user_id=getattr(request.state, "user_id", None),
             metadata={"invite_token": token},
@@ -259,7 +315,7 @@ async def create_consultation_invite(task_id: str, request: Request, session_id:
 
 @router.get("/{task_id}/session")
 async def get_current_consultation_session(task_id: str, request: Request, invite_token: Optional[str] = None):
-    """读取当前会诊 session 和上下文。"""
+    """读取当前协同 session 和上下文。"""
     is_authenticated = bool(getattr(request.state, "is_authenticated", False))
     invite = None
     if invite_token:
@@ -273,12 +329,12 @@ async def get_current_consultation_session(task_id: str, request: Request, invit
 
 @router.post("/{task_id}/sessions/{session_id}/approve")
 async def approve_consultation_session(task_id: str, session_id: str, request: Request):
-    """用户批准第二次及以后的人机协同会诊。"""
+    """用户批准第二次及以后的人机协同。"""
     task = _fetch_task_or_404(task_id, "id,user_id")
     _assert_task_owner(task, request)
     session = _fetch_session_or_404(task_id, session_id)
     if session.get("status") != "waiting_user_approval":
-        raise HTTPException(status_code=400, detail="当前会诊不处于待用户确认状态")
+        raise HTTPException(status_code=400, detail="当前协同不处于待用户确认状态")
     updated = _update_session(session_id, {
         "status": "active",
         "approved_by": getattr(request.state, "user_id", None),
@@ -287,14 +343,14 @@ async def approve_consultation_session(task_id: str, session_id: str, request: R
     })
     try:
         supabase.table("tasks").update({
-            "status": "waiting_consultation",
+            "status": "waiting_collaboration",
             "updated_at": utc_now_iso(),
         }).eq("id", task_id).execute()
     except Exception as exc:
-        logger.error("Failed to mark task waiting_consultation after approval: %s", exc)
-    _insert_commander_message(task_id, session_id, "用户已允许再次进入专家会诊。", "approval")
+        logger.error("Failed to mark task waiting_collaboration after approval: %s", exc)
+    _insert_commander_message(task_id, session_id, "用户已允许再次进入人机协同。", "approval")
     record_audit_event(
-        action="consultation_approved",
+        action="collaboration_approved",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
         metadata={"session_id": session_id},
@@ -304,15 +360,15 @@ async def approve_consultation_session(task_id: str, session_id: str, request: R
 
 @router.post("/{task_id}/sessions/{session_id}/skip")
 async def skip_consultation_session(task_id: str, session_id: str, req: SessionDecisionRequest, request: Request):
-    """用户仅跳过本次重复会诊，系统保留风险继续流程。"""
+    """用户仅跳过本次重复协同，系统保留风险继续流程。"""
     task = _fetch_task_or_404(task_id, "id,user_id")
     _assert_task_owner(task, request)
     session = _fetch_session_or_404(task_id, session_id)
     if session.get("status") != "waiting_user_approval":
-        raise HTTPException(status_code=400, detail="只能跳过等待用户审批的重复会诊")
+        raise HTTPException(status_code=400, detail="只能跳过等待用户审批的重复协同")
     summary_payload = {
         "skip_scope": "current_only",
-        "reason": req.reason or "用户选择跳过本次专家会诊",
+        "reason": req.reason or "用户选择跳过本次重复人机协同",
         "skipped_at": utc_now_iso(),
     }
     updated = _update_session(session_id, {
@@ -323,14 +379,14 @@ async def skip_consultation_session(task_id: str, session_id: str, req: SessionD
     })
     try:
         supabase.table("tasks").update({
-            "status": "waiting_consultation",
+            "status": "waiting_collaboration",
             "updated_at": utc_now_iso(),
         }).eq("id", task_id).execute()
     except Exception as exc:
-        logger.error("Failed to mark task waiting_consultation after skip: %s", exc)
+        logger.error("Failed to mark task waiting_collaboration after skip: %s", exc)
     _insert_commander_message(task_id, session_id, summary_payload["reason"], "skip")
     record_audit_event(
-        action="consultation_skipped",
+        action="collaboration_skipped",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
         metadata={"session_id": session_id, "skip_scope": "current_only"},
@@ -340,12 +396,12 @@ async def skip_consultation_session(task_id: str, session_id: str, req: SessionD
 
 @router.post("/{task_id}/sessions/{session_id}/close")
 async def close_consultation_session(task_id: str, session_id: str, request: Request):
-    """用户结束会诊，进入 Commander 摘要待确认状态。"""
+    """用户结束协同，进入 Commander 摘要待确认状态。"""
     task = _fetch_task_or_404(task_id, "id,user_id")
     _assert_task_owner(task, request)
     session = _fetch_session_or_404(task_id, session_id)
     if session.get("status") not in {"active", "requested", "waiting_user_approval", "summary_pending"}:
-        raise HTTPException(status_code=400, detail="当前会诊状态不能结束")
+        raise HTTPException(status_code=400, detail="当前协同状态不能结束")
     messages = _session_messages(task_id, session_id)
     fallback_summary = build_moderator_summary(messages=messages)
     summary_payload = await commander_summarize_consultation(
@@ -382,7 +438,7 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
         "summary",
     )
     record_audit_event(
-        action="consultation_closed",
+        action="collaboration_closed",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
         metadata={"session_id": session_id, "message_count": summary_payload.get("human_message_count", 0)},
@@ -397,12 +453,12 @@ async def confirm_consultation_summary(
     req: SummaryConfirmRequest,
     request: Request,
 ):
-    """用户确认或编辑 Commander 会诊摘要。"""
+    """用户确认或编辑 Commander 协同摘要。"""
     task = _fetch_task_or_404(task_id, "id,user_id")
     _assert_task_owner(task, request)
     session = _fetch_session_or_404(task_id, session_id)
     if session.get("status") not in {"summary_pending", "summary_confirmed"}:
-        raise HTTPException(status_code=400, detail="当前会诊摘要不能确认")
+        raise HTTPException(status_code=400, detail="当前协同摘要不能确认")
     messages = _session_messages(task_id, session_id)
     previous_summary_payload = session.get("summary_payload") if isinstance(session.get("summary_payload"), dict) else {}
     summary_payload = build_moderator_summary(
@@ -419,17 +475,17 @@ async def confirm_consultation_summary(
         "summary_payload": summary_payload,
         "updated_at": utc_now_iso(),
     })
-    # 把任务状态改回 waiting_consultation，让前端 resume 能正确触发后端恢复流程
+    # 把任务状态改回 waiting_collaboration，让前端 resume 能正确触发后端恢复流程
     try:
         supabase.table("tasks").update({
-            "status": "waiting_consultation",
+            "status": "waiting_collaboration",
             "updated_at": utc_now_iso(),
         }).eq("id", task_id).execute()
     except Exception as exc:
-        logger.error("Failed to mark task waiting_consultation after summary confirmed: %s", exc)
+        logger.error("Failed to mark task waiting_collaboration after summary confirmed: %s", exc)
     _insert_commander_message(task_id, session_id, req.summary, "summary_confirmed")
     record_audit_event(
-        action="consultation_summary_confirmed",
+        action="collaboration_summary_confirmed",
         task_id=task_id,
         user_id=getattr(request.state, "user_id", None),
         metadata={"session_id": session_id, "message_count": summary_payload.get("human_message_count", 0)},
@@ -440,16 +496,25 @@ async def confirm_consultation_summary(
 @router.get("/invite/{token}")
 async def validate_consultation_invite(token: str):
     """校验邀请令牌并返回任务上下文。"""
-    resp = (
-        supabase.table("consultation_invites")
-        .select("*")
-        .eq("token", token)
-        .execute()
-    )
-    if not resp.data:
+    invite = None
+    for table_name in (INVITE_TABLE, LEGACY_INVITE_TABLE):
+        try:
+            resp = (
+                supabase.table(table_name)
+                .select("*")
+                .eq("token", token)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("Failed to read invite from %s: %s", table_name, exc)
+            continue
+        if resp.data:
+            invite = resp.data[0]
+            invite["_source_table"] = table_name
+            break
+    if not invite:
         raise HTTPException(status_code=404, detail="邀请链接无效")
 
-    invite = resp.data[0]
     if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")
 
@@ -465,7 +530,7 @@ async def validate_consultation_invite(token: str):
 
 @router.get("/{task_id}/messages")
 async def get_consultation_messages(task_id: str, request: Request, invite_token: Optional[str] = None):
-    """获取任务的专家会诊消息"""
+    """获取任务的人机协同消息"""
     is_authenticated = bool(getattr(request.state, "is_authenticated", False))
     invite = None
     if not is_authenticated:
@@ -477,13 +542,8 @@ async def get_consultation_messages(task_id: str, request: Request, invite_token
         _assert_task_owner(task_resp.data[0], request)
 
     latest = _session_for_invite_or_latest(task_id, invite)
-    query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
-    if invite and invite.get("session_id"):
-        query = query.eq("session_id", invite.get("session_id"))
-    elif latest and latest.get("id"):
-        query = query.eq("session_id", latest.get("id"))
-    resp = query.order("created_at", desc=False).execute()
-    return {"messages": resp.data or []}
+    session_id = invite.get("session_id") if invite and invite.get("session_id") else latest.get("id") if latest else None
+    return {"messages": _session_messages(task_id, session_id)}
 
 
 @router.get("/{task_id}/agent-history")
@@ -538,6 +598,7 @@ async def get_agent_history(task_id: str, request: Request, invite_token: Option
         "analysis_states": states_resp.data or [],
         "audit_logs": audit_resp.data or [],
         "consultation_session": _session_for_invite_or_latest(task_id, invite),
+        "collaboration_session": _session_for_invite_or_latest(task_id, invite),
         "report": reports_resp.data[0] if reports_resp.data else None,
     }
 
@@ -549,7 +610,7 @@ async def get_unread_messages(
     after: Optional[str] = None,
     invite_token: Optional[str] = None,
 ):
-    """获取未读的专家会诊消息（Agent 节点调用）"""
+    """获取未读的人机协同消息（Agent 节点调用）"""
     is_authenticated = bool(getattr(request.state, "is_authenticated", False))
     invite = None
     if not is_authenticated:
@@ -561,42 +622,52 @@ async def get_unread_messages(
         _assert_task_owner(task_resp.data[0], request)
 
     latest = _session_for_invite_or_latest(task_id, invite)
-    query = supabase.table("consultation_messages").select("*").eq("task_id", task_id)
-    if invite and invite.get("session_id"):
-        query = query.eq("session_id", invite.get("session_id"))
-    elif latest and latest.get("id"):
-        query = query.eq("session_id", latest.get("id"))
+    session_id = invite.get("session_id") if invite and invite.get("session_id") else latest.get("id") if latest else None
+    messages = _session_messages(task_id, session_id)
     if after:
-        query = query.gt("created_at", after)
-    resp = query.order("created_at", desc=False).execute()
-    return {"messages": resp.data}
+        after_dt = _parse_datetime(after)
+        if after_dt:
+            messages = [
+                item for item in messages
+                if (_parse_datetime(item.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)) > after_dt
+            ]
+    return {"messages": messages}
 
 
 def _validate_invite_token(task_id: str, invite_token: Optional[str], session_id: Optional[str] = None) -> dict:
     if not invite_token:
-        raise HTTPException(status_code=401, detail="专家会诊需要有效邀请令牌")
-    resp = (
-        supabase.table("consultation_invites")
-        .select("*")
-        .eq("token", invite_token)
-        .eq("task_id", task_id)
-        .execute()
-    )
-    if not resp.data:
+        raise HTTPException(status_code=401, detail="外部专家协同需要有效邀请令牌")
+    invite = None
+    for table_name in (INVITE_TABLE, LEGACY_INVITE_TABLE):
+        try:
+            resp = (
+                supabase.table(table_name)
+                .select("*")
+                .eq("token", invite_token)
+                .eq("task_id", task_id)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("Failed to read invite from %s: %s", table_name, exc)
+            continue
+        if resp.data:
+            invite = resp.data[0]
+            invite["_source_table"] = table_name
+            break
+    if not invite:
         raise HTTPException(status_code=403, detail="邀请令牌无效")
-    invite = resp.data[0]
     if invite.get("status") == "expired" or _invite_is_expired(invite):
         raise HTTPException(status_code=410, detail="邀请链接已过期")
     invite_session_id = invite.get("session_id")
     if session_id and invite_session_id and invite_session_id != session_id:
-        raise HTTPException(status_code=403, detail="邀请令牌不属于该会诊会话")
+        raise HTTPException(status_code=403, detail="邀请令牌不属于该协同会话")
     # 标记为已使用，但允许专家刷新页面或重新进入同一链接读取上下文。
     try:
-        supabase.table("consultation_invites").update({"status": "used"}).eq("id", invite["id"]).execute()
+        supabase.table(invite.get("_source_table") or INVITE_TABLE).update({"status": "used"}).eq("id", invite["id"]).execute()
     except Exception as exc:
         logger.error("Failed to mark invite as used: %s", exc)
         record_audit_event(
-            action="consultation.invite_mark_used_failed",
+            action="collaboration.invite_mark_used_failed",
             task_id=invite.get("task_id"),
             metadata={"invite_id": invite.get("id"), "error": f"{type(exc).__name__}: {exc}"},
         )

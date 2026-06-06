@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 MAX_REPORT_FIELD_CHARS = 1200
 MAX_SEARCH_SUMMARY_CHARS = 280
 REPORT_AUDIT_LOG_LIMIT = 50
-SKIP_REPORT_KEYS = {"signed_url", "raw_response", "case_rag"}
+SKIP_REPORT_KEYS = {"signed_url", "raw_response", "case_rag", "experience_rag"}
 MARKDOWN_REPORT_FIELDS = {
     "llm_analysis": "LLM 分析",
     "llm_cross_validation": "LLM 逻辑质询",
@@ -107,27 +107,26 @@ def _sync_fetch_task_data(task_id: str) -> dict:
     )
     audit_logs = audit_resp.data or []
 
-    sessions_resp = _execute_supabase_query(
-        lambda: (
-            supabase.table("consultation_sessions")
-            .select("*")
-            .eq("task_id", task_id)
-            .order("created_at", desc=False)
-            .execute()
-        )
-    )
-    consultation_sessions = sessions_resp.data or []
+    def _select_collaboration_rows(primary_table: str, legacy_table: str) -> list[dict]:
+        for table_name in (primary_table, legacy_table):
+            try:
+                resp = _execute_supabase_query(
+                    lambda table_name=table_name: (
+                        supabase.table(table_name)
+                        .select("*")
+                        .eq("task_id", task_id)
+                        .order("created_at", desc=False)
+                        .execute()
+                    )
+                )
+                if resp.data:
+                    return resp.data or []
+            except Exception as exc:
+                logger.warning("Failed to fetch %s for report %s: %s", table_name, task_id, exc)
+        return []
 
-    messages_resp = _execute_supabase_query(
-        lambda: (
-            supabase.table("consultation_messages")
-            .select("*")
-            .eq("task_id", task_id)
-            .order("created_at", desc=False)
-            .execute()
-        )
-    )
-    consultation_messages = messages_resp.data or []
+    consultation_sessions = _select_collaboration_rows("collaboration_sessions", "consultation_sessions")
+    consultation_messages = _select_collaboration_rows("collaboration_messages", "consultation_messages")
 
     report_resp = _execute_supabase_query(
         lambda: (
@@ -308,37 +307,33 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append(f"- 暂无 {_agent_display_name('osint')} 数据（Agent 未运行或结果未入库）。")
     lines.append("")
 
-    # ---- 公开案例 RAG ----
+    # ---- 公开案例与个人经验 RAG ----
+    challenger = _extract_agent_result(analysis_states, "challenger")
     case_rag_sections = _build_case_rag_sections(
         (forensics or {}).get("case_rag") if forensics else None,
+        (forensics or {}).get("experience_rag") if forensics else None,
         (osint or {}).get("case_rag") if osint else None,
+        (osint or {}).get("experience_rag") if osint else None,
+        (challenger or {}).get("challenger_experience_rag") if challenger else None,
     )
-    lines.append("## 五、公开案例 RAG 检索情况")
+    lines.append("## 五、公开案例与个人经验 RAG 检索情况")
     lines.append("")
     lines.extend(case_rag_sections)
     lines.append("")
 
-    # ---- Challenger 逻辑质询 ----
-    challenger = _extract_agent_result(analysis_states, "challenger")
-    if challenger:
-        lines.append("## 六、Challenger 逻辑质询")
-        lines.append("")
-        lines.extend(_dict_to_markdown(challenger).splitlines())
-        lines.append("")
-
-    # ---- 质询时间线 ----
+    # ---- 逻辑质询时间线 ----
     timeline_sections = _build_challenger_timeline_sections(analysis_states, agent_logs)
-    lines.append("## 七、质询时间线")
+    lines.append("## 六、逻辑质询时间线")
     lines.append("")
     if timeline_sections:
         lines.extend(timeline_sections)
     else:
-        lines.append("- 暂无 Challenger 局部质询轮次记录。")
+        lines.append("- 暂无逻辑质询 Agent 局部质询轮次记录。")
         lines.append("")
 
     # ---- 全程审计日志 ----
     audit_sections = _build_full_audit_log_sections(agent_logs, analysis_states, audit_logs, limit=REPORT_AUDIT_LOG_LIMIT)
-    lines.append("## 八、全程审计日志")
+    lines.append("## 七、全程审计日志")
     lines.append("")
     if audit_sections:
         lines.append(f"> 为省篇幅，这里只展示前 {REPORT_AUDIT_LOG_LIMIT} 条日志，完整日志请见审计日志文件。")
@@ -348,18 +343,18 @@ async def generate_markdown_report(task_id: str) -> str:
         lines.append("- 暂无可展示的审计日志。")
     lines.append("")
 
-    # ---- 人机协同专家会诊 ----
+    # ---- 人机协同 ----
     consultation_sections = _build_consultation_sections(consultation_sessions, consultation_messages, result or {})
-    lines.append("## 九、人机协同专家会诊")
+    lines.append("## 八、人机协同")
     lines.append("")
     if consultation_sections:
         lines.extend(consultation_sections)
     else:
-        lines.append("- 本任务未触发专家会诊。")
+        lines.append("- 本任务未触发人机协同。")
         lines.append("")
 
     # ---- 建议 ----
-    lines.append("## 十、建议与说明")
+    lines.append("## 九、建议与说明")
     lines.append("")
     if result:
         recommendations = result.get("recommendations", [])
@@ -762,7 +757,7 @@ def _build_consultation_sections(sessions: list, messages: list, result: dict) -
     for index, session in enumerate(sessions, start=1):
         if not isinstance(session, dict):
             continue
-        lines.append(f"### 会诊轮次 {index}")
+        lines.append(f"### 协同轮次 {index}")
         lines.append("")
         lines.append(f"- **状态**: {session.get('status', 'unknown')}")
         if session.get("triggered_by_agent"):
@@ -987,60 +982,87 @@ def _dict_to_markdown(data: dict, indent: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _build_case_rag_sections(forensics_rag: dict | None, osint_rag: dict | None) -> list[str]:
+def _render_rag_result(result: dict | None, *, hit_label: str, miss_label: str, degraded_label: str) -> list[str]:
+    lines: list[str] = []
+    if not result:
+        lines.append(f"- 未记录{hit_label}调用。")
+        return lines
+    status = result.get("status", "unknown")
+    summary = result.get("summary") or "无摘要"
+    matches = [item for item in (result.get("matches") or []) if isinstance(item, dict)]
+    lines.append(f"- 调用状态：{status}")
+    lines.append(f"- 调用摘要：{summary}")
+    if result.get("degraded"):
+        lines.append(f"- 影响说明：{degraded_label}")
+    if not matches:
+        lines.append(f"- {miss_label}")
+        return lines
+
+    lines.append(f"- {hit_label}：")
+    groups: dict[str, list[dict]] = {}
+    for item in matches:
+        title = item.get("title") or item.get("case_id") or item.get("entry_id") or "未命名条目"
+        groups.setdefault(str(title), []).append(item)
+    for title, chunks in list(groups.items())[:5]:
+        best_score = max(
+            (c.get("score", c.get("similarity")) for c in chunks if isinstance(c.get("score", c.get("similarity")), (int, float))),
+            default=None,
+        )
+        score_text = f"{float(best_score):.2f}" if best_score is not None else "N/A"
+        source_kind = chunks[0].get("source_kind") or chunks[0].get("target_agent") or "rag"
+        lines.append(f"  - **{title}**（{source_kind}，最高相似度 {score_text}，共 {len(chunks)} 个片段）")
+        for chunk in chunks[:4]:
+            snippet = str(chunk.get("snippet") or chunk.get("chunk_text") or chunk.get("summary") or "").strip()
+            chunk_score = chunk.get("score", chunk.get("similarity"))
+            chunk_score_text = f"{float(chunk_score):.2f}" if isinstance(chunk_score, (int, float)) else "N/A"
+            if snippet:
+                lines.append(f"    - 片段（相似度 {chunk_score_text}）：{snippet[:200]}")
+        if len(chunks) > 4:
+            lines.append(f"    - ... 及其他 {len(chunks) - 4} 个片段")
+    if len(groups) > 5:
+        lines.append(f"  - ... 及其他 {len(groups) - 5} 个条目")
+    return lines
+
+
+def _build_case_rag_sections(
+    forensics_case_rag: dict | None,
+    forensics_experience_rag: dict | None,
+    osint_case_rag: dict | None,
+    osint_experience_rag: dict | None,
+    challenger_experience_rag: dict | None,
+) -> list[str]:
     sections = [
-        "> 公开案例 RAG 仅作类案参考，用于提示相似手法、攻击链和复核方向；不得作为当前检材的直接事实证据。",
+        "> 公开案例 RAG 与个人经验 RAG 均用于提示相似手法、复核路径和补证方向；不得替代当前检材、外部工具结果或人工判断。",
         "",
     ]
-    items = [(_agent_display_name("forensics"), forensics_rag), (_agent_display_name("osint"), osint_rag)]
+    items = [
+        (_agent_display_name("forensics"), forensics_case_rag, forensics_experience_rag, True),
+        (_agent_display_name("osint"), osint_case_rag, osint_experience_rag, True),
+        (_agent_display_name("challenger"), None, challenger_experience_rag, False),
+    ]
     rendered_any = False
-    for label, result in items:
+    for label, case_result, experience_result, has_case_rag in items:
         sections.append(f"### {label}")
-        if not result:
-            sections.append("- 未记录公开案例 RAG 调用。")
-            sections.append("")
-            continue
-        rendered_any = True
-        status = result.get("status", "unknown")
-        summary = result.get("summary") or "无摘要"
-        matches = [item for item in (result.get("matches") or []) if isinstance(item, dict)]
-        sections.append(f"- 调用状态：{status}")
-        sections.append(f"- 调用摘要：{summary}")
-        if result.get("degraded"):
-            sections.append("- 影响说明：公开案例 RAG 不可用，不影响当前检材的独立鉴伪与溯源流程。")
-        if matches:
-            # 按案例标题/ID 分组，同一案例的多个片段合并展示
-            case_groups: dict[str, list[dict]] = {}
-            for item in matches:
-                title = item.get("title") or item.get("case_id") or "未命名案例"
-                case_groups.setdefault(title, []).append(item)
-            sections.append("- 命中案例：")
-            for case_title, chunks in list(case_groups.items())[:5]:
-                # 取该案例所有片段中最高相似度作为代表分
-                best_score = max(
-                    (c.get("score", c.get("similarity")) for c in chunks
-                     if isinstance(c.get("score", c.get("similarity")), (int, float))),
-                    default=None,
-                )
-                score_text = f"{float(best_score):.2f}" if best_score is not None else "N/A"
-                source_kind = chunks[0].get("source_kind") or "public"
-                sections.append(f"  - **{case_title}**（{source_kind}，最高相似度 {score_text}，共 {len(chunks)} 个片段）")
-                for chunk in chunks[:4]:
-                    snippet = str(chunk.get("snippet") or chunk.get("chunk_text") or "").strip()
-                    chunk_score = chunk.get("score", chunk.get("similarity"))
-                    chunk_score_text = f"{float(chunk_score):.2f}" if isinstance(chunk_score, (int, float)) else "N/A"
-                    if snippet:
-                        sections.append(f"    - 片段（相似度 {chunk_score_text}）：{snippet[:200]}")
-                if len(chunks) > 4:
-                    sections.append(f"    - ... 及其他 {len(chunks) - 4} 个片段")
-            if len(case_groups) > 5:
-                sections.append(f"  - ... 及其他 {len(case_groups) - 5} 个案例")
+        if has_case_rag:
+            sections.extend(_render_rag_result(
+                case_result,
+                hit_label="命中案例",
+                miss_label="未命中相似公开案例。",
+                degraded_label="公开案例 RAG 不可用，不影响当前检材的独立鉴伪与溯源流程。",
+            ))
         else:
-            sections.append("- 未命中相似公开案例。")
+            sections.append("- 未配置公开案例 RAG 工具。")
+        sections.extend(_render_rag_result(
+            experience_result,
+            hit_label="命中经验",
+            miss_label="未命中可复用个人经验。",
+            degraded_label="个人经验 RAG 不可用，不影响当前检材的独立鉴伪与溯源流程。",
+        ))
+        rendered_any = rendered_any or bool(case_result or experience_result)
         sections.append("- 边界说明：以上命中只提示可复核方向，不能替代当前样本证据、外部工具结果或人工判断。")
         sections.append("")
     if not rendered_any:
-        sections.append("- 本任务未启用或未记录公开案例 RAG。")
+        sections.append("- 本任务未启用或未记录公开案例/个人经验 RAG。")
     return sections
 
 
@@ -1053,6 +1075,26 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
     }
     sections: list[str] = []
     seen: set[tuple[str, int, str]] = set()
+
+    def _action_label(feedback: dict) -> str:
+        action = str(feedback.get("next_action") or "").strip()
+        if action == "return_for_reinforcement" or feedback.get("requires_more_evidence"):
+            return "打回"
+        if action == "max_rounds_release" or feedback.get("max_rounds_release"):
+            return "轮次上限放行"
+        if action == "release_after_collaboration" or feedback.get("collaboration_release"):
+            return "人机协同后放行"
+        if feedback.get("consultation_required") or feedback.get("collaboration_required"):
+            return "启动人机协同"
+        return "放行"
+
+    def _collaboration_label(feedback: dict) -> str:
+        required = feedback.get("collaboration_required", feedback.get("consultation_required"))
+        event_type = feedback.get("collaboration_event_type") or feedback.get("consultation_event_type")
+        if required:
+            return f"是（{event_type or 'collaboration_required'}）"
+        return "否"
+
     for state in analysis_states:
         snapshot = state.get("result_snapshot") or {}
         feedback = snapshot.get("challenger")
@@ -1066,19 +1108,28 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
             continue
         seen.add(key)
         label = phase_names.get(phase, phase)
-        sections.append(f"### Challenger ↔ {label} 第 {phase_round} 轮")
+        action_label = _action_label(feedback)
+        action_reason = (
+            feedback.get("action_reason")
+            or feedback.get("convergence_reason")
+            or ("需要补充证据" if feedback.get("requires_more_evidence") else "进入下一阶段")
+        )
+        sections.append(f"### 逻辑质询Agent ↔ {label} 第 {phase_round} 轮")
         sections.append("")
         sections.append(f"- 时间: {timestamp}")
         sections.append(f"- 质询对象: {label}")
         sections.append(f"- 置信度/质量分: {_fmt_confidence(feedback.get('confidence', feedback.get('quality_score', 'N/A')))}")
         if feedback.get("quality_delta") is not None:
             sections.append(f"- 置信度变化 Δ(t): {float(feedback.get('quality_delta')):.3f}")
+        sections.append(f"- 下一步行动: {action_label}")
+        sections.append(f"- 是否启动人机协同: {_collaboration_label(feedback)}")
         sections.append(f"- 问题数: {feedback.get('issue_count', 0)}（高严重度 {feedback.get('high_severity_count', 0)}）")
-        reason = feedback.get("convergence_reason") or (
-            "需要补充证据" if feedback.get("requires_more_evidence") else "进入下一阶段"
-        )
-        sections.append(f"- 质询结论: {reason}")
+        sections.append(f"- 放行/打回说明: {action_reason}")
+        if feedback.get("max_rounds_release"):
+            sections.append("- 特殊标记: 轮次上限放行，残留风险已进入最终报告。")
         issues = feedback.get("issues_found") or []
+        if issues:
+            sections.append("- 发现的问题:")
         for issue in issues[:3]:
             if isinstance(issue, dict):
                 sections.append(
@@ -1098,7 +1149,7 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
             continue
         phase, phase_round = match.group(1), int(match.group(2))
         label = phase_names.get(phase, phase)
-        sections.append(f"### Challenger ↔ {label} 第 {phase_round} 轮")
+        sections.append(f"### 逻辑质询Agent ↔ {label} 第 {phase_round} 轮")
         sections.append("")
         sections.append(f"- 时间: {_fmt_time(log.get('timestamp', log.get('created_at')))}")
         sections.append(f"- 质询对象: {label}")

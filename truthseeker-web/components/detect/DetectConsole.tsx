@@ -276,7 +276,7 @@ function buildSystemWorkflow({
     if (isWaitingConsultation) {
         steps.push({
             key: "waiting-consultation",
-            title: "等待专家会诊",
+            title: "等待人机协同",
             detail: "逻辑质询暂停，等待人工意见回填",
             tone: "waiting",
         })
@@ -349,7 +349,6 @@ function GlobalEvidenceBoard({ steps, variant = "top" }: { steps: WorkflowStep[]
         }
     }
     const current = steps[activeIndex] || steps[steps.length - 1]
-    const progress = steps.length > 1 ? ((activeIndex + 1) / steps.length) * 100 : 10
     const recentSteps = steps.slice(-4)
     const compact = variant === "center"
     const centerSteps = recentSteps.slice(-3)
@@ -378,13 +377,6 @@ function GlobalEvidenceBoard({ steps, variant = "top" }: { steps: WorkflowStep[]
                     <span className="h-1 w-1 rounded-full bg-[#10B981] shadow-[0_0_6px_#10B981]" />
                     实时推进
                 </div>
-            </div>
-            <div className={`${compact ? "mt-2" : "mt-3"} h-1.5 w-full overflow-hidden rounded-full bg-white/10`}>
-                <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-[#6366F1] via-[#10B981] to-[#F59E0B]"
-                    animate={{ width: `${Math.min(100, Math.max(8, progress))}%` }}
-                    transition={{ duration: 0.45 }}
-                />
             </div>
             <div className={`${compact ? "mt-2" : "mt-3"} flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-white/35`}>
                 <span>最近流程</span>
@@ -447,7 +439,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         files: taskContext.files,
         casePrompt: taskContext.casePrompt,
         priorityFocus: taskContext.priorityFocus,
-        autoStart: role === "host" && taskLoaded && taskContext.status !== "completed" && taskContext.status !== "waiting_consultation" && taskContext.status !== "waiting_consultation_approval",
+        autoStart: role === "host" && taskLoaded && taskContext.status !== "completed" && taskContext.status !== "waiting_collaboration" && taskContext.status !== "waiting_collaboration_approval" && taskContext.status !== "waiting_consultation" && taskContext.status !== "waiting_consultation_approval",
         role,
         inviteToken,
         channel,
@@ -564,7 +556,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
         const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
         let cancelled = false
 
-        void fetch(`${apiBase}/api/v1/consultation/invite/${inviteToken}`)
+        void fetch(`${apiBase}/api/v1/collaboration/invite/${inviteToken}`)
             .then(async (response) => {
                 if (!response.ok) {
                     throw new Error("invite invalid")
@@ -647,7 +639,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             onClick={() => setShowExpertPanel(!showExpertPanel)}
                             className="text-xs text-[#D4FF12] border border-[#D4FF12]/30 px-3 py-1.5 rounded-full hover:bg-[#D4FF12]/10 transition-colors"
                         >
-                            {showExpertPanel ? '收起会诊面板' : '打开会诊面板'}
+                            {showExpertPanel ? '收起协同面板' : '打开协同面板'}
                         </button>
                         {role === 'host' && <InviteButton taskId={taskId} />}
                         {role === 'host' && (consultationState.status === "summary_confirmed" || consultationState.status === "skipped") && (
@@ -719,7 +711,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         {isWaitingConsultation && (
                             <div className="flex items-center gap-1.5 text-xs text-[#F59E0B]">
                                 <div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shadow-[0_0_8px_#F59E0B]" />
-                                等待会诊
+                                等待协同
                             </div>
                         )}
                         {isComplete && (
@@ -741,10 +733,10 @@ export function DetectConsole({ taskId }: { taskId: string }) {
             {(taskLoadError || errorMessage || isWaitingConsultation || consultationState.status === "summary_pending") && (
                 <div className="mx-6 mt-3 rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/10 px-4 py-3 text-sm text-[#FCD34D]">
                     {taskLoadError || errorMessage || (consultationState.status === "summary_pending"
-                        ? "Commander 已整理会诊摘要，等待用户确认后回注研判流程。"
+                        ? "Commander 已整理协同摘要，等待用户确认后回注研判流程。"
                         : consultationState.status === "approval_required"
-                            ? "逻辑质询再次陷入僵持，等待用户决定是否再次发起专家会诊。"
-                            : "Commander 已接管会诊主持，等待专家意见；用户可在会诊后确认摘要并继续研判。")}
+                            ? "逻辑质询再次陷入僵持，等待用户决定是否再次发起人机协同。"
+                            : "Commander 已接管人机协同主持，等待用户或专家意见；用户可在协同后确认摘要并继续研判。")}
                 </div>
             )}
 
@@ -811,7 +803,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                         initial={{ x: 400, opacity: 0 }}
                         animate={{ x: 0, opacity: 1 }}
                         exit={{ x: 400, opacity: 0 }}
-                        className="fixed right-4 top-20 bottom-4 w-96 z-40 hidden lg:block"
+                        className="fixed right-5 top-20 bottom-4 z-40 hidden w-[460px] xl:w-[520px] 2xl:w-[560px] lg:block"
                     >
                         <ExpertPanel
                             taskId={taskId}

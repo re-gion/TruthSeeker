@@ -343,12 +343,12 @@ function getWriteAnchors(
 ): { start: Point; end: Point } {
     return {
         start: {
-            x: config.horizontalSide === 'left' ? boardRect.left : boardRect.right,
-            y: midpointY(boardRect),
-        },
-        end: {
             x: midpointX(agentRect),
             y: config.verticalSide === 'top' ? agentRect.bottom : agentRect.top,
+        },
+        end: {
+            x: config.horizontalSide === 'left' ? boardRect.left : boardRect.right,
+            y: midpointY(boardRect),
         },
     }
 }
@@ -370,8 +370,8 @@ function buildConnectionPath(start: Point, end: Point, kind: AgentLineKind) {
 
     return [
         `M ${start.x.toFixed(1)} ${start.y.toFixed(1)}`,
-        `C ${(start.x + horizontalDirection * horizontalBend).toFixed(1)} ${start.y.toFixed(1)},`,
-        `${end.x.toFixed(1)} ${(end.y - verticalDirection * verticalBend).toFixed(1)},`,
+        `C ${start.x.toFixed(1)} ${(start.y + verticalDirection * verticalBend).toFixed(1)},`,
+        `${(end.x - horizontalDirection * horizontalBend).toFixed(1)} ${end.y.toFixed(1)},`,
         `${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
     ].join(' ')
 }
@@ -460,6 +460,22 @@ function ConnectionOverlay({
             preserveAspectRatio="none"
             aria-hidden="true"
         >
+            <defs>
+                {CONNECTION_CONFIGS.flatMap((config) => (["read", "write"] as const).map((kind) => (
+                    <marker
+                        key={`arrow-${config.agent}-${kind}`}
+                        id={`arrow-${config.agent}-${kind}`}
+                        markerWidth="10"
+                        markerHeight="10"
+                        refX="7"
+                        refY="5"
+                        orient="auto"
+                        markerUnits="strokeWidth"
+                    >
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill={config.color} opacity={kind === "read" ? 0.58 : 0.72} />
+                    </marker>
+                )))}
+            </defs>
             {segments.map((segment) => {
                 const activeMode = lineModes?.[segment.agent] || (activeAgent === segment.agent ? "write" : undefined)
                 const isActive = activeAgent === segment.agent && activeMode === segment.kind
@@ -473,6 +489,7 @@ function ConnectionOverlay({
                         strokeWidth={isActive ? CONNECTION_STROKE_WIDTH.active : CONNECTION_STROKE_WIDTH.idle}
                         strokeLinecap="round"
                         strokeDasharray={segment.kind === "read" ? CONNECTION_DASH_PATTERN : undefined}
+                        markerEnd={`url(#arrow-${segment.agent}-${segment.kind})`}
                         opacity={isActive ? 0.88 : 0.34}
                         style={{
                             "--agent-line-glow": segment.color,

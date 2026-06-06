@@ -14,12 +14,13 @@ export interface ExperienceEntry extends ExperienceDraft {
   id: string
   source_task_id: string | null
   source_session_id: string | null
+  source_collaboration_session_id: string | null
   created_at: string | null
   updated_at: string | null
 }
 
 interface BackendListResponse {
-  items?: ExperienceEntry[]
+  items?: Array<Partial<ExperienceEntry>>
   page?: number
   page_size?: number
   total?: number
@@ -35,10 +36,12 @@ export const EXPERIENCE_AGENT_OPTIONS: Array<{ id: ExperienceAgent; label: strin
 ]
 
 export function normalizeExperienceEntry(row: Partial<ExperienceEntry>): ExperienceEntry {
+  const sourceSessionId = row.source_collaboration_session_id || row.source_session_id || null
   return {
     id: String(row.id || ""),
     source_task_id: row.source_task_id || null,
-    source_session_id: row.source_session_id || null,
+    source_session_id: sourceSessionId,
+    source_collaboration_session_id: sourceSessionId,
     title: row.title || "未命名个人经验",
     target_agents: Array.isArray(row.target_agents) ? row.target_agents.map(String) : [],
     problem_pattern: row.problem_pattern || "",

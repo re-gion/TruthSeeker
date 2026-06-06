@@ -2,7 +2,7 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 const TRANSIENT_RETRY_STATUSES = new Set([404, 409, 425, 429, 500, 502, 503, 504])
-const RETRY_DELAYS_MS = [300, 900, 1500]
+const RETRY_DELAYS_MS = [300, 900, 1500, 1500, 2500]
 
 type FetchLike = typeof fetch
 
@@ -23,7 +23,7 @@ export async function createReportShareLink(
     taskId: string,
     authToken?: string | null,
     fetchImpl: FetchLike = fetch,
-    attempts = 3,
+    attempts = 6,
 ) {
     let lastStatus = 0
     let lastError: unknown = null

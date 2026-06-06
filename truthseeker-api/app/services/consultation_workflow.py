@@ -1,4 +1,4 @@
-"""Human-in-the-loop consultation workflow helpers."""
+"""Human-in-the-loop collaboration workflow helpers."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -69,18 +69,21 @@ def _issue_key(issue: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
-def _dedupe_high_issues(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dedupe_recent_issues(records: list[dict[str, Any]], *, high_only: bool = False) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for record in records:
         for issue in record.get("issues") or []:
-            if not isinstance(issue, dict) or str(issue.get("severity")).lower() != "high":
+            if not isinstance(issue, dict):
+                continue
+            severity = str(issue.get("severity") or "medium").lower()
+            if high_only and severity != "high":
                 continue
             normalized = dict(issue)
             normalized["description"] = str(
-                normalized.get("description") or normalized.get("summary") or normalized.get("type") or "高风险问题"
+                normalized.get("description") or normalized.get("summary") or normalized.get("type") or "质询问题"
             ).strip()
-            normalized["severity"] = "high"
+            normalized["severity"] = severity if severity in {"high", "medium", "low"} else "medium"
             key = _issue_key(normalized)
             if key in seen:
                 continue
@@ -89,8 +92,12 @@ def _dedupe_high_issues(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return issues
 
 
+def _dedupe_high_issues(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _dedupe_recent_issues(records, high_only=True)
+
+
 def is_human_consultation_message(item: dict[str, Any]) -> bool:
-    """Return True for user/expert-authored consultation content."""
+    """Return True for user/expert-authored collaboration content."""
     if not isinstance(item, dict):
         return False
     role = str(item.get("role") or "").strip().lower()
@@ -103,7 +110,7 @@ def is_human_consultation_message(item: dict[str, Any]) -> bool:
 
 
 def filter_human_consultation_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Filter and de-duplicate human consultation messages while preserving order."""
+    """Filter and de-duplicate human collaboration messages while preserving order."""
     filtered: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for item in messages:
@@ -138,7 +145,7 @@ def latest_human_consultation_messages(
     messages: list[dict[str, Any]],
     sessions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return de-duplicated human messages scoped to the latest consultation session."""
+    """Return de-duplicated human messages scoped to the latest collaboration session."""
     latest = latest_consultation_session(sessions or [])
     scoped = messages
     if latest and latest.get("id"):
@@ -219,7 +226,7 @@ def evaluate_consultation_trigger(
     delta_threshold: float | None = None,
     max_rounds: int | None = None,
 ) -> dict[str, Any]:
-    """Decide whether Challenger should pause for human/expert consultation."""
+    """Decide whether Challenger should pause for human collaboration."""
     stuck_rounds = int(stuck_rounds or settings.CONSULTATION_STUCK_ROUNDS)
     confidence_threshold = float(confidence_threshold or settings.CONSULTATION_CONFIDENCE_THRESHOLD)
     delta_threshold = float(delta_threshold or settings.CONSULTATION_DELTA_THRESHOLD)
@@ -231,10 +238,8 @@ def evaluate_consultation_trigger(
         return {"should_pause": False, "reason": "最近质询记录不足或目标 Agent 不一致"}
 
     current = recent[-1]
-    if not all(_is_high_challenge(item) for item in recent):
-        return {"should_pause": False, "reason": "最近三轮并非均为 high 质询"}
-    if _as_float(current.get("confidence"), 1.0) >= confidence_threshold:
-        return {"should_pause": False, "reason": "当前置信度未低于会诊阈值"}
+    if not all(_as_float(item.get("confidence"), 1.0) < confidence_threshold for item in recent):
+        return {"should_pause": False, "reason": "最近三轮并非均低于人机协同置信度阈值"}
     if not _adjacent_confidence_deltas_are_stable(recent, delta_threshold):
         return {"should_pause": False, "reason": "最近三轮相邻置信度变化未持续小于阈值"}
 
@@ -246,11 +251,11 @@ def evaluate_consultation_trigger(
     completed_sessions = _completed_session_count(existing_sessions, target_agent)
     max_consultations = max(0, max_rounds - stuck_rounds)
     if completed_sessions >= max_consultations:
-        return {"should_pause": False, "reason": "当前阶段会诊次数已达上限，直接放行并保留残留风险"}
+        return {"should_pause": False, "reason": "当前阶段协同次数已达上限，直接放行并保留残留风险"}
 
     repeat_index = completed_sessions + 1
     requires_user_approval = repeat_index > 1
-    event_type = "consultation_approval_required" if requires_user_approval else "consultation_required"
+    event_type = "collaboration_approval_required" if requires_user_approval else "collaboration_required"
     return {
         "should_pause": True,
         "event_type": event_type,
@@ -262,7 +267,7 @@ def evaluate_consultation_trigger(
         "phase_round": current.get("phase_round"),
         "confidence": _as_float(current.get("confidence"), 0.0),
         "quality_delta": current.get("quality_delta"),
-        "reason": f"{target_agent} 连续 {stuck_rounds} 轮低置信高质询且置信度变化停滞",
+        "reason": f"{target_agent} 连续 {stuck_rounds} 轮低置信且置信度变化停滞，需人机协同打破僵局",
         "recent_challenges": recent,
     }
 
@@ -295,18 +300,20 @@ def build_consultation_context(
         )
 
     high_issues = _dedupe_high_issues(trigger.get("recent_challenges") or [])
+    review_issues = high_issues or _dedupe_recent_issues(trigger.get("recent_challenges") or [])
     expert_tasks = []
-    for index, issue in enumerate(high_issues[:5], start=1):
+    for index, issue in enumerate(review_issues[:5], start=1):
         target_agent = issue.get("agent") or issue.get("target_agent") or trigger.get("target_agent")
-        description = str(issue.get("description") or "高风险问题").strip()
+        severity = str(issue.get("severity") or "medium")
+        description = str(issue.get("description") or "质询问题").strip()
         expert_tasks.append({
             "id": f"expert-task-{index}",
             "target_agent": target_agent or "unknown",
             "issue_type": issue.get("type", "issue"),
-            "severity": "high",
-            "question": f"请专家判断并补充：{description}",
-            "requested_action": "请给出判断依据、可补充证据、以及是否需要重跑/人工复核该环节。",
-            "expected_output": "一到三条可执行结论：风险判断、缺失证据、建议继续检测或人工复核的动作。",
+            "severity": severity,
+            "question": f"请判断并补充：{description}",
+            "requested_action": "请给出判断依据、可补充证据、以及是否应打回补强或允许带残留风险放行。",
+            "expected_output": "一到三条可执行结论：风险判断、缺失证据、建议继续补强或放行的动作。",
         })
 
     return {
@@ -322,7 +329,7 @@ def build_consultation_context(
             "challenger_confidence": (challenger_feedback or {}).get("confidence"),
         },
         "current_blocker": trigger.get("reason"),
-        "help_needed": [issue["description"] for issue in high_issues[:5] if issue.get("description")],
+        "help_needed": [issue["description"] for issue in review_issues[:5] if issue.get("description")],
         "expert_tasks": expert_tasks,
         "trigger": trigger,
         "created_at": utc_now_iso(),
@@ -352,12 +359,12 @@ def build_moderator_summary(
         if len(key_quotes) >= 5:
             break
 
-    generated = "本轮会诊未收到新增人工意见。"
+    generated = "本轮人机协同未收到新增人工意见。"
     if key_quotes:
         roles = sorted({str(item.get("role") or "participant") for item in key_quotes})
         expert_views = [quote["message"] for quote in key_quotes if quote["role"] in {"expert", "analyst", "viewer"}]
         user_views = [quote["message"] for quote in key_quotes if quote["role"] in {"user", "moderator"}]
-        fragments = [f"本轮会诊共收到 {len(normalized_messages)} 条人工意见，参与角色：{'、'.join(roles)}。"]
+        fragments = [f"本轮人机协同共收到 {len(normalized_messages)} 条人工意见，参与角色：{'、'.join(roles)}。"]
         if expert_views:
             fragments.append(f"专家侧主要认为：{'；'.join(expert_views[:3])}")
         if user_views:

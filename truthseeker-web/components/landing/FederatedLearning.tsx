@@ -32,7 +32,7 @@ export function FederatedLearning() {
 
                 <div className="flex flex-col lg:flex-row gap-16 items-center">
 
-                    {/* Left: Graphic representation of FedPaRS */}
+                    {/* Left: Graphic representation of Fed-MBPR */}
                     <motion.div
                         initial={{ opacity: 0, scale: 0.9 }}
                         whileInView={{ opacity: 1, scale: 1 }}
@@ -49,7 +49,7 @@ export function FederatedLearning() {
                             {/* Central Core */}
                             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full glass-card flex items-center justify-center agent-glow-indigo shadow-2xl z-20">
                                 <span className="font-bold text-transparent bg-clip-text bg-gradient-to-br from-foreground to-muted-foreground text-center leading-tight">
-                                    FedPaRS<br />CORE
+                                    Fed-MBPR<br />CORE
                                 </span>
                             </div>
 
@@ -92,11 +92,11 @@ export function FederatedLearning() {
                             核心创新点二
                         </div>
                         <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-6">
-                            FedPaRS <br />
+                            Fed-MBPR <br />
                             <span className="text-muted-foreground">兼容运行时架构</span>
                         </h2>
                         <p className="text-muted-foreground text-lg leading-relaxed mb-12">
-                            运行时架构预留联邦学习接口，支持未来接入 FedPaRS 鲁棒聚合模块，在拜占庭攻击场景下提升模型可信度。
+                            运行时架构预留联邦学习接口，支持未来接入 Fed-MBPR 鲁棒聚合模块，在拜占庭攻击场景下提升模型可信度。
                         </p>
 
                         <div className="space-y-6">

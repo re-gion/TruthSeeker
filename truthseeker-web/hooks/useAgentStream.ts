@@ -17,6 +17,13 @@ export type AgentEvent =
     | { type: "weights_update"; weights: Record<string, number> }
     | { type: "round_update"; round: number }
     | { type: "final_verdict"; verdict: Record<string, unknown> }
+    | { type: "collaboration_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "collaboration_approval_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "collaboration_started"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "collaboration_summary_pending"; task_id: string; reason?: string; payload?: unknown; summary?: unknown; session?: unknown }
+    | { type: "collaboration_summary_confirmed"; task_id: string; reason?: string; payload?: unknown; summary?: unknown; session?: unknown }
+    | { type: "collaboration_skipped"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
+    | { type: "collaboration_resumed"; task_id: string }
     | { type: "consultation_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
     | { type: "consultation_approval_required"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
     | { type: "consultation_started"; task_id: string; reason?: string; payload?: unknown; session?: unknown }
@@ -51,6 +58,7 @@ export interface AgentHistoryResponse {
     agent_logs?: Record<string, unknown>[]
     analysis_states?: Record<string, unknown>[]
     audit_logs?: Record<string, unknown>[]
+    collaboration_session?: Record<string, unknown> | null
     consultation_session?: Record<string, unknown> | null
     report?: Record<string, unknown> | null
 }
@@ -179,6 +187,13 @@ type ConsultationEvent = Extract<AgentEvent, {
         | "consultation_summary_confirmed"
         | "consultation_skipped"
         | "consultation_resumed"
+        | "collaboration_required"
+        | "collaboration_approval_required"
+        | "collaboration_started"
+        | "collaboration_summary_pending"
+        | "collaboration_summary_confirmed"
+        | "collaboration_skipped"
+        | "collaboration_resumed"
 }>
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -382,13 +397,13 @@ function readAuditLogEntry(value: unknown): AgentLogEntry | null {
 }
 
 function consultationStatusForEvent(type: ConsultationEvent["type"]): ConsultationStatus {
-    if (type === "consultation_approval_required") return "approval_required"
-    if (type === "consultation_required") return "started"
-    if (type === "consultation_started") return "started"
-    if (type === "consultation_summary_pending") return "summary_pending"
-    if (type === "consultation_summary_confirmed") return "summary_confirmed"
-    if (type === "consultation_skipped") return "skipped"
-    if (type === "consultation_resumed") return "resumed"
+    if (type === "consultation_approval_required" || type === "collaboration_approval_required") return "approval_required"
+    if (type === "consultation_required" || type === "collaboration_required") return "started"
+    if (type === "consultation_started" || type === "collaboration_started") return "started"
+    if (type === "consultation_summary_pending" || type === "collaboration_summary_pending") return "summary_pending"
+    if (type === "consultation_summary_confirmed" || type === "collaboration_summary_confirmed") return "summary_confirmed"
+    if (type === "consultation_skipped" || type === "collaboration_skipped") return "skipped"
+    if (type === "consultation_resumed" || type === "collaboration_resumed") return "resumed"
     return "idle"
 }
 
@@ -497,10 +512,10 @@ export function normalizeConsultationEvent(event: ConsultationEvent, current: Co
 
 function consultationLogContent(state: ConsultationState, fallback: string) {
     if (state.status === "approval_required") return state.reason ?? fallback
-    if (state.status === "started") return "Commander 已开启专家会诊，并作为主持汇总人工意见"
-    if (state.status === "summary_pending") return "会诊摘要待用户确认"
-    if (state.status === "summary_confirmed") return "用户已确认会诊摘要，人工意见可回注研判流程"
-    if (state.status === "skipped") return state.reason ?? "用户跳过本轮会诊"
+    if (state.status === "started") return "Commander 已开启人机协同，并作为主持汇总用户与专家意见"
+    if (state.status === "summary_pending") return "协同摘要待用户确认"
+    if (state.status === "summary_confirmed") return "用户已确认协同摘要，人工意见可回注研判流程"
+    if (state.status === "skipped") return state.reason ?? "用户跳过本轮协同"
     return fallback
 }
 
@@ -515,6 +530,8 @@ function consultationStatusFromSession(session: Record<string, unknown> | null, 
     if (sessionStatus === "summary_pending") return "summary_pending"
     if (sessionStatus === "summary_confirmed") return "summary_confirmed"
     if (sessionStatus === "skipped") return "skipped"
+    if (taskStatus === "waiting_collaboration_approval") return "approval_required"
+    if (taskStatus === "waiting_collaboration") return "started"
     if (taskStatus === "waiting_consultation_approval") return "approval_required"
     if (taskStatus === "waiting_consultation") return "started"
     return "idle"
@@ -541,7 +558,9 @@ function deriveCaseImportStatusFromHistory(
 }
 
 function isConsultationWaiting(status: string, consultationStatus: ConsultationStatus) {
-    return status === "waiting_consultation"
+    return status === "waiting_collaboration"
+        || status === "waiting_collaboration_approval"
+        || status === "waiting_consultation"
         || status === "waiting_consultation_approval"
         || consultationStatus === "approval_required"
         || consultationStatus === "started"
@@ -582,8 +601,8 @@ export function mapAgentHistoryToStreamState(history: AgentHistoryResponse): Str
     const agentWeights = readRecord(finalVerdict?.agent_weights) as Record<string, number> | null
     const status = typeof task?.status === "string" ? task.status : ""
     const metadata = readRecord(task?.metadata)
-    const consultationSession = readRecord(history.consultation_session)
-    const consultationContext = readRecord(metadata?.consultation) ?? readRecord(metadata?.consultation_context)
+    const consultationSession = readRecord(history.collaboration_session) ?? readRecord(history.consultation_session)
+    const consultationContext = readRecord(metadata?.collaboration) ?? readRecord(metadata?.collaboration_context) ?? readRecord(metadata?.consultation) ?? readRecord(metadata?.consultation_context)
     const consultationStatus = consultationStatusFromSession(consultationSession, status)
     const summaryPayload = readRecord(consultationSession?.summary_payload)
     const consultationState: ConsultationState = {
@@ -698,6 +717,12 @@ export function useAgentStream({
         } else if (event.type === "final_verdict") {
             setFinalVerdict(event.verdict)
         } else if (
+            event.type === "collaboration_required" ||
+            event.type === "collaboration_approval_required" ||
+            event.type === "collaboration_started" ||
+            event.type === "collaboration_summary_pending" ||
+            event.type === "collaboration_summary_confirmed" ||
+            event.type === "collaboration_skipped" ||
             event.type === "consultation_required" ||
             event.type === "consultation_approval_required" ||
             event.type === "consultation_started" ||
@@ -707,8 +732,8 @@ export function useAgentStream({
         ) {
             const nextConsultationState = normalizeConsultationEvent(event, consultationStateRef.current)
             updateConsultationState(nextConsultationState)
-            const reason = event.reason || "检测证据存在高冲突，等待专家会诊"
-            const waiting = event.type !== "consultation_summary_confirmed" && event.type !== "consultation_skipped"
+            const reason = event.reason || "检测证据陷入低置信僵局，等待人机协同"
+            const waiting = !["consultation_summary_confirmed", "consultation_skipped", "collaboration_summary_confirmed", "collaboration_skipped"].includes(event.type)
             setIsWaitingConsultation(waiting)
             setIsRunning(false)
             setCurrentNode(null)
@@ -722,7 +747,7 @@ export function useAgentStream({
                     sourceKind: "system",
                 },
             ])
-        } else if (event.type === "consultation_resumed") {
+        } else if (event.type === "consultation_resumed" || event.type === "collaboration_resumed") {
             updateConsultationState(normalizeConsultationEvent(event, consultationStateRef.current))
             setIsWaitingConsultation(false)
             setIsRunning(true)
@@ -730,7 +755,7 @@ export function useAgentStream({
                 ...prev,
                 {
                     agent: "system",
-                    type: "consultation_resumed",
+                    type: event.type,
                     content: "主持人已恢复研判流程",
                     timestamp: new Date().toISOString(),
                     sourceKind: "system",
@@ -874,7 +899,7 @@ export function useAgentStream({
 
         async function loadAgentHistory() {
             try {
-                const url = new URL(`${API_BASE}/api/v1/consultation/${taskId}/agent-history`)
+                const url = new URL(`${API_BASE}/api/v1/collaboration/${taskId}/agent-history`)
                 if (inviteToken) url.searchParams.set("invite_token", inviteToken)
                 const headers: Record<string, string> = {}
                 const authToken = await getAuthToken()

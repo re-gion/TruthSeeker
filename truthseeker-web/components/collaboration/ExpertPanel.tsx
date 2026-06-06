@@ -107,6 +107,11 @@ function getSessionId(consultationState?: ConsultationState) {
     return session && typeof session.id === "string" ? session.id : undefined
 }
 
+export function normalizeAutonomousObservationText(text: string) {
+    return text.replace(/\b(LLM|Agent)\s*人工观察/g, "$1自主观察")
+        .replace(/(智能体|大模型|模型)\s*人工观察/g, "$1自主观察")
+}
+
 function summaryDraftFromSession(session: Record<string, unknown> | undefined) {
     const payload = session?.summary_payload
     if (!payload || typeof payload !== "object") return undefined
@@ -212,10 +217,14 @@ export function ExpertPanel({
     }, [inputValue])
 
     useEffect(() => {
-        if (consultationState?.summaryDraft) {
+        if (consultationState?.status === "summary_pending" && consultationState?.summaryDraft) {
             setEditableSummary(consultationState.summaryDraft)
+            return
         }
-    }, [consultationState?.summaryDraft])
+        if (consultationState?.status === "summary_confirmed") {
+            setEditableSummary("")
+        }
+    }, [consultationState?.status, consultationState?.summaryDraft])
 
     useEffect(() => {
         setEditableExperienceDrafts(consultationState?.experienceDrafts ?? [])
@@ -230,7 +239,7 @@ export function ExpertPanel({
         const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
         try {
             const authToken = await getAuthToken()
-            const url = new URL(`${apiBase}/api/v1/consultation/${taskId}/messages`)
+            const url = new URL(`${apiBase}/api/v1/collaboration/${taskId}/messages`)
             if (inviteToken) url.searchParams.set("invite_token", inviteToken)
             const headers: Record<string, string> = {}
             if (authToken) headers.Authorization = `Bearer ${authToken}`
@@ -244,7 +253,7 @@ export function ExpertPanel({
                 .map((item: Record<string, unknown>) => normalizeConsultationMessage(item))
             setComments(prev => mergeConsultationComments(prev, history))
         } catch {
-            // 历史消息加载失败不影响实时会诊输入。
+            // 历史消息加载失败不影响实时协同输入。
         }
     }, [inviteToken, taskId])
 
@@ -261,7 +270,7 @@ export function ExpertPanel({
             })
             .on(
                 "postgres_changes",
-                { event: "INSERT", schema: "public", table: "consultation_messages", filter: `task_id=eq.${taskId}` },
+                { event: "INSERT", schema: "public", table: "collaboration_messages", filter: `task_id=eq.${taskId}` },
                 (payload: { new?: unknown }) => {
                     if (!payload.new || typeof payload.new !== "object") return
                     const comment = normalizeConsultationMessage(payload.new as Record<string, unknown>)
@@ -270,7 +279,7 @@ export function ExpertPanel({
             )
             .on(
                 "postgres_changes",
-                { event: "UPDATE", schema: "public", table: "consultation_messages", filter: `task_id=eq.${taskId}` },
+                { event: "UPDATE", schema: "public", table: "collaboration_messages", filter: `task_id=eq.${taskId}` },
                 (payload: { new?: unknown }) => {
                     if (!payload.new || typeof payload.new !== "object") return
                     const comment = normalizeConsultationMessage(payload.new as Record<string, unknown>)
@@ -300,7 +309,7 @@ export function ExpertPanel({
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (authToken) headers.Authorization = `Bearer ${authToken}`
         const backendRole = comment.role === "host" ? "user" : comment.role
-        return fetch(`${apiBase}/api/v1/consultation/${taskId}/inject`, {
+        return fetch(`${apiBase}/api/v1/collaboration/${taskId}/inject`, {
             method: "POST",
             headers,
             body: JSON.stringify({
@@ -383,7 +392,7 @@ export function ExpertPanel({
         const authToken = await getAuthToken()
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (authToken) headers.Authorization = `Bearer ${authToken}`
-        const response = await fetch(`${apiBase}/api/v1/consultation/${taskId}/sessions/${sessionId}/${action}`, {
+        const response = await fetch(`${apiBase}/api/v1/collaboration/${taskId}/sessions/${sessionId}/${action}`, {
             method: "POST",
             headers,
             body: JSON.stringify(body ?? {}),
@@ -447,7 +456,7 @@ export function ExpertPanel({
                 const data = await callSessionAction("approve")
                 setStatusOverride("started")
                 broadcastConsultationEvent({
-                    type: "consultation_started",
+                    type: "collaboration_started",
                     task_id: taskId,
                     session: data.session,
                     payload: { session: data.session },
@@ -455,12 +464,12 @@ export function ExpertPanel({
                 return
             }
             if (action === "skip") {
-                const data = await callSessionAction("skip", { reason: "用户选择跳过本次重复专家会诊" })
+                const data = await callSessionAction("skip", { reason: "用户选择跳过本次重复人机协同" })
                 setStatusOverride("skipped")
                 broadcastConsultationEvent({
-                    type: "consultation_skipped",
+                    type: "collaboration_skipped",
                     task_id: taskId,
-                    reason: "用户选择跳过本次重复专家会诊",
+                    reason: "用户选择跳过本次重复人机协同",
                     session: data.session,
                     payload: { session: data.session, summary: data.session?.summary_payload },
                 })
@@ -473,7 +482,7 @@ export function ExpertPanel({
                 if (draft) setEditableSummary(draft)
                 setStatusOverride("summary_pending")
                 broadcastConsultationEvent({
-                    type: "consultation_summary_pending",
+                    type: "collaboration_summary_pending",
                     task_id: taskId,
                     session: data.session,
                     summary: data.session?.summary_payload,
@@ -487,7 +496,7 @@ export function ExpertPanel({
                 const data = await callSessionAction("summary", { summary })
                 setStatusOverride("summary_confirmed")
                 broadcastConsultationEvent({
-                    type: "consultation_summary_confirmed",
+                    type: "collaboration_summary_confirmed",
                     task_id: taskId,
                     session: data.session,
                     summary: data.session?.summary_payload,
@@ -523,7 +532,7 @@ export function ExpertPanel({
             <div className="px-3 py-2.5 border-b border-white/10 bg-white/5 flex justify-between items-start gap-3">
                 <div>
                     <span className="text-xs font-semibold text-white flex items-center gap-1.5">
-                        <span className="text-[#D4FF12]">●</span> 专家会诊频道
+                        <span className="text-[#D4FF12]">●</span> 人机协同面板
                     </span>
                     <div className="mt-1 text-[10px] text-gray-500">
                         Commander 主持 · 用户决策 · 专家协助
@@ -538,7 +547,7 @@ export function ExpertPanel({
                 <div className="border-b border-white/10 bg-[#060B12]/80 p-3 space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-semibold text-[#D4FF12]">会诊上下文</span>
+                            <span className="text-[11px] font-semibold text-[#D4FF12]">协同上下文</span>
                             <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/55">
                                 {expertTasks.length} 项专家任务
                             </span>
@@ -557,7 +566,7 @@ export function ExpertPanel({
                                 <p className="text-[11px] leading-relaxed text-[#FCD34D]">{consultationState.reason}</p>
                             )}
                             <p className="line-clamp-2 text-[11px] leading-relaxed text-white/55">
-                                {context?.progress ?? firstHelpNeeded(context) ?? context?.background ?? context?.blockers?.[0] ?? "等待 Commander 补充会诊上下文。"}
+                                {context?.progress ?? firstHelpNeeded(context) ?? context?.background ?? context?.blockers?.[0] ?? "等待 Commander 补充协同上下文。"}
                             </p>
                         </div>
                     )}
@@ -661,7 +670,7 @@ export function ExpertPanel({
                                         {comment.messageType === "summary" && (
                                             <span className="block text-[10px] text-[#F59E0B]/80 mb-1">待确认摘要草稿</span>
                                         )}
-                                        {comment.text}
+                                        {normalizeAutonomousObservationText(comment.text)}
                                     </div>
                                 </div>
                             </motion.div>
@@ -680,7 +689,7 @@ export function ExpertPanel({
                                 <Image src="/expert-avatar.png" alt="专家" width={40} height={40} className="w-full h-full object-cover" />
                             </div>
                         </div>
-                        <span className="text-xs text-gray-500 italic">等待会诊开始...</span>
+                        <span className="text-xs text-gray-500 italic">等待协同开始...</span>
                     </div>
                 )}
             </div>
@@ -699,7 +708,7 @@ export function ExpertPanel({
                                         disabled={moderationPending}
                                         className="rounded-full border border-[#F59E0B]/30 px-2 py-0.5 text-[10px] text-[#FCD34D] hover:bg-[#F59E0B]/10 disabled:opacity-50"
                                     >
-                                        结束会诊
+                                        结束协同
                                     </button>
                                 )}
                             </div>
@@ -711,7 +720,7 @@ export function ExpertPanel({
                                         disabled={moderationPending}
                                         className="rounded-full bg-[#D4FF12] px-2 py-1 text-[10px] font-semibold text-black hover:bg-[#bce600] disabled:opacity-40"
                                     >
-                                        再次会诊
+                                        再次协同
                                     </button>
                                     <button
                                         type="button"
@@ -723,12 +732,12 @@ export function ExpertPanel({
                                     </button>
                                 </div>
                             )}
-                            {(canConfirmSummary || editableSummary) && (
+                            {canConfirmSummary && (
                                 <>
                                     <textarea
                                         value={editableSummary}
                                         onChange={(e) => setEditableSummary(e.target.value)}
-                                        placeholder="编辑 Commander 待确认的会诊摘要..."
+                                        placeholder="编辑 Commander 待确认的协同摘要..."
                                         rows={5}
                                         className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white placeholder:text-gray-600 focus:outline-none focus:border-[#D4FF12]/40 min-h-[80px]"
                                     />
@@ -748,7 +757,7 @@ export function ExpertPanel({
                                         <span className="text-[10px] font-semibold text-[#67E8F9]">待入库个人经验草稿</span>
                                         <span className="text-[10px] text-white/40">{editableExperienceDrafts.length} 条</span>
                                     </div>
-                                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                                    <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
                                         {editableExperienceDrafts.map((draft, index) => (
                                             <div key={`${draft.title}-${index}`} className="space-y-1.5 rounded-lg border border-white/10 bg-black/25 p-2">
                                                 <div className="flex items-center justify-between gap-2">
@@ -761,41 +770,55 @@ export function ExpertPanel({
                                                         删除草稿
                                                     </button>
                                                 </div>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] font-semibold text-white/55">经验标题</span>
                                                 <input
                                                     value={draft.title}
                                                     onChange={(e) => updateExperienceDraft(index, { title: e.target.value })}
                                                     className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
-                                                    placeholder="经验标题"
+                                                    placeholder="一句话概括经验"
                                                 />
+                                                </label>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] font-semibold text-white/55">适用对象</span>
                                                 <input
                                                     value={draft.target_agents.join(", ")}
                                                     onChange={(e) => updateExperienceDraft(index, { target_agents: e.target.value.split(",").map((item) => item.trim()).filter(Boolean) })}
                                                     className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
                                                     placeholder="适用 Agent，例如 forensics, osint, challenger"
                                                 />
+                                                </label>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] font-semibold text-white/55">适用条件</span>
                                                 <textarea
                                                     value={draft.problem_pattern}
                                                     onChange={(e) => updateExperienceDraft(index, { problem_pattern: e.target.value })}
                                                     className="min-h-14 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
-                                                    placeholder="适用问题模式"
+                                                    placeholder="什么情况下用这条经验"
                                                 />
+                                                </label>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] font-semibold text-white/55">经验具体内容</span>
                                                 <textarea
                                                     value={draft.recommended_method}
                                                     onChange={(e) => updateExperienceDraft(index, { recommended_method: e.target.value })}
-                                                    className="min-h-14 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
-                                                    placeholder="推荐处理方法"
+                                                    className="min-h-20 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
+                                                    placeholder="可复用的处理步骤、判据或补证路径"
                                                 />
+                                                </label>
+                                                <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.02] p-2">
+                                                    <span className="text-[10px] font-semibold text-white/55">补充说明</span>
                                                 <textarea
                                                     value={draft.evidence_to_check.join("\n")}
                                                     onChange={(e) => updateExperienceDraft(index, { evidence_to_check: e.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })}
                                                     className="min-h-12 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
-                                                    placeholder="需要核验的证据，每行一项"
+                                                        placeholder="核验要点，例如视觉特征、来源链路、日志或外部工具返回"
                                                 />
                                                 <textarea
                                                     value={draft.when_to_escalate}
                                                     onChange={(e) => updateExperienceDraft(index, { when_to_escalate: e.target.value })}
                                                     className="min-h-10 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
-                                                    placeholder="什么时候仍需专家会诊"
+                                                    placeholder="什么时候仍需外部专家协助"
                                                 />
                                                 <textarea
                                                     value={draft.limitations}
@@ -803,6 +826,7 @@ export function ExpertPanel({
                                                     className="min-h-10 w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white focus:border-[#06B6D4]/45 focus:outline-none"
                                                     placeholder="限制与误用风险"
                                                 />
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -825,7 +849,7 @@ export function ExpertPanel({
                     )}
                     {!canModerate && (
                         <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[10px] text-white/40">
-                            专家可提交意见，不能结束会诊或确认摘要。
+                            专家可提交意见，不能结束协同或确认摘要。
                         </div>
                     )}
                     <div className="flex gap-2 items-end">
@@ -866,7 +890,7 @@ export function ExpertPanel({
                 </form>
             ) : (
                 <div className="p-3 border-t border-white/10 bg-black/50 text-center text-xs text-gray-500">
-                    访客仅可查看会诊记录
+                    访客仅可查看协同记录
                 </div>
             )}
         </div>

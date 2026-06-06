@@ -273,6 +273,130 @@ async def test_report_and_audit_exports_filter_to_final_detection_run(monkeypatc
     assert "OLD LOG SHOULD NOT APPEAR" not in audit_markdown
 
 
+@pytest.mark.asyncio
+async def test_report_renders_case_and_experience_rag_plus_collaboration_timeline(monkeypatch):
+    from app.services import report_generator
+
+    async def fake_fetch_task_data(_task_id):
+        rag_case = {
+            "status": "success",
+            "summary": "命中 1 个公开案例 RAG 片段",
+            "matches": [
+                {
+                    "case_id": "case-1",
+                    "title": "相似品牌钓鱼案例",
+                    "chunk_text": "相似案例中存在伪装银行安全验证页面。",
+                    "score": 0.71,
+                    "source_kind": "public",
+                }
+            ],
+        }
+        rag_exp = {
+            "status": "success",
+            "summary": "命中 1 条个人经验库条目",
+            "matches": [
+                {
+                    "entry_id": "exp-1",
+                    "title": "品牌钓鱼补证路径",
+                    "snippet": "核验域名注册、DNS 与官方品牌域名关系。",
+                    "score": 0.68,
+                }
+            ],
+        }
+        return {
+            "task": {
+                "id": "task-report",
+                "title": "报告章节测试",
+                "input_type": "text",
+                "status": "completed",
+                "created_at": "2026-06-05T00:00:00+00:00",
+                "completed_at": "2026-06-05T00:05:00+00:00",
+                "metadata": {"last_detection_run_id": "run-report"},
+            },
+            "report": {
+                "generated_at": "2026-06-05T00:05:00+00:00",
+                "report_hash": "hash-report",
+                "verdict_payload": {
+                    "verdict": "forged",
+                    "confidence": 0.84,
+                    "detection_run_id": "run-report",
+                    "recommendations": ["保留证据链并通知用户。"],
+                },
+            },
+            "analysis_states": [
+                {
+                    "created_at": "2026-06-05T00:01:00+00:00",
+                    "round_number": 1,
+                    "current_agent": "forensics",
+                    "result_snapshot": {
+                        "detection_run_id": "run-report",
+                        "forensics": {"confidence": 0.95, "case_rag": rag_case, "experience_rag": rag_exp},
+                    },
+                    "evidence_board": {"detection_run_id": "run-report", "timeline_events": []},
+                },
+                {
+                    "created_at": "2026-06-05T00:02:00+00:00",
+                    "round_number": 1,
+                    "current_agent": "osint",
+                    "result_snapshot": {
+                        "detection_run_id": "run-report",
+                        "osint": {"confidence": 0.65, "case_rag": rag_case, "experience_rag": rag_exp},
+                    },
+                    "evidence_board": {"detection_run_id": "run-report", "timeline_events": []},
+                },
+                {
+                    "created_at": "2026-06-05T00:03:00+00:00",
+                    "round_number": 1,
+                    "current_agent": "challenger",
+                    "result_snapshot": {
+                        "detection_run_id": "run-report",
+                        "challenger": {
+                            "phase": "osint",
+                            "phase_round": 1,
+                            "confidence": 0.65,
+                            "quality_delta": None,
+                            "issue_count": 2,
+                            "high_severity_count": 0,
+                            "requires_more_evidence": True,
+                            "next_action": "return_for_reinforcement",
+                            "action_reason": "置信度低于 80%，打回情报溯源 Agent 补强引用。",
+                            "issues_found": [
+                                {"severity": "medium", "description": "图谱引用覆盖率偏低", "agent": "osint"}
+                            ],
+                            "challenger_experience_rag": rag_exp,
+                            "consultation_required": False,
+                            "timestamp": "2026-06-05T00:03:00+00:00",
+                        },
+                    },
+                    "evidence_board": {"detection_run_id": "run-report", "timeline_events": []},
+                },
+            ],
+            "agent_logs": [],
+            "audit_logs": [{"created_at": "2026-06-05T00:05:00+00:00", "action": "detect_completed", "metadata": {"detection_run_id": "run-report"}}],
+            "consultation_sessions": [],
+            "consultation_messages": [],
+        }
+
+    monkeypatch.setattr(report_generator, "_fetch_task_data", fake_fetch_task_data)
+
+    markdown = await report_generator.generate_markdown_report("task-report")
+
+    assert "## 五、公开案例与个人经验 RAG 检索情况" in markdown
+    assert "电子取证 Agent" in markdown
+    assert "情报溯源 Agent" in markdown
+    assert "逻辑质询Agent" in markdown
+    assert "命中案例" in markdown
+    assert "命中经验" in markdown
+    assert "## 六、逻辑质询时间线" in markdown
+    assert "逻辑质询Agent ↔ 情报溯源 Agent 第 1 轮" in markdown
+    assert "下一步行动: 打回" in markdown
+    assert "置信度低于 80%" in markdown
+    assert "## 七、全程审计日志" in markdown
+    assert "## 八、人机协同" in markdown
+    assert "## 六、Challenger 逻辑质询" not in markdown
+    assert "## 七、质询时间线" not in markdown
+
+
 def test_active_analyzing_task_with_run_id_is_locked_against_fresh_start():
     from app.api.v1 import detect as detect_module
 

@@ -34,7 +34,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
             const authToken = await getAuthToken()
             const headers: Record<string, string> = {}
             if (authToken) headers.Authorization = `Bearer ${authToken}`
-            const response = await fetchWithRetry(`${apiBase}/api/v1/consultation/${taskId}/invite`, {
+            const response = await fetchWithRetry(`${apiBase}/api/v1/collaboration/${taskId}/invite`, {
                 method: "POST",
                 headers,
             })

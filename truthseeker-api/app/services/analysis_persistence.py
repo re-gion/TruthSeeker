@@ -104,11 +104,31 @@ def build_resume_state_from_rows(
             quality = challenger_feedback.get("quality_score")
             if isinstance(quality, (int, float)) and analysis_phase in phase_quality_history:
                 phase_quality_history[analysis_phase].append(float(quality))
-            consultation_sessions = _as_list(challenger_feedback.get("consultation_sessions")) or consultation_sessions
-            consultation_trigger_history = _as_list(challenger_feedback.get("consultation_trigger_history")) or consultation_trigger_history
-            active_consultation_session = _as_record(challenger_feedback.get("active_consultation_session")) or active_consultation_session
-            pending_consultation_approval = _as_record(challenger_feedback.get("pending_consultation_approval")) or pending_consultation_approval
-            confirmed_consultation_summary = _as_record(challenger_feedback.get("confirmed_consultation_summary")) or confirmed_consultation_summary
+            consultation_sessions = (
+                _as_list(challenger_feedback.get("collaboration_sessions"))
+                or _as_list(challenger_feedback.get("consultation_sessions"))
+                or consultation_sessions
+            )
+            consultation_trigger_history = (
+                _as_list(challenger_feedback.get("collaboration_trigger_history"))
+                or _as_list(challenger_feedback.get("consultation_trigger_history"))
+                or consultation_trigger_history
+            )
+            active_consultation_session = (
+                _as_record(challenger_feedback.get("active_collaboration_session"))
+                or _as_record(challenger_feedback.get("active_consultation_session"))
+                or active_consultation_session
+            )
+            pending_consultation_approval = (
+                _as_record(challenger_feedback.get("pending_collaboration_approval"))
+                or _as_record(challenger_feedback.get("pending_consultation_approval"))
+                or pending_consultation_approval
+            )
+            confirmed_consultation_summary = (
+                _as_record(challenger_feedback.get("confirmed_collaboration_summary"))
+                or _as_record(challenger_feedback.get("confirmed_consultation_summary"))
+                or confirmed_consultation_summary
+            )
         if snapshot.get("final_verdict"):
             final_snapshot = _as_record(snapshot.get("final_verdict"))
             graph = _as_record(final_snapshot.get("provenance_graph"))
@@ -161,11 +181,21 @@ def build_resume_state_from_rows(
         "degradation_status": {},
         "tool_results": tool_results,
         "expert_messages": expert_messages,
+        "collaboration_resume": {
+            "action": "resume_from_persistence",
+            "resumed_at": utc_now_iso(),
+            "expert_message_count": len(expert_messages),
+        },
         "consultation_resume": {
             "action": "resume_from_persistence",
             "resumed_at": utc_now_iso(),
             "expert_message_count": len(expert_messages),
         },
+        "collaboration_sessions": consultation_sessions,
+        "collaboration_trigger_history": consultation_trigger_history,
+        "active_collaboration_session": active_consultation_session,
+        "pending_collaboration_approval": pending_consultation_approval,
+        "confirmed_collaboration_summary": confirmed_consultation_summary,
         "consultation_sessions": consultation_sessions,
         "consultation_trigger_history": consultation_trigger_history,
         "active_consultation_session": active_consultation_session,
@@ -236,11 +266,16 @@ def build_analysis_state_row(
         "analysis_phase": updates.get("analysis_phase"),
         "phase_rounds": updates.get("phase_rounds"),
         "phase_quality_history": updates.get("phase_quality_history"),
-        "consultation_sessions": updates.get("consultation_sessions"),
-        "consultation_trigger_history": updates.get("consultation_trigger_history"),
-        "active_consultation_session": updates.get("active_consultation_session"),
-        "pending_consultation_approval": updates.get("pending_consultation_approval"),
-        "confirmed_consultation_summary": updates.get("confirmed_consultation_summary"),
+        "collaboration_sessions": updates.get("collaboration_sessions") or updates.get("consultation_sessions"),
+        "collaboration_trigger_history": updates.get("collaboration_trigger_history") or updates.get("consultation_trigger_history"),
+        "active_collaboration_session": updates.get("active_collaboration_session") or updates.get("active_consultation_session"),
+        "pending_collaboration_approval": updates.get("pending_collaboration_approval") or updates.get("pending_consultation_approval"),
+        "confirmed_collaboration_summary": updates.get("confirmed_collaboration_summary") or updates.get("confirmed_consultation_summary"),
+        "consultation_sessions": updates.get("consultation_sessions") or updates.get("collaboration_sessions"),
+        "consultation_trigger_history": updates.get("consultation_trigger_history") or updates.get("collaboration_trigger_history"),
+        "active_consultation_session": updates.get("active_consultation_session") or updates.get("active_collaboration_session"),
+        "pending_consultation_approval": updates.get("pending_consultation_approval") or updates.get("pending_collaboration_approval"),
+        "confirmed_consultation_summary": updates.get("confirmed_consultation_summary") or updates.get("confirmed_collaboration_summary"),
         "provenance_graph": updates.get("provenance_graph"),
     }
     forensics_result = updates.get("forensics_result") or {}
@@ -301,7 +336,7 @@ class AnalysisPersistenceService:
         if not self._safe_update("tasks", payload, task_id):
             raise RuntimeError(f"Failed to mark task {task_id} as started")
 
-    def mark_task_waiting_consultation(
+    def mark_task_waiting_collaboration(
         self,
         task_id: str,
         *,
@@ -310,16 +345,28 @@ class AnalysisPersistenceService:
     ) -> None:
         now = utc_now_iso()
         payload: dict[str, Any] = {
-            "status": "waiting_consultation",
+            "status": "waiting_collaboration",
             "updated_at": now,
             "metadata": {
                 **(metadata or {}),
+                "waiting_collaboration": True,
+                "collaboration_reason": reason,
                 "waiting_consultation": True,
                 "consultation_reason": reason,
             },
         }
         if not self._safe_update("tasks", payload, task_id):
-            raise RuntimeError(f"Failed to mark task {task_id} as waiting_consultation")
+            raise RuntimeError(f"Failed to mark task {task_id} as waiting_collaboration")
+
+    def mark_task_waiting_consultation(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Legacy wrapper retained for old callers."""
+        self.mark_task_waiting_collaboration(task_id, reason=reason, metadata=metadata)
 
     def mark_task_failed(self, task_id: str, *, error_summary: str) -> None:
         now = utc_now_iso()

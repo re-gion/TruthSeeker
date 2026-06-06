@@ -442,7 +442,7 @@ export function createFallbackDashboardViewModel(
     },
     capabilityMetrics: [
       { id: "reports-generated", label: "已生成报告", value: 0, helper: "已入库的鉴定报告总量" },
-      { id: "consultation-triggered", label: "会诊触发任务", value: 0, helper: "触发专家会诊的唯一任务数" },
+      { id: "collaboration-triggered", label: "协同触发任务", value: 0, helper: "触发人机协同的唯一任务数" },
       { id: "reports-covered", label: "报告覆盖任务", value: 0, helper: "已形成报告闭环的唯一任务数" },
     ],
   }

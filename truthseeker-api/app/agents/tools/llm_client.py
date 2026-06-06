@@ -526,7 +526,7 @@ async def forensics_interpret(
             "不得写成当前检材事实，也不得替代本轮样本、Sightengine、Reality Defender 或 VirusTotal 证据。"
             "如果传入 experience_rag_search 或 experience_rag 字段，个人经验只能作为用户私有的方法参考和检查清单，"
             "不得写成当前检材事实，不得直接改变取证分数或替代本轮证据。"
-            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
+            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和协同摘要，只补强被指出的缺口，不重复上一轮完整报告。"
             "如果输入包含“确定性时间校验”，必须以该校验为准，不得输出与其相反的日期先后判断。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
@@ -592,7 +592,7 @@ async def osint_interpret(
             "不能替代当前 URL、域名、样本或外部来源的独立核验。"
             "如果传入 experience_rag_search 或 experience_rag 字段，个人经验只能作为用户私有的溯源方法参考，"
             "不得写成当前案件事实，不得直接改变威胁分数或替代当前 URL、域名、样本与外部来源核验。"
-            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和会诊摘要，只补强被指出的缺口，不重复上一轮完整报告。"
+            "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和协同摘要，只补强被指出的缺口，不重复上一轮完整报告。"
             "如果输入包含“确定性时间校验”，必须以该校验为准，不得输出与其相反的日期先后判断。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出 Markdown 正文，不要用代码块包裹。"
@@ -845,7 +845,7 @@ async def commander_dedupe_consultation_context(
     case_prompt: str = "",
     sample_refs: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """Let Commander merge repeated consultation help items before showing experts."""
+    """Let Commander merge repeated collaboration help items before showing users or experts."""
     if not isinstance(context, dict):
         return context
     help_needed = _normalize_help_items(context.get("help_needed"))
@@ -854,7 +854,7 @@ async def commander_dedupe_consultation_context(
 
     fallback = _fallback_consultation_context_dedupe(context)
     system_prompt = (
-        "你是 TruthSeeker 的 Commander 主持人，负责在启动专家会诊前整理“需要帮助”字段。"
+        "你是 TruthSeeker 的 Commander 主持人，负责在启动人机协同前整理“需要帮助”字段。"
         "你的任务是合并语义重复或同一根因的求助点，保留不同根因、不同 Agent、不同证据缺口。"
         "不要新增输入中不存在的事实，不要按固定关键词套模板。"
         "输出必须是 JSON 对象，字段为 help_needed 和 expert_tasks。"
@@ -863,7 +863,7 @@ async def commander_dedupe_consultation_context(
     )
     human_text = (
         f"案件背景：{case_prompt or context.get('case_prompt') or '用户未补充额外背景。'}\n\n"
-        f"会诊触发信息：\n{json.dumps(context.get('trigger') or {}, ensure_ascii=False, indent=2)}\n\n"
+        f"协同触发信息：\n{json.dumps(context.get('trigger') or {}, ensure_ascii=False, indent=2)}\n\n"
         f"原始需要帮助：\n{json.dumps(help_needed, ensure_ascii=False, indent=2)}\n\n"
         f"原始专家任务：\n{json.dumps(context.get('expert_tasks') or [], ensure_ascii=False, indent=2)}"
     )
@@ -918,7 +918,7 @@ async def commander_summarize_consultation(
     fallback_summary: dict[str, Any] | None = None,
     case_prompt: str = "",
 ) -> dict[str, Any]:
-    """Let Commander summarize expert consultation against the requested help items."""
+    """Let Commander summarize human collaboration against the requested help items."""
     fallback_summary = dict(fallback_summary or {})
     context_payload = context_payload if isinstance(context_payload, dict) else {}
     normalized_messages = [
@@ -931,20 +931,22 @@ async def commander_summarize_consultation(
 
     help_needed = _normalize_help_items(context_payload.get("help_needed"))
     expert_tasks = context_payload.get("expert_tasks") if isinstance(context_payload.get("expert_tasks"), list) else []
-    fallback_generated = str(fallback_summary.get("generated_summary") or "本轮会诊已结束，但未生成有效摘要。")
+    fallback_generated = str(fallback_summary.get("generated_summary") or "本轮人机协同已结束，但未生成有效摘要。")
     system_prompt = (
-        "你是 TruthSeeker 的 Commander 会诊主持人。"
-        "用户点击结束会诊后，你必须阅读会诊上下文、需要帮助字段、专家任务、用户与专家对话，生成真正的摘要。"
-        "重点总结专家针对“需要帮助”字段中问题的回复、判断依据和下一步建议。"
+        "你是 TruthSeeker 的 Commander 人机协同主持人。"
+        "用户点击结束协同后，你必须阅读协同上下文、需要帮助字段、协同任务、用户与专家对话，生成真正的摘要。"
+        "重点总结用户与专家针对“需要帮助”字段中问题的回复、判断依据和下一步建议。"
         "不要逐字复述完整聊天记录，不要只输出固定结构。"
+        "如果描述 LLM 或 Agent 对检材图片、文本、线索的直接观察，必须称为“自主观察”或“自主复核”，不得写成“人工观察”。"
+        "“人工意见”只用于用户、专家等真实人员在人机协同中输入的意见。"
         "输出 JSON 对象，字段包括 generated_summary、expert_answer_summary、recommended_actions、unresolved_questions。"
         "generated_summary 用 3 到 6 句中文自然段，必须可直接回注给后续 Agent 使用。"
     )
     human_text = (
         f"案件背景：{case_prompt or context_payload.get('case_prompt') or '用户未补充额外背景。'}\n\n"
         f"需要帮助字段：\n{json.dumps(help_needed, ensure_ascii=False, indent=2)}\n\n"
-        f"专家任务：\n{json.dumps(expert_tasks, ensure_ascii=False, indent=2)}\n\n"
-        f"会诊上下文：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:6000]}\n\n"
+        f"协同任务：\n{json.dumps(expert_tasks, ensure_ascii=False, indent=2)}\n\n"
+        f"协同上下文：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:6000]}\n\n"
         f"用户与专家对话：\n{json.dumps(normalized_messages, ensure_ascii=False, indent=2)}\n\n"
         f"兜底机械摘要，仅供参考，不得照抄：\n{fallback_generated}"
     )
@@ -996,7 +998,7 @@ async def commander_extract_experience_drafts(
     context_payload: dict[str, Any] | None = None,
     summary_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Extract reusable, private experience drafts from a finished consultation."""
+    """Extract reusable, private experience drafts from finished human collaboration."""
     context_payload = context_payload if isinstance(context_payload, dict) else {}
     summary_payload = summary_payload if isinstance(summary_payload, dict) else {}
     normalized_messages = [
@@ -1007,17 +1009,19 @@ async def commander_extract_experience_drafts(
         return []
 
     system_prompt = (
-        "你是 TruthSeeker 的 Commander 主持人，负责从已结束的专家会诊中沉淀个人经验草稿。"
-        "只提取可复用的方法、判据、补证路径和升级会诊条件；不要保存具体检材名、链接、账号、专家原话或可识别案件细节。"
-        "一场会诊可以沉淀 0、1 或多条经验；如果专家回复没有可复用内容，输出空数组。"
+        "你是 TruthSeeker 的 Commander 主持人，负责从已结束的人机协同中沉淀个人经验草稿。"
+        "只提取可复用的方法、判据、补证路径和升级协同条件；不要保存具体检材名、链接、账号、专家原话或可识别案件细节。"
+        "保持短小，便于用户快速审核：标题不超过 24 字，适用条件 1 到 2 句，经验具体内容 2 到 4 条短句，补充说明只保留必要项。"
+        "如果提到 LLM 或 Agent 看图、读文本、分析线索，统一写“自主观察/自主复核”，不得写“人工观察”。"
+        "一场协同可以沉淀 0、1 或多条经验；如果用户和专家回复没有可复用内容，输出空数组。"
         "输出必须是 JSON 对象，字段 drafts 为数组。每条草稿必须包含："
         "title、target_agents、problem_pattern、recommended_method、evidence_to_check、when_to_escalate、limitations。"
         "target_agents 只能包含 forensics、osint、challenger。"
     )
     fallback_payload = {"drafts": []}
     human_text = (
-        f"会诊上下文（已脱敏使用）：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:5000]}\n\n"
-        f"会诊摘要：\n{json.dumps(summary_payload, ensure_ascii=False, indent=2)[:3000]}\n\n"
+        f"协同上下文（已脱敏使用）：\n{json.dumps(context_payload, ensure_ascii=False, indent=2)[:5000]}\n\n"
+        f"协同摘要：\n{json.dumps(summary_payload, ensure_ascii=False, indent=2)[:3000]}\n\n"
         f"用户与专家消息：\n{json.dumps(normalized_messages, ensure_ascii=False, indent=2)[:7000]}"
     )
     raw = await _invoke_multimodal_llm(

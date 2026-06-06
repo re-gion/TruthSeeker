@@ -145,7 +145,7 @@ export function FileUploader() {
         }
         const oversize = nextFiles.find((file) => file.size > MAX_SIZE)
         if (oversize) {
-            setError(`${oversize.name} 超过大小限制（视频 250MB / 音频 20MB / 图片 50MB / 文本 5MB）`)
+            setError(`${oversize.name} 超过单文件 250MB 上限`)
             return
         }
 
@@ -337,7 +337,7 @@ export function FileUploader() {
                             </div>
                             <div className="text-right text-xs text-black/40 leading-5 dark:text-white/35">
                                 <div>MP4 / WebM / MP3 / WAV / JPG / PNG /</div>
-                                <div>WebP / TXT · 单文件最大 500MB</div>
+                                <div>WebP / TXT · 单文件最大 250MB</div>
                             </div>
                         </div>
 

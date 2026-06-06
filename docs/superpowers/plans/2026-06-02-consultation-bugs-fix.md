@@ -1,5 +1,7 @@
 # Consultation Bugs Fix Implementation Plan
 
+> **状态：历史执行计划。** 本文件保留旧 `consultation` 流程的修复记录；当前新功能使用 `collaboration_*`，旧命名仅作兼容，当前事实以源码和 `docs/APP_FLOW.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复四个专家会诊相关 bug：摘要二次发送、裁决报告不显示、专家侧提前报告已生成、专家侧案例导入配置不同步。

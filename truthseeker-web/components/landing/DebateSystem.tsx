@@ -6,7 +6,7 @@ const collaborationHighlights = [
     {
         number: "01",
         title: "AI 初筛 + 人工触发介入",
-        description: "系统先由多 Agent 完成首轮取证与交叉验证；一旦出现证据冲突、低置信结论或高风险案件，即可切入专家会诊流程。"
+        description: "系统先由多 Agent 完成首轮取证与交叉验证；一旦出现低置信僵局、证据冲突或高风险案件，即可切入人机协同流程。"
     },
     {
         number: "02",
@@ -32,10 +32,10 @@ export function DebateSystem() {
                         核心创新点三
                     </div>
                     <h2 className="text-center text-3xl md:text-5xl font-bold tracking-tight">
-                        人机协同 <span className="gradient-text">专家会诊机制</span>
+                        人机协同 <span className="gradient-text">决策机制</span>
                     </h2>
                     <p className="text-muted-foreground text-lg max-w-6xl mx-auto leading-relaxed text-center mt-6 whitespace-nowrap">
-                        多智能体快速筛查、专家实时介入、会诊结果回注收敛，形成完整人机协同闭环。
+                        多智能体快速筛查、用户决策与专家实时介入、协同结果回注收敛，形成完整人机协同闭环。
                     </p>
                 </div>
 
@@ -44,7 +44,7 @@ export function DebateSystem() {
                         <div className="px-6 py-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/90 dark:border-white/10 dark:bg-white/5">
                             <div>
                                 <div className="text-xs uppercase tracking-[0.2em] text-slate-400 font-mono dark:text-white/40">Realtime Consultation</div>
-                                <div className="text-xl font-bold text-slate-900 mt-1 dark:text-white">专家会诊协同面板</div>
+                                <div className="text-xl font-bold text-slate-900 mt-1 dark:text-white">人机协同面板</div>
                             </div>
                             <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-white/10 dark:bg-black/20">
                                 <span className="relative flex h-2.5 w-2.5">
@@ -91,7 +91,7 @@ export function DebateSystem() {
 
                             <div className="p-6 flex flex-col bg-gradient-to-b from-white to-slate-50/80 dark:from-white/5 dark:to-transparent">
                                 <div className="flex items-center justify-between mb-5">
-                                    <div className="text-sm font-semibold text-slate-900 dark:text-white">专家会诊频道</div>
+                                    <div className="text-sm font-semibold text-slate-900 dark:text-white">人机协同面板</div>
                                     <div className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-[11px] text-indigo-500 dark:text-indigo-300">邀请专家会诊</div>
                                 </div>
 
@@ -152,7 +152,7 @@ export function DebateSystem() {
 
                                 <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-200 px-4 py-3 flex items-center justify-between gap-3 dark:border-white/10 dark:bg-black/30">
                                     <div className="text-sm text-slate-600 dark:text-white/45">提交质询意见 / 标记疑点 / 确认结论</div>
-                                    <div className="px-4 py-2 rounded-full bg-[#D4FF12] text-black text-xs font-bold whitespace-nowrap">发送会诊意见</div>
+                                    <div className="px-4 py-2 rounded-full bg-[#D4FF12] text-black text-xs font-bold whitespace-nowrap">发送协同意见</div>
                                 </div>
                             </div>
                         </div>

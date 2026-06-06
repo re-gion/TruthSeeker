@@ -55,14 +55,14 @@ def _target_agents(value: Any) -> list[str]:
     return result
 
 
-def _text_list(value: Any, *, limit: int = 8) -> list[str]:
+def _text_list(value: Any, *, limit: int = 4) -> list[str]:
     if not isinstance(value, list):
         return []
     result = []
     for item in value:
         text = str(item).strip()
         if text:
-            result.append(text[:300])
+            result.append(text[:100])
         if len(result) >= limit:
             break
     return result
@@ -78,13 +78,13 @@ def normalize_experience_draft(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not agents or not title or not problem_pattern or not recommended_method:
         return None
     return {
-        "title": title[:120],
+        "title": title[:80],
         "target_agents": agents,
-        "problem_pattern": problem_pattern[:1200],
-        "recommended_method": recommended_method[:1600],
+        "problem_pattern": problem_pattern[:320],
+        "recommended_method": recommended_method[:600],
         "evidence_to_check": _text_list(raw.get("evidence_to_check")),
-        "when_to_escalate": str(raw.get("when_to_escalate") or "").strip()[:800],
-        "limitations": str(raw.get("limitations") or "").strip()[:800],
+        "when_to_escalate": str(raw.get("when_to_escalate") or "").strip()[:240],
+        "limitations": str(raw.get("limitations") or "").strip()[:240],
     }
 
 
@@ -160,7 +160,7 @@ async def build_experience_drafts(
         seen_hashes.add(content_hash)
         draft.update({
             "source_task_id": task_id,
-            "source_session_id": session_id,
+            "source_collaboration_session_id": session_id,
             "content_hash": content_hash,
         })
         drafts.append(draft)
@@ -220,7 +220,7 @@ async def confirm_experience_drafts(
             **draft,
             "user_id": user_id,
             "source_task_id": task_id,
-            "source_session_id": session_id,
+            "source_collaboration_session_id": session_id,
             "status": "active",
             "content_hash": content_hash,
             "created_at": _now(),

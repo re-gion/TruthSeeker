@@ -1,19 +1,19 @@
 # TruthSeeker 后端结构
 
-> 更新时间：2026-06-04
+> 更新时间：2026-06-06
 
 ## 1. 当前运行时边界
 
-TruthSeeker 当前运行时是 **FedPaRS-compatible 多智能体研判架构**：
+TruthSeeker 当前运行时是 **Fed-MBPR-compatible 多智能体研判架构**：
 
 - 四个 Agent 共享可配置的原生多模态推理基座；默认 Kimi 2.5，调用 Kimi K2.5 时禁用 thinking，也可切换小米 MiMo Token Plan。
 - Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 等外部工具提供专业取证、威胁情报、联网搜索和域名溯源能力；文本 AIGC 检测改为内部工具。
 - 公开案例 RAG 使用 Supabase pgvector 和 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding，为 Forensics/OSINT 提供类案参考。
 - 个人经验库使用同一 embedding 技术栈，为当前账号的 Forensics/OSINT/Challenger 提供私有方法参考。
 - LangGraph 负责阶段式 Agent 编排和收敛路由。
-- Supabase 保存任务、分析快照、日志、报告、会诊和审计记录。
+- Supabase 保存任务、分析快照、日志、报告、人机协同和审计记录。
 
-白皮书中的 FedPaRS 是研究底座与可替换检测器方向。除非仓库中出现真实 FedPaRS 训练/推理服务代码，否则文档不得声称当前运行时已经完成 FedPaRS 模型训练或直接推理。
+白皮书中的 Fed-MBPR 是研究底座与可替换检测器方向。除非仓库中出现真实 Fed-MBPR 训练/推理服务代码，否则文档不得声称当前运行时已经完成 Fed-MBPR 模型训练或直接推理。
 
 ## 2. 目录结构
 
@@ -25,6 +25,7 @@ truthseeker-api/
 │   │   ├── upload.py
 │   │   ├── tasks.py
 │   │   ├── detect.py
+│   │   ├── cases.py
 │   │   ├── consultation.py
 │   │   ├── experiences.py
 │   │   ├── report.py
@@ -50,9 +51,13 @@ truthseeker-api/
 │   │       └── llm_client.py
 │   ├── services/
 │   │   ├── builtin_cases.py
+│   │   ├── case_library.py
 │   │   ├── case_rag.py
+│   │   ├── consultation_workflow.py
 │   │   ├── experience_library.py
+│   │   ├── evidence_access.py
 │   │   ├── evidence_files.py
+│   │   ├── input_types.py
 │   │   ├── text_validation.py
 │   │   ├── auth_config.py       # 认证配置辅助（JWT 设置、公开路由白名单）
 │   │   ├── analysis_persistence.py
@@ -72,10 +77,11 @@ truthseeker-api/
 
 - `analysis_phase`: `forensics | osint | commander | complete`
 - `phase_rounds`: 每个阶段当前轮次，默认每阶段从 1 开始。
-- `phase_quality_history`: 每阶段质量评分历史，用于 0.08 阈值收敛。
-- `consultation_sessions`: 已知会诊 session 列表，包含首次自动触发、重复触发审批、跳过本次、摘要待确认和摘要确认状态。
-- `consultation_trigger_history`: Challenger 对同一目标 Agent 的质询历史，用于判断 3 轮 high 质询、置信度 `< 0.8`、相邻变化 `< 0.08`。
-- `active_consultation_session` / `pending_consultation_approval` / `confirmed_consultation_summary`: 当前会诊、待用户审批会诊和已确认摘要。
+- `phase_quality_history`: 每阶段质量评分历史，用于记录变化趋势和协同停滞判断；不直接决定 Challenger 阶段放行。
+- `collaboration_sessions`: 已知人机协同 session 列表，包含首次自动触发、重复触发审批、跳过本次、摘要待确认和摘要确认状态。
+- `collaboration_trigger_history`: Challenger 对同一目标 Agent 的质询历史，用于判断 3 轮低置信、置信度 `< 0.8`、相邻变化 `< 0.08`。
+- `active_collaboration_session` / `pending_collaboration_approval` / `confirmed_collaboration_summary`: 当前协同、待用户审批协同和已确认摘要。
+- `consultation_*`: 历史兼容字段，读取旧任务时兜底；新流程主写 `collaboration_*`。
 - `tool_results`: 电子取证和 OSINT 工具 all-settled 结果。
 - `provenance_graph`: 阶段图谱或最终审定图谱。
 
@@ -100,9 +106,7 @@ flowchart TD
   O --> C
   C -->|osint retry| O
   C -->|osint accepted| M["commander"]
-  M --> C
-  C -->|commander retry| M
-  C -->|complete| END
+  M --> END
 ```
 
 `challenger_route()` 是唯一的条件路由入口：
@@ -111,8 +115,8 @@ flowchart TD
 - `analysis_phase=forensics` 且通过：返回 `osint`
 - `analysis_phase=osint` 且需要补证：返回 `osint`
 - `analysis_phase=osint` 且通过：返回 `commander`
-- `analysis_phase=commander` 且需要修订：返回 `commander`
-- `analysis_phase=commander` 且通过：返回 `end`
+
+Commander 生成最终裁决后直接 `END`，不再回到 Challenger。旧的 Commander 后质询会造成完成后再次中断、报告按钮隐藏或重复会诊，当前代码已移除该边。
 
 ## 5. 工具与 LLM
 
@@ -144,7 +148,7 @@ VirusTotal：
 
 - Forensics 和 OSINT 都会对上传文本检材调用内部 `ai_text_detector`，不再依赖外部文本 AIGC API。
 - `internal_text_aigc.py` 负责把 `text_detection.analyze_text()` 规范化为工具矩阵结果，`provider=internal_text_detector`。
-- `text_detection.py` 融合 Kimi 文本判断、本地句长/词汇多样性/起伏度/重复短语/模板化话术统计，以及社工诱导风险特征。
+- `text_detection.py` 当前由内部工具以 `use_llm=False` 调用，使用本地句长、词汇多样性、起伏度、重复短语、模板化话术统计和社工诱导风险特征。
 - 文本检测分数只作为概率性佐证，不能单独替代样本上下文、工具证据、情报核验或人工复核。
 
 WhoisXML：
@@ -172,7 +176,7 @@ Exa：
 
 - `experience_library_entries` 保存当前账号确认入库的经验条目，字段包括来源 task/session、目标 agents、标题、适用问题、推荐方法、证据检查项、升级条件、限制和内容 hash。
 - `experience_library_rag_chunks` 保存按 `target_agent` 拆分的向量块，RLS 按 `user_id = auth.uid()` 隔离。
-- `build_experience_drafts()` 在会诊结束后调用 Commander LLM 抽取 0/1/N 条草稿，并在展示给用户前按 `user_id + target_agents` 过滤已有相似经验。
+- `build_experience_drafts()` 在人机协同结束后调用 Commander LLM 抽取 0/1/N 条草稿，并在展示给用户前按 `user_id + target_agents` 过滤已有相似经验。
 - `confirm_experience_drafts()` 在用户确认入库时再次规范化和去重，写入经验表并为每个目标 Agent 创建向量块。
 - `experience_rag_search()` 按 `user_id + target_agent` 检索，仅返回当前账号、当前 Agent 的个人经验。
 - `delete_experience()` 先删除经验向量块，再删除经验条目。
@@ -185,24 +189,25 @@ Exa：
 - `reports.verdict_payload.provenance_graph`
 - `tasks.result.provenance_graph`
 
-`analysis_states.result_snapshot` 继续保存 `forensics/osint/challenger/final_verdict`，避免前端历史回放、会诊恢复和报告生成失效。
+`analysis_states.result_snapshot` 继续保存 `forensics/osint/challenger/final_verdict`，避免前端历史回放、协同恢复和报告生成失效。
 
-会诊持久化：
+人机协同持久化：
 
-- `consultation_sessions`: 每轮会诊一行，记录状态、触发原因、目标 Agent、阶段/轮次、repeat index、上下文、关闭时间和摘要。
-- `consultation_invites`: 按任务和 session 生成专家链接，当前运行时默认 `INVITE_TTL_HOURS = 24`。邀请过期后不能提交意见；同一链接可标记为 `used`，允许专家刷新同一上下文。
-- `consultation_messages`: 保存 Commander、用户和专家消息；结构化列包括 `session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
-- `audit_logs`: 记录会诊触发、审批、跳过、结束、摘要确认、恢复研判和邀请创建。
+- `collaboration_sessions`: 每轮协同一行，记录状态、触发原因、目标 Agent、阶段/轮次、repeat index、上下文、关闭时间和摘要。
+- `collaboration_invites`: 按任务和 session 生成专家链接，当前运行时默认 `INVITE_TTL_HOURS = 24`。邀请过期后不能提交意见；同一链接可标记为 `used`，允许专家刷新同一上下文。
+- `collaboration_messages`: 保存 Commander、用户和专家消息；结构化列包括 `session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
+- `consultation_sessions` / `consultation_invites` / `consultation_messages`: 旧表保留只读兼容；迁移 `20260605_collaboration_tables.sql` 会复制历史数据到新表，不在本次删除旧表。
+- `audit_logs`: 记录协同触发、审批、跳过、结束、摘要确认、恢复研判和邀请创建。
 
-会诊恢复：
+协同恢复：
 
-- 首次满足“同一目标最近 3 轮 high 质询、本轮置信度 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `consultation_required` 并写入 active session。
-- 同一目标 Agent 在第 3 轮和第 4 轮最多触发两次会诊；第 5 轮达到阶段最大轮次时不再会诊，直接放行并把未解决 high 质询写入残留风险。会诊次数按 `triggered_by_agent` 分别统计，不能让 Forensics 的会诊占用 OSINT 的会诊额度。
-- 同一目标 Agent 再次满足门槛时，后端发送 `consultation_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
-- 用户结束会诊后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和会诊消息，生成 `summary_pending` 摘要；固定结构摘要仅作为 LLM 不可用时的兜底。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
-- 用户结束会诊后，Commander 同步抽取个人经验草稿。摘要确认不会自动入库；前端展示草稿给用户编辑、删除和单独确认。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
-- `resume=true` 时读取 `consultation_messages`、`consultation_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。
-- 报告必须保留会诊触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。
+- 前 4 轮 Challenger 置信度 `< 0.8` 必须打回目标 Agent；第 5 轮达到阶段最大轮次时直接放行，并把低置信或未解决问题写入残留风险。
+- 首次满足“同一目标最近 3 轮置信度均 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `collaboration_required` 并写入 active session。
+- 同一目标 Agent 再次满足门槛时，后端发送 `collaboration_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
+- 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；固定结构摘要仅作为 LLM 不可用时的兜底。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- 用户结束协同后，Commander 同步抽取个人经验草稿。摘要确认不会自动入库；前端展示草稿给用户编辑、删除和单独确认。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
+- `resume=true` 时读取 `collaboration_messages`、`collaboration_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。旧 `consultation_*` 数据作为历史兜底读取。
+- 报告必须保留协同触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。
 
 `reports.verdict` 仍只允许：
 
@@ -221,5 +226,5 @@ Exa：
 - 工具 all-settled 结果必须有单元测试。
 - 图谱 schema 必须有单元测试。
 - SSE 和持久化必须验证旧 key 兼容。
-- 会诊触发、首次自动暂停、重复触发审批、邀请 TTL、摘要确认、恢复和结束动作必须有 API 或服务层测试。
+- 人机协同触发、首次自动暂停、重复触发审批、邀请 TTL、摘要确认、恢复和结束动作必须有 API 或服务层测试。
 - 外部 API 测试必须 mock，不能依赖真实网络或真实密钥。

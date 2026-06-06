@@ -1,8 +1,10 @@
 # 公开案例导入阶段设计文档
 
 **日期**: 2026-06-01  
-**状态**: 待实现  
+**状态**: 历史设计稿；当前运行时已演进
 **涉及模块**: `truthseeker-api/app/services/case_library.py`, `truthseeker-api/app/api/v1/detect.py`, `truthseeker-web/hooks/useAgentStream.ts`, `truthseeker-web/components/detect/DetectConsole.tsx`
+
+> 当前源码和 `docs/APP_FLOW.md` 已改为先发送 `case_import_*` 终态，再发送 `complete`。本文件保留为历史设计记录，不能作为当前 SSE 顺序来源。
 
 ---
 

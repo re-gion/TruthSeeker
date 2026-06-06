@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 RD_BASE = "https://api.prd.realitydefender.xyz"
 SIGHTENGINE_BASE = "https://api.sightengine.com/1.0/check.json"
+SIGHTENGINE_RETRY_DELAYS = (0.4, 1.2)
 
 # 文件类型映射: input_type → (extension, supported_types)
 FILE_TYPE_MAP = {
@@ -320,23 +321,37 @@ async def analyze_with_sightengine(file_url: str) -> dict:
         )
 
     try:
+        file_data, filename = await _download_file(file_url)
         async with httpx.AsyncClient(timeout=settings.REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS) as client:
-            file_data, filename = await _download_file(file_url)
-            resp = await client.post(
-                SIGHTENGINE_BASE,
-                data={
-                    "models": "genai",
-                    "api_user": api_user,
-                    "api_secret": api_secret,
-                },
-                files={"media": (filename or "image.jpg", file_data)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if str(data.get("status", "")).lower() not in {"success", "ok"} and not data.get("type"):
-                raise RuntimeError(f"Sightengine returned non-success status: {data}")
-            shared_degradation.report_success("sightengine")
-            return _parse_sightengine_result(data)
+            last_exc: Exception | None = None
+            for attempt in range(len(SIGHTENGINE_RETRY_DELAYS) + 1):
+                try:
+                    resp = await client.post(
+                        SIGHTENGINE_BASE,
+                        data={
+                            "models": "genai",
+                            "api_user": api_user,
+                            "api_secret": api_secret,
+                        },
+                        files={"media": (filename or "image.jpg", file_data)},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if str(data.get("status", "")).lower() not in {"success", "ok"} and not data.get("type"):
+                        raise RuntimeError(f"Sightengine returned non-success status: {data}")
+                    shared_degradation.report_success("sightengine")
+                    return _parse_sightengine_result(data)
+                except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
+                    last_exc = exc
+                except httpx.HTTPStatusError as exc:
+                    last_exc = exc
+                    if exc.response.status_code < 500 and exc.response.status_code != 429:
+                        raise
+                if attempt < len(SIGHTENGINE_RETRY_DELAYS):
+                    await asyncio.sleep(SIGHTENGINE_RETRY_DELAYS[attempt])
+            if last_exc:
+                raise last_exc
+            raise RuntimeError("Sightengine request failed without an exception")
     except Exception as exc:
         logger.warning("[Sightengine] image AIGC detection degraded: %s", exc)
         shared_degradation.report_failure("sightengine", exc)

@@ -37,7 +37,7 @@ def _tool_key(result: dict[str, Any]) -> tuple[str, str]:
 
 def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_analysis: dict[str, Any]) -> dict[str, Any] | None:
     feedback = state.get("challenger_feedback") or {}
-    consultation_summary = state.get("confirmed_consultation_summary")
+    consultation_summary = state.get("confirmed_collaboration_summary") or state.get("confirmed_consultation_summary")
     feedback_phase = str(feedback.get("phase") or "")
     target_agent = str(feedback.get("target_agent") or feedback_phase or "")
     feedback_relevant = target_agent == agent or feedback_phase == agent
@@ -77,11 +77,13 @@ def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_a
         "challenger_issues": relevant_issues or issues,
         "llm_cross_validation": feedback.get("llm_cross_validation"),
         "residual_risks": feedback.get("residual_risks") or [],
+        "collaboration_summary": consultation_summary_text if summary_relevant else None,
         "consultation_summary": consultation_summary_text if summary_relevant else None,
+        "collaboration_summary_payload": consultation_summary if summary_relevant else None,
         "consultation_summary_payload": consultation_summary if summary_relevant else None,
         "previous_analysis": previous_analysis_text,
         "previous_analysis_payload": previous_analysis,
-        "instruction": "本轮只针对 Challenger 打回点和会诊摘要补强，不重复上一轮完整报告。",
+        "instruction": "本轮只针对逻辑质询 Agent 打回点和人机协同摘要补强，不重复上一轮完整报告。",
     }
 
 

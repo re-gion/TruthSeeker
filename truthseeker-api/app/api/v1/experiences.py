@@ -29,10 +29,12 @@ def _current_user_id(request: Request) -> str:
 
 
 def _sanitize_entry(row: dict[str, Any]) -> dict[str, Any]:
+    collaboration_session_id = row.get("source_collaboration_session_id") or row.get("source_session_id")
     return {
         "id": row.get("id"),
         "source_task_id": row.get("source_task_id"),
-        "source_session_id": row.get("source_session_id"),
+        "source_session_id": collaboration_session_id,
+        "source_collaboration_session_id": collaboration_session_id,
         "target_agents": row.get("target_agents") or [],
         "title": row.get("title") or "",
         "problem_pattern": row.get("problem_pattern") or "",

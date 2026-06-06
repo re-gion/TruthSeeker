@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 HEARTBEAT_INTERVAL = 20
+SESSION_TABLE = "collaboration_sessions"
+MESSAGE_TABLE = "collaboration_messages"
+LEGACY_SESSION_TABLE = "consultation_sessions"
+LEGACY_MESSAGE_TABLE = "consultation_messages"
 
 
 class DetectRequest(BaseModel):
@@ -72,7 +76,8 @@ AUDIT_ACTION_LABELS = {
     "detect_reuse_failed": "复用已完成研判失败",
     "detect_failed": "检测流程失败",
     "detect_cancelled": "检测流程取消",
-    "consultation_resume": "专家会诊恢复",
+    "consultation_resume": "人机协同恢复",
+    "collaboration_resume": "人机协同恢复",
 }
 
 
@@ -190,6 +195,8 @@ def _resume_detection_run_metadata(
         "last_detection_run_id": detection_run_id,
         "active_detection_started_at": metadata.get("active_detection_started_at") or started_at,
         "detection_run_count": _safe_int(metadata.get("detection_run_count"), 1),
+        "waiting_collaboration": False,
+        "waiting_collaboration_approval": False,
         "waiting_consultation": False,
         "waiting_consultation_approval": False,
     }
@@ -459,33 +466,37 @@ def _resolve_case_prompt(request: DetectRequest, task: dict[str, Any] | None) ->
 
 
 def _fetch_consultation_messages(task_id: str) -> list[dict[str, Any]]:
-    try:
-        resp = (
-            supabase.table("consultation_messages")
-            .select("*")
-            .eq("task_id", task_id)
-            .order("created_at", desc=False)
-            .execute()
-        )
-        return resp.data or []
-    except Exception as exc:
-        logger.warning("Failed to fetch consultation messages for %s: %s", task_id, exc)
-        return []
+    for table_name in (MESSAGE_TABLE, LEGACY_MESSAGE_TABLE):
+        try:
+            resp = (
+                supabase.table(table_name)
+                .select("*")
+                .eq("task_id", task_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            if resp.data:
+                return resp.data
+        except Exception as exc:
+            logger.warning("Failed to fetch %s for %s: %s", table_name, task_id, exc)
+    return []
 
 
 def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
-    try:
-        resp = (
-            supabase.table("consultation_sessions")
-            .select("*")
-            .eq("task_id", task_id)
-            .order("created_at", desc=False)
-            .execute()
-        )
-        return resp.data or []
-    except Exception as exc:
-        logger.warning("Failed to fetch consultation sessions for %s: %s", task_id, exc)
-        return []
+    for table_name in (SESSION_TABLE, LEGACY_SESSION_TABLE):
+        try:
+            resp = (
+                supabase.table(table_name)
+                .select("*")
+                .eq("task_id", task_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            if resp.data:
+                return resp.data
+        except Exception as exc:
+            logger.warning("Failed to fetch %s for %s: %s", table_name, task_id, exc)
+    return []
 
 
 def _latest_consultation_session(task_id: str) -> dict[str, Any] | None:
@@ -515,7 +526,7 @@ def _create_consultation_session(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        resp = supabase.table("consultation_sessions").insert(record).execute()
+        resp = supabase.table(SESSION_TABLE).insert(record).execute()
         return resp.data[0] if resp.data else record
     except Exception as exc:
         logger.warning("Failed to create consultation session for %s: %s", task_id, exc)
@@ -545,8 +556,11 @@ def _resume_payload_from_consultations(task_id: str, user_id: str) -> dict[str, 
         "resumed_by": user_id,
         "expert_messages": expert_messages,
         "consultation_sessions": sessions,
+        "collaboration_sessions": sessions,
         "latest_consultation_session": latest,
+        "latest_collaboration_session": latest,
         "confirmed_consultation_summary": confirmed_summary,
+        "confirmed_collaboration_summary": confirmed_summary,
         "resumed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -577,7 +591,7 @@ def _extract_interrupt_payload(value: Any) -> dict[str, Any]:
             return first.value
     if hasattr(value, "value") and isinstance(value.value, dict):
         return value.value
-    return {"type": "consultation_required", "reason": "检测流程请求专家会诊"}
+    return {"type": "collaboration_required", "reason": "检测流程请求人机协同"}
 
 
 async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGenerator[str, None]:
@@ -636,6 +650,12 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
         "degradation_status": {},
         "tool_results": {},
         "expert_messages": [],
+        "collaboration_resume": None,
+        "collaboration_sessions": [],
+        "collaboration_trigger_history": [],
+        "active_collaboration_session": None,
+        "pending_collaboration_approval": None,
+        "confirmed_collaboration_summary": None,
         "consultation_resume": None,
         "consultation_sessions": [],
         "consultation_trigger_history": [],
@@ -699,7 +719,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             updates = _stamp_updates_with_detection_run_id(updates, detection_run_id)
 
             await queue.put(_sse({
-                "type": "consultation_resumed",
+                "type": "collaboration_resumed",
                 "task_id": task_id,
                 "mode": "persistence_recovery",
                 "detection_run_id": detection_run_id,
@@ -725,7 +745,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             persistence.persist_update(task_id, "commander", updates)
             persistence.mark_task_completed(task_id, final_verdict_data)
             record_audit_event(
-                action="consultation_resume",
+                action="collaboration_resume",
                 task_id=task_id,
                 user_id=user_id,
                 metadata={
@@ -737,7 +757,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             await queue.put(_sse({
                 "type": "timeline_update",
                 "events": [audit_timeline_event(
-                    "consultation_resume",
+                    "collaboration_resume",
                     metadata={
                         "mode": "persistence_recovery",
                         "expert_message_count": len(expert_messages),
@@ -762,9 +782,12 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 graph_input = Command(
                     resume=resume_payload,
                     update={
+                        "collaboration_resume": resume_payload,
                         "consultation_resume": resume_payload,
                         "expert_messages": expert_messages,
+                        "collaboration_sessions": resume_payload.get("collaboration_sessions") or resume_payload.get("consultation_sessions") or [],
                         "consultation_sessions": resume_payload.get("consultation_sessions") or [],
+                        "confirmed_collaboration_summary": resume_payload.get("confirmed_collaboration_summary") or resume_payload.get("confirmed_consultation_summary"),
                         "confirmed_consultation_summary": resume_payload.get("confirmed_consultation_summary"),
                         "detection_run_id": detection_run_id,
                     },
@@ -782,7 +805,7 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                     ),
                 )
                 record_audit_event(
-                    action="consultation_resume",
+                    action="collaboration_resume",
                     task_id=task_id,
                     user_id=user_id,
                     metadata={
@@ -793,15 +816,15 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                 latest_session = resume_payload.get("latest_consultation_session")
                 if isinstance(latest_session, dict) and resume_payload.get("action") == "skip_consultation":
                     await queue.put(_sse({
-                        "type": "consultation_skipped",
+                        "type": "collaboration_skipped",
                         "task_id": task_id,
-                        "reason": "用户跳过本次重复专家会诊",
+                        "reason": "用户跳过本次重复人机协同",
                         "session": latest_session,
                         "payload": {"session": latest_session, "summary": latest_session.get("summary_payload")},
                     }))
                 elif isinstance(latest_session, dict) and resume_payload.get("action") == "resume_after_consultation":
                     await queue.put(_sse({
-                        "type": "consultation_summary_confirmed",
+                        "type": "collaboration_summary_confirmed",
                         "task_id": task_id,
                         "session": latest_session,
                         "summary": resume_payload.get("confirmed_consultation_summary"),
@@ -810,11 +833,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                             "summary": resume_payload.get("confirmed_consultation_summary"),
                         },
                     }))
-                await queue.put(_sse({"type": "consultation_resumed", "task_id": task_id}))
+                await queue.put(_sse({"type": "collaboration_resumed", "task_id": task_id}))
                 await queue.put(_sse({
                     "type": "timeline_update",
                     "events": [audit_timeline_event(
-                        "consultation_resume",
+                        "collaboration_resume",
                         metadata={
                             "expert_message_count": len(expert_messages),
                             "detection_run_id": detection_run_id,
@@ -868,16 +891,20 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
             async for chunk in compiled_graph.astream(graph_input, config=config, stream_mode="updates"):
                 if "__interrupt__" in chunk:
                     interrupt_payload = _extract_interrupt_payload(chunk["__interrupt__"])
-                    reason = str(interrupt_payload.get("reason") or "高冲突证据触发专家会诊")
-                    event_type = str(interrupt_payload.get("type") or "consultation_required")
+                    reason = str(interrupt_payload.get("reason") or "连续低置信触发人机协同")
+                    raw_event_type = str(interrupt_payload.get("type") or "collaboration_required")
+                    event_type = {
+                        "consultation_required": "collaboration_required",
+                        "consultation_approval_required": "collaboration_approval_required",
+                    }.get(raw_event_type, raw_event_type)
                     waiting_status = (
-                        "waiting_consultation_approval"
-                        if event_type == "consultation_approval_required"
-                        else "waiting_consultation"
+                        "waiting_collaboration_approval"
+                        if event_type == "collaboration_approval_required"
+                        else "waiting_collaboration"
                     )
                     session_status = (
                         "waiting_user_approval"
-                        if event_type == "consultation_approval_required"
+                        if event_type == "collaboration_approval_required"
                         else "active"
                     )
                     session = _create_consultation_session(task_id, interrupt_payload, status=session_status)
@@ -890,16 +917,19 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         "last_detection_run_id": detection_run_id,
                         "active_detection_started_at": detection_started_at,
                         "detection_run_count": _safe_int(_safe_metadata(task).get("detection_run_count"), 1),
-                        "waiting_consultation": waiting_status == "waiting_consultation",
-                        "waiting_consultation_approval": waiting_status == "waiting_consultation_approval",
+                        "waiting_collaboration": waiting_status == "waiting_collaboration",
+                        "waiting_collaboration_approval": waiting_status == "waiting_collaboration_approval",
+                        "waiting_consultation": waiting_status == "waiting_collaboration",
+                        "waiting_consultation_approval": waiting_status == "waiting_collaboration_approval",
+                        "collaboration_session_id": (session or {}).get("id"),
                         "consultation_session_id": (session or {}).get("id"),
                     }
-                    if waiting_status == "waiting_consultation":
-                        persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                    if waiting_status == "waiting_collaboration":
+                        persistence.mark_task_waiting_collaboration(task_id, reason=reason, metadata=metadata)
                     else:
-                        persistence.mark_task_waiting_consultation(task_id, reason=reason, metadata=metadata)
+                        persistence.mark_task_waiting_collaboration(task_id, reason=reason, metadata=metadata)
                         supabase.table("tasks").update({
-                            "status": "waiting_consultation_approval",
+                            "status": "waiting_collaboration_approval",
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                             "metadata": metadata,
                         }).eq("id", task_id).execute()
@@ -921,9 +951,9 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         "payload": interrupt_payload,
                         "session": session,
                     }))
-                    if event_type == "consultation_required":
+                    if event_type == "collaboration_required":
                         await queue.put(_sse({
-                            "type": "consultation_started",
+                            "type": "collaboration_started",
                             "task_id": task_id,
                             "reason": reason,
                             "payload": {**interrupt_payload, "session": session},

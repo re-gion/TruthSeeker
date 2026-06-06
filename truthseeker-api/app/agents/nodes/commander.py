@@ -24,7 +24,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
     challenger = state.get("challenger_feedback") or {}
     evidence_board = state.get("evidence_board", [])
     expert_messages = filter_human_consultation_messages(state.get("expert_messages", []))
-    confirmed_consultation_summary = state.get("confirmed_consultation_summary")
+    confirmed_consultation_summary = state.get("confirmed_collaboration_summary") or state.get("confirmed_consultation_summary")
     case_prompt = state.get("case_prompt", "")
     sample_refs = build_sample_references(state.get("evidence_files") or [])
     phase_residual_risks = list(state.get("phase_residual_risks") or [])
@@ -48,11 +48,11 @@ async def commander_node(state: TruthSeekerState) -> dict:
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
     if expert_messages:
-        log("thinking", f"纳入 {len(expert_messages)} 条专家会诊意见")
+        log("thinking", f"纳入 {len(expert_messages)} 条人机协同意见")
     if confirmed_consultation_summary:
         summary_text = confirmed_consultation_summary.get("confirmed_summary") if isinstance(confirmed_consultation_summary, dict) else None
         if summary_text:
-            log("thinking", f"纳入用户确认的会诊摘要: {summary_text[:160]}")
+            log("thinking", f"纳入用户确认的协同摘要: {summary_text[:160]}")
 
     # === 加权计算（保留数值计算的确定性） ===
     forensics_conf = forensics.get("confidence", 0.5)
@@ -152,6 +152,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         enriched_challenger = {
             **challenger,
             "expert_messages": expert_messages[:10],
+            "confirmed_collaboration_summary": confirmed_consultation_summary,
             "confirmed_consultation_summary": confirmed_consultation_summary,
         }
         llm_ruling = await commander_ruling(
@@ -203,6 +204,8 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "challenger_summary": {
             "issue_count": challenger.get("issue_count", 0),
             "quality_score": quality_score,
+            "collaboration_required": challenger.get("collaboration_required", challenger.get("consultation_required", False)),
+            "collaboration_resumed": challenger.get("collaboration_resumed", challenger.get("consultation_resumed", False)),
             "consultation_required": challenger.get("consultation_required", False),
             "consultation_resumed": challenger.get("consultation_resumed", False),
         },
@@ -216,6 +219,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "residual_risks": phase_residual_risks + (challenger.get("residual_risks") or []),
         "case_prompt": case_prompt,
         "expert_message_count": len(expert_messages),
+        "collaboration_summary": confirmed_consultation_summary,
         "consultation_summary": confirmed_consultation_summary,
         "consultation_key_quotes": (
             confirmed_consultation_summary.get("key_quotes", [])

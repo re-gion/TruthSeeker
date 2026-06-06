@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.config import settings
 from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.edges.conditions import evaluate_phase_convergence
 from app.agents.tools.llm_client import (
@@ -166,19 +167,43 @@ def _current_phase_issues(issues: list[dict[str, Any]], phase: str) -> tuple[lis
 
 
 def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
-    try:
-        resp = _execute_supabase_query(
-            lambda: (
-                supabase.table("consultation_sessions")
-                .select("*")
-                .eq("task_id", task_id)
-                .order("created_at", desc=False)
-                .execute()
+    for table_name in ("collaboration_sessions", "consultation_sessions"):
+        try:
+            resp = _execute_supabase_query(
+                lambda table_name=table_name: (
+                    supabase.table(table_name)
+                    .select("*")
+                    .eq("task_id", task_id)
+                    .order("created_at", desc=False)
+                    .execute()
+                )
             )
-        )
-        return [item for item in (resp.data or []) if isinstance(item, dict)]
-    except Exception:
-        return []
+            rows = [item for item in (resp.data or []) if isinstance(item, dict)]
+            if rows:
+                return rows
+        except Exception:
+            continue
+    return []
+
+
+def _fetch_collaboration_messages(task_id: str) -> list[dict[str, Any]]:
+    for table_name in ("collaboration_messages", "consultation_messages"):
+        try:
+            resp = _execute_supabase_query(
+                lambda table_name=table_name: (
+                    supabase.table(table_name)
+                    .select("*")
+                    .eq("task_id", task_id)
+                    .order("created_at", desc=False)
+                    .execute()
+                )
+            )
+            rows = [item for item in (resp.data or []) if isinstance(item, dict)]
+            if rows:
+                return rows
+        except Exception:
+            continue
+    return []
 
 
 def _is_transient_read_error(exc: Exception) -> bool:
@@ -206,10 +231,48 @@ def _resume_consultation_context(
     if not expert_messages and not confirmed_summary:
         return None
     return {
-        "type": "human_consultation",
+        "type": "human_collaboration",
         "expert_messages": expert_messages,
         "confirmed_summary": confirmed_summary,
     }
+
+
+def _collaboration_release_decision(
+    confirmed_summary: Any,
+    expert_messages: list[dict[str, Any]],
+    resume_payload: Any,
+) -> tuple[bool, str | None]:
+    """Return whether human collaboration explicitly allows release below threshold."""
+    texts: list[str] = []
+    if isinstance(confirmed_summary, dict):
+        for key in ("confirmed_summary", "user_confirmed_summary", "generated_summary", "summary"):
+            value = confirmed_summary.get(key)
+            if isinstance(value, str) and value.strip():
+                texts.append(value.strip())
+    elif isinstance(confirmed_summary, str) and confirmed_summary.strip():
+        texts.append(confirmed_summary.strip())
+
+    for message in expert_messages[-5:]:
+        if not isinstance(message, dict):
+            continue
+        value = message.get("message") or message.get("content") or message.get("text")
+        if isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+
+    action = resume_payload.get("action") if isinstance(resume_payload, dict) else None
+    if action == "skip_consultation":
+        return True, "用户在人机协同审批中选择跳过本次重复协同，允许带残留风险继续推进"
+
+    joined = "\n".join(texts)
+    if not joined:
+        return False, None
+    reinforce_markers = ("打回", "补强", "继续调查", "进一步核验", "继续补证", "不应放行")
+    release_markers = ("可以放行", "允许放行", "继续推进", "不要再强求", "能力上限", "工具上限", "无法获得更多证据", "带残留风险")
+    if any(marker in joined for marker in reinforce_markers):
+        return False, None
+    if any(marker in joined for marker in release_markers):
+        return True, "人机协同意见认为目标 Agent 已触及当前工具/证据能力上限，允许带残留风险放行"
+    return False, None
 
 
 def _experience_query(*, phase: str, case_prompt: str, issues: list[dict[str, Any]], llm_cross_validation: str) -> str:
@@ -230,7 +293,7 @@ def _phase_already_experience_assisted(state: TruthSeekerState, phase: str) -> b
     feedback = state.get("challenger_feedback") or {}
     if feedback.get("phase") == phase and feedback.get("experience_assisted"):
         return True
-    for item in state.get("consultation_trigger_history") or []:
+    for item in state.get("collaboration_trigger_history") or state.get("consultation_trigger_history") or []:
         if isinstance(item, dict) and item.get("phase") == phase and item.get("experience_assisted"):
             return True
     return False
@@ -299,9 +362,9 @@ def _osint_issues(osint: dict[str, Any]) -> list[dict[str, Any]]:
         issues.append(_issue("thin_graph", "图谱节点过少，实体、来源或声明不足", "medium", agent="osint"))
     if not citations:
         issues.append(_issue("missing_citations", "图谱缺少引用来源，不能支撑外部事实", "high", agent="osint"))
-    elif citation_coverage < 0.25:
-        issues.append(_issue("low_citation_coverage", f"图谱引用覆盖率偏低（{citation_coverage:.1%}）", "medium", agent="osint"))
-    if inferred_ratio > 0.65:
+    elif citation_coverage < 0.60:
+        issues.append(_issue("low_citation_coverage", f"图谱引用覆盖率偏低（{citation_coverage:.1%}，低于 60% 门槛）", "medium", agent="osint"))
+    if inferred_ratio > 0.35:
         issues.append(_issue("too_many_model_inferred_edges", f"模型推断关系占比过高（{inferred_ratio:.1%}）", "medium", agent="osint"))
     if total == 0:
         issues.append(_issue("missing_osint_tool_matrix", "情报溯源未形成工具矩阵，不能证明已等待外部工具结果", "high", agent="osint"))
@@ -345,11 +408,11 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     phase_round = int(phase_rounds.get(phase, 1))
     quality_history = dict(state.get("phase_quality_history") or {"forensics": [], "osint": [], "commander": []})
     expert_messages = list(state.get("expert_messages") or [])
-    consultation_sessions = list(state.get("consultation_sessions") or [])
-    consultation_trigger_history = list(state.get("consultation_trigger_history") or [])
-    active_consultation_session = state.get("active_consultation_session")
-    pending_consultation_approval = state.get("pending_consultation_approval")
-    confirmed_consultation_summary = state.get("confirmed_consultation_summary")
+    consultation_sessions = list(state.get("collaboration_sessions") or state.get("consultation_sessions") or [])
+    consultation_trigger_history = list(state.get("collaboration_trigger_history") or state.get("consultation_trigger_history") or [])
+    active_consultation_session = state.get("active_collaboration_session") or state.get("active_consultation_session")
+    pending_consultation_approval = state.get("pending_collaboration_approval") or state.get("pending_consultation_approval")
+    confirmed_consultation_summary = state.get("confirmed_collaboration_summary") or state.get("confirmed_consultation_summary")
     sample_refs = build_sample_references(_all_evidence_files(state))
     case_prompt = state.get("case_prompt", "")
 
@@ -375,44 +438,42 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         metadata={"phase": phase, "phase_round": phase_round},
     )
 
-    resume_payload_from_state = state.get("consultation_resume")
+    resume_payload_from_state = state.get("collaboration_resume") or state.get("consultation_resume")
     if isinstance(resume_payload_from_state, dict):
         resumed_messages = resume_payload_from_state.get("expert_messages")
         if isinstance(resumed_messages, list):
             expert_messages.extend(m for m in resumed_messages if isinstance(m, dict))
             expert_messages = filter_human_consultation_messages(expert_messages)
-        resumed_sessions = resume_payload_from_state.get("consultation_sessions")
+        resumed_sessions = resume_payload_from_state.get("collaboration_sessions") or resume_payload_from_state.get("consultation_sessions")
         if isinstance(resumed_sessions, list):
             consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
-        summary = resume_payload_from_state.get("confirmed_consultation_summary")
+        summary = resume_payload_from_state.get("confirmed_collaboration_summary") or resume_payload_from_state.get("confirmed_consultation_summary")
         if isinstance(summary, dict):
             summary.setdefault("phase", phase)
             summary.setdefault("target_agent", phase)
             confirmed_consultation_summary = summary
         if expert_messages or confirmed_consultation_summary:
-            log("thinking", "已从恢复载荷纳入专家意见/会诊摘要")
+            log("thinking", "已从恢复载荷纳入用户/专家意见与协同摘要")
 
     try:
         db_sessions = _fetch_consultation_sessions(task_id)
         if db_sessions:
             consultation_sessions = db_sessions
         known_ids = {m.get("id") for m in expert_messages if isinstance(m, dict) and m.get("id")}
-        resp = await asyncio.to_thread(
-            lambda: _execute_supabase_query(
-                lambda: supabase.table("consultation_messages").select("*").eq("task_id", task_id).order("created_at", desc=False).execute()
-            )
+        latest_messages = latest_human_consultation_messages(
+            await asyncio.to_thread(lambda: _fetch_collaboration_messages(task_id)),
+            consultation_sessions,
         )
-        latest_messages = latest_human_consultation_messages(resp.data or [], consultation_sessions)
         new_messages = [m for m in latest_messages if m.get("id") not in known_ids]
         if new_messages:
             expert_messages.extend(new_messages)
             expert_messages = filter_human_consultation_messages(expert_messages)
-            log("thinking", f"纳入 {len(new_messages)} 条新增专家意见")
+            log("thinking", f"纳入 {len(new_messages)} 条新增用户/专家协同意见")
     except Exception as exc:
         if expert_messages or confirmed_consultation_summary:
-            log("action", f"读取专家意见补充失败，已使用恢复载荷继续质询: {type(exc).__name__}")
+            log("action", f"读取协同意见补充失败，已使用恢复载荷继续质询: {type(exc).__name__}")
         else:
-            log("action", f"读取专家意见失败，继续自动质询: {type(exc).__name__}")
+            log("action", f"读取协同意见失败，继续自动质询: {type(exc).__name__}")
 
     forensics = state.get("forensics_result") or {}
     osint = state.get("osint_result") or {}
@@ -510,7 +571,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         log("thinking", f"忽略 {len(cross_phase_issues)} 个跨阶段质询点，当前仅审查 {phase} 阶段")
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
-    confidence = _score_issues(issues_found, base=model_confidence)
+    # The LLM confidence is already a review score. Deterministic issues cap it,
+    # rather than subtracting the same issue twice.
+    confidence = min(model_confidence, _score_issues(issues_found, base=1.0))
     confidence = _apply_evidence_floor(
         confidence,
         _evidence_confidence_floor(forensics, osint, phase),
@@ -531,28 +594,58 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     )
     maxed = bool(convergence.get("force_max_rounds"))
     phase_stable = bool(convergence.get("is_stable"))
-    first_round_high_confidence_pass = confidence > 0.8 and not high and not model_requires_more_evidence
-    requires_more_evidence = not maxed and not first_round_high_confidence_pass and (
-        model_requires_more_evidence
-        or (bool(high) and not phase_stable)
+    satisfaction_threshold = float(settings.CHALLENGER_SATISFACTION_THRESHOLD)
+    low_confidence = confidence < satisfaction_threshold
+    blocking_issues = bool(high) or model_requires_more_evidence
+    collaboration_release, collaboration_release_reason = _collaboration_release_decision(
+        confirmed_consultation_summary,
+        expert_messages,
+        resume_payload_from_state,
     )
+    threshold_release = not low_confidence and not blocking_issues
+    max_rounds_release = bool(maxed)
+    requires_more_evidence = not maxed and not threshold_release and not collaboration_release
     residual_risks: list[dict[str, Any]] = []
-    if bool(high) and maxed:
+    if maxed and (issues_found or low_confidence):
+        maxed_issues = issues_found or [
+            _issue(
+                "low_confidence_max_rounds",
+                f"逻辑质询置信度 {confidence:.1%} 仍低于 {satisfaction_threshold:.0%}，但阶段达到第 {max_rounds} 轮上限",
+                "medium",
+                agent=phase,
+            )
+        ]
         residual_risks = [
             {
                 "phase": phase,
                 "issue": issue,
-                "reason": "阶段达到最大轮次，继续推进并写入残留风险",
+                "reason": "轮次上限放行：阶段达到最大轮次，继续推进并写入残留风险",
                 "timestamp": _now(),
             }
-            for issue in high
+            for issue in maxed_issues
         ]
     if model_residual_risks:
         residual_risks.extend(model_residual_risks)
+    if collaboration_release and (low_confidence or issues_found):
+        residual_risks.append({
+            "phase": phase,
+            "issue": {
+                "type": "collaboration_release_below_threshold",
+                "description": f"人机协同后仍有低置信或未完全解决问题，置信度 {confidence:.1%}",
+            },
+            "reason": collaboration_release_reason or "人机协同意见允许放行",
+            "timestamp": _now(),
+        })
 
-    if phase_stable and not high:
+    if max_rounds_release:
+        log("challenge", f"{phase} 阶段达到第 {max_rounds} 轮上限，低置信或未解决问题将作为残留风险放行")
+    elif collaboration_release:
+        log("action", collaboration_release_reason or "人机协同意见允许带残留风险放行")
+    elif requires_more_evidence and low_confidence:
+        log("challenge", f"置信度 {confidence:.1%} 低于 {satisfaction_threshold:.0%} 门槛，打回 {phase} 阶段补强")
+    elif phase_stable and not high:
         log("action", f"质量变化 {delta:.3f} 小于阈值 {threshold:.3f}，置信度 {confidence:.1%}，阶段收敛")
-    elif first_round_high_confidence_pass:
+    elif threshold_release:
         log("action", f"置信度 {confidence:.1%} 超过放行阈值且无阻断高危问题，阶段继续推进")
     elif requires_more_evidence:
         log("challenge", f"模型建议或硬门槛要求补证，打回 {phase} 阶段重审")
@@ -595,7 +688,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "issues": issues_found,
         "timestamp": _now(),
     }
-    if high or requires_more_evidence:
+    if issues_found or requires_more_evidence or low_confidence:
         consultation_trigger_history.append(challenge_record)
 
     db_sessions = _fetch_consultation_sessions(task_id)
@@ -649,7 +742,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     consultation_resumed = False
     consultation_resume_payload = None
     if consultation_required and interrupt is not None:
-        event_type = str(consultation_trigger.get("event_type") or "consultation_required")
+        event_type = str(consultation_trigger.get("event_type") or "collaboration_required")
         context_payload = build_consultation_context(
             task_id=task_id,
             case_prompt=case_prompt,
@@ -664,7 +757,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             case_prompt=case_prompt,
             sample_refs=sample_refs,
         )
-        log("thinking", "Commander 主持已整理会诊需要帮助字段")
+        log("thinking", "Commander 主持已整理协同需要帮助字段")
         payload = {
             "type": event_type,
             "task_id": task_id,
@@ -673,13 +766,13 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "target_agent": consultation_trigger.get("target_agent"),
             "repeat_index": consultation_trigger.get("repeat_index"),
             "requires_user_approval": consultation_trigger.get("requires_user_approval", False),
-            "reason": consultation_trigger.get("reason") or (high[0].get("description") if high else "连续高质询触发会诊"),
-            "issues": high,
+            "reason": consultation_trigger.get("reason") or (issues_found[0].get("description") if issues_found else "连续低置信触发人机协同"),
+            "issues": issues_found,
             "case_prompt": case_prompt,
             "context": context_payload,
         }
-        pending_consultation_approval = payload if event_type == "consultation_approval_required" else None
-        active_consultation_session = payload if event_type == "consultation_required" else None
+        pending_consultation_approval = payload if event_type == "collaboration_approval_required" else None
+        active_consultation_session = payload if event_type == "collaboration_required" else None
         consultation_resume_payload = interrupt(payload)
         consultation_resumed = True
         if isinstance(consultation_resume_payload, dict):
@@ -687,18 +780,18 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             if isinstance(resumed_messages, list):
                 expert_messages.extend(m for m in resumed_messages if isinstance(m, dict))
                 expert_messages = filter_human_consultation_messages(expert_messages)
-            resumed_sessions = consultation_resume_payload.get("consultation_sessions")
+            resumed_sessions = consultation_resume_payload.get("collaboration_sessions") or consultation_resume_payload.get("consultation_sessions")
             if isinstance(resumed_sessions, list):
                 consultation_sessions = [m for m in resumed_sessions if isinstance(m, dict)]
-            summary = consultation_resume_payload.get("confirmed_consultation_summary")
+            summary = consultation_resume_payload.get("confirmed_collaboration_summary") or consultation_resume_payload.get("confirmed_consultation_summary")
             if isinstance(summary, dict):
                 summary.setdefault("phase", phase)
                 summary.setdefault("target_agent", phase)
                 confirmed_consultation_summary = summary
                 residual_risks.append({
                     "phase": phase,
-                    "issue": {"type": "consultation_summary", "description": summary.get("confirmed_summary", "")},
-                    "reason": "用户确认的会诊摘要已回注证据板",
+                    "issue": {"type": "collaboration_summary", "description": summary.get("confirmed_summary", "")},
+                    "reason": "用户确认的协同摘要已回注证据板",
                     "timestamp": _now(),
                 })
             active_consultation_session = None
@@ -706,7 +799,9 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             if consultation_resume_payload.get("action") == "skip_consultation":
                 requires_more_evidence = False
                 target_agent = None
-            log("thinking", f"会诊已恢复，恢复指令: {consultation_resume_payload.get('action', 'resume')}")
+                collaboration_release = True
+                collaboration_release_reason = "用户在人机协同审批中选择跳过本次重复协同，允许带残留风险继续推进"
+            log("thinking", f"协同已恢复，恢复指令: {consultation_resume_payload.get('action', 'resume')}")
     elif consultation_required:
         log("action", "当前 LangGraph 运行时不可用 interrupt，继续自动重审/推进")
 
@@ -718,6 +813,31 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             "timestamp": _now(),
         })
 
+    if max_rounds_release:
+        next_action = "max_rounds_release"
+        action_reason = (
+            f"第 {phase_round} 轮达到 max_rounds={max_rounds}，按轮次上限放行；"
+            f"置信度 {confidence:.1%}，残留风险已写入报告。"
+        )
+    elif collaboration_release and not requires_more_evidence:
+        next_action = "release_after_collaboration"
+        action_reason = collaboration_release_reason or "人机协同意见允许带残留风险放行。"
+    elif requires_more_evidence:
+        next_action = "return_for_reinforcement"
+        reasons: list[str] = []
+        if low_confidence:
+            reasons.append(f"置信度 {confidence:.1%} 低于 {satisfaction_threshold:.0%} 阈值")
+        if model_requires_more_evidence:
+            reasons.append("模型审查要求补充证据")
+        if high:
+            reasons.append(f"仍有 {len(high)} 个高严重度问题")
+        if not reasons and issues_found:
+            reasons.append("仍有未解决质询问题")
+        action_reason = "；".join(reasons) + f"，打回 {phase} Agent 针对性补强。"
+    else:
+        next_action = "release"
+        action_reason = f"置信度 {confidence:.1%} 已达到 {satisfaction_threshold:.0%} 阈值，且未发现阻断性问题，放行进入下一阶段。"
+
     feedback = {
         "round": round_num,
         "phase": phase,
@@ -726,6 +846,8 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "issues_found": issues_found,
         "requires_more_evidence": requires_more_evidence,
         "target_agent": target_agent,
+        "next_action": next_action,
+        "action_reason": action_reason,
         "issue_count": len(issues_found),
         "high_severity_count": len(high),
         "medium_severity_count": len(medium),
@@ -737,9 +859,12 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "model_target_agent": model_target_agent,
         "quality_delta": delta,
         "convergence_threshold": threshold,
+        "satisfaction_threshold": satisfaction_threshold,
         "convergence_stable": phase_stable,
         "convergence_reason": convergence.get("reason"),
         "maxed_rounds": maxed,
+        "max_rounds_release": max_rounds_release,
+        "low_confidence": low_confidence,
         "residual_risks": residual_risks,
         "llm_cross_validation": llm_cross_validation,
         "experience_guided": bool(challenger_experience.get("matches")),
@@ -747,17 +872,28 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "suppressed_issue_count": len(suppressed_issues),
         "suppressed_issues": suppressed_issues,
         "consultation_required": consultation_required,
+        "collaboration_required": consultation_required,
         "experience_assisted": bool(experience_assist and experience_assist.get("matches")),
         "experience_rag": experience_assist,
         "consultation_resumed": consultation_resumed,
+        "collaboration_resumed": consultation_resumed,
         "consultation_resume_payload": consultation_resume_payload if isinstance(consultation_resume_payload, dict) else None,
         "consultation_event_type": consultation_trigger.get("event_type") if consultation_required else None,
+        "collaboration_event_type": consultation_trigger.get("event_type") if consultation_required else None,
         "consultation_trigger": consultation_trigger,
+        "collaboration_trigger": consultation_trigger,
         "consultation_sessions": consultation_sessions,
+        "collaboration_sessions": consultation_sessions,
         "consultation_trigger_history": consultation_trigger_history,
+        "collaboration_trigger_history": consultation_trigger_history,
         "active_consultation_session": active_consultation_session,
+        "active_collaboration_session": active_consultation_session,
         "pending_consultation_approval": pending_consultation_approval,
+        "pending_collaboration_approval": pending_consultation_approval,
         "confirmed_consultation_summary": confirmed_consultation_summary,
+        "confirmed_collaboration_summary": confirmed_consultation_summary,
+        "collaboration_release": collaboration_release,
+        "collaboration_release_reason": collaboration_release_reason,
         "timestamp": _now(),
     }
 
@@ -785,10 +921,15 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "phase_quality_history": quality_history,
         "phase_residual_risks": residual_risks,
         "consultation_sessions": consultation_sessions,
+        "collaboration_sessions": consultation_sessions,
         "consultation_trigger_history": consultation_trigger_history,
+        "collaboration_trigger_history": consultation_trigger_history,
         "active_consultation_session": active_consultation_session,
+        "active_collaboration_session": active_consultation_session,
         "pending_consultation_approval": pending_consultation_approval,
+        "pending_collaboration_approval": pending_consultation_approval,
         "confirmed_consultation_summary": confirmed_consultation_summary,
+        "confirmed_collaboration_summary": confirmed_consultation_summary,
         "challenger_feedback": feedback,
         "challenges": challenges,
         "logs": logs,
@@ -799,7 +940,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             source_kind="agent",
             from_phase=phase,
             target_agent=target_agent or model_target_agent or phase,
-            content=f"Challenger 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}",
+            content=f"逻辑质询Agent 质询 {phase}: 第 {phase_round} 轮，置信度 {confidence:.1%}，下一步 {next_action}",
             phase=phase,
             phase_round=phase_round,
             quality_score=quality_score,
@@ -807,9 +948,14 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             satisfaction=confidence,
             quality_delta=delta,
             requires_more_evidence=requires_more_evidence,
+            next_action=next_action,
+            action_reason=action_reason,
             model_requires_more_evidence=model_requires_more_evidence,
             model_target_agent=model_target_agent,
             maxed_rounds=maxed,
+            max_rounds_release=max_rounds_release,
+            collaboration_required=consultation_required,
+            collaboration_event_type=consultation_trigger.get("event_type") if consultation_required else None,
             consultation_event_type=consultation_trigger.get("event_type") if consultation_required else None,
         )],
         "expert_messages": expert_messages,

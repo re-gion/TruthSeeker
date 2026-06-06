@@ -37,7 +37,7 @@ function DebateArchitectureDiagram() {
 
                 <div className="absolute right-[5%] top-[15%] z-20 w-[92px] rounded-xl border border-black/10 bg-white/90 px-2 py-2 text-center shadow-sm">
                     <div className="text-[11px] font-bold text-black/80">人机协同</div>
-                    <div className="mt-1 text-[10px] font-medium text-black/55">专家会诊</div>
+                    <div className="mt-1 text-[10px] font-medium text-black/55">协同决策</div>
                 </div>
 
                 <div className="absolute right-[5%] top-[40%] z-20 w-[92px] rounded-xl border border-black/10 bg-white/90 px-2 py-2 text-center shadow-sm">

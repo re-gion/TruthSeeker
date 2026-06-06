@@ -2,15 +2,16 @@
 # TruthSeeker分阶段实施计划
 
 ## 文档版本信息
-- **版本**: v2.1
-- **最后更新**: 2026-04-28
-- **验证状态**: 新后端重建计划已写入，具体测试结果以实现阶段回填为准
+- **版本**: v2.2
+- **最后更新**: 2026-06-06
+- **当前定位**: 历史实施计划与路线回顾。当前可运行行为以源码、`task.md`、`docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md` 和 `docs/TECH_STACK.md` 为准。
+- **验证状态**: 2026-04-28 后端重建计划中的主体能力已在后续实现中落地；公开案例库 RAG、个人经验库、协同表迁移、AIGC 字段迁移和幂等检测流属于后续增量。
 
 ## 2026-04-28 后端重建顺序
 
 1. 先同步产品、后端、前端、技术栈、白皮书和任务文档。
 2. 扩展 `TruthSeekerState`，引入 `analysis_phase`、`phase_rounds`、`phase_quality_history` 和 `provenance_graph`。
-3. 重写 LangGraph 路由为阶段式收敛：`forensics -> challenger -> osint -> challenger -> commander -> challenger -> END`。
+3. 重写 LangGraph 路由为阶段式收敛：当前代码为 `forensics -> challenger -> osint -> challenger -> commander -> END`，Commander 完成后不再回到 Challenger。
 4. 将 Kimi 默认模型切换为 `kimi-k2.5`，禁用 thinking，并补充多模态 signed URL 输入适配。
 5. 电子取证 Agent 采用工具 all-settled：Reality Defender、VirusTotal 必须全部返回结构化结果。
 6. OSINT Agent 接入 Exa API，只发送脱敏线索，并生成混合 provenance graph。

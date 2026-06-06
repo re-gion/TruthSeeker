@@ -57,7 +57,7 @@ export function LandingFooter() {
                     </p>
                     <div className="flex gap-4">
                         <span className="text-xs text-[#6366F1] font-mono opacity-80 uppercase px-2 py-1 rounded bg-[#6366F1]/10">
-                            #FedPaRS
+                            #Fed-MBPR
                         </span>
                         <span className="text-xs dark:text-[#D4FF12] text-emerald-600 font-mono opacity-80 uppercase px-2 py-1 rounded dark:bg-[#D4FF12]/10 bg-emerald-600/10">
                             #LangGraph

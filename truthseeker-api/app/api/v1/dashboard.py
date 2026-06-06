@@ -481,22 +481,22 @@ def _build_flow_sankey(tasks: list[dict[str, Any]], reports: list[dict[str, Any]
 
 def _build_capability_metrics(
     reports: list[dict[str, Any]],
-    consultation_invites: list[dict[str, Any]],
-    consultation_sessions: list[dict[str, Any]],
+    collaboration_invites: list[dict[str, Any]],
+    collaboration_sessions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     report_task_ids = {
         _read_string(report.get("task_id"))
         for report in reports
         if _read_string(report.get("task_id"))
     }
-    consultation_task_ids = {
+    collaboration_task_ids = {
         _read_string(session.get("task_id"))
-        for session in consultation_sessions
+        for session in collaboration_sessions
         if _read_string(session.get("task_id"))
     }
-    consultation_task_ids.update({
+    collaboration_task_ids.update({
         _read_string(invite.get("task_id"))
-        for invite in consultation_invites
+        for invite in collaboration_invites
         if _read_string(invite.get("task_id"))
     })
     return [
@@ -507,10 +507,10 @@ def _build_capability_metrics(
             "helper": "已入库的鉴定报告总量",
         },
         {
-            "id": "consultation-triggered",
-            "label": "会诊触发任务",
-            "value": len(consultation_task_ids),
-            "helper": "触发专家会诊的唯一任务数",
+            "id": "collaboration-triggered",
+            "label": "协同触发任务",
+            "value": len(collaboration_task_ids),
+            "helper": "触发人机协同的唯一任务数",
         },
         {
             "id": "reports-covered",
@@ -561,24 +561,49 @@ async def get_dashboard_overview(request: Request):
     )
     reports = [report for report in reports if _read_string(report.get("task_id")) in task_ids]
 
-    consultation_invites = _select_rows(
+    # Primary: new collaboration_* tables
+    collaboration_invites = _select_rows(
+        "collaboration_invites",
+        "task_id,status,created_at,expires_at",
+        data_warnings,
+    )
+    collaboration_invites = [
+        invite for invite in collaboration_invites
+        if _read_string(invite.get("task_id")) in task_ids
+    ]
+    collaboration_sessions = _select_rows(
+        "collaboration_sessions",
+        "task_id,status,created_at,closed_at",
+        data_warnings,
+    )
+    collaboration_sessions = [
+        session for session in collaboration_sessions
+        if _read_string(session.get("task_id")) in task_ids
+    ]
+
+    # Legacy fallback: merge consultation_* rows whose task_id is absent from collaboration_*
+    collab_invite_task_ids = {_read_string(r.get("task_id")) for r in collaboration_invites}
+    collab_session_task_ids = {_read_string(r.get("task_id")) for r in collaboration_sessions}
+
+    legacy_invites = _select_rows(
         "consultation_invites",
         "task_id,status,created_at,expires_at",
         data_warnings,
     )
-    consultation_invites = [
-        invite for invite in consultation_invites
-        if _read_string(invite.get("task_id")) in task_ids
-    ]
-    consultation_sessions = _select_rows(
+    for invite in legacy_invites:
+        tid = _read_string(invite.get("task_id"))
+        if tid in task_ids and tid and tid not in collab_invite_task_ids:
+            collaboration_invites.append(invite)
+
+    legacy_sessions = _select_rows(
         "consultation_sessions",
         "task_id,status,created_at,closed_at",
         data_warnings,
     )
-    consultation_sessions = [
-        session for session in consultation_sessions
-        if _read_string(session.get("task_id")) in task_ids
-    ]
+    for session in legacy_sessions:
+        tid = _read_string(session.get("task_id"))
+        if tid in task_ids and tid and tid not in collab_session_task_ids:
+            collaboration_sessions.append(session)
 
     threat_snapshots = _build_threat_snapshots(tasks, reports)
     shanghai_today = _format_zoned_date(generated_at)
@@ -610,6 +635,6 @@ async def get_dashboard_overview(request: Request):
         "verdict_breakdown": _build_distribution_items([_display_verdict(report.get("verdict")) for report in reports]),
         "evidence_mix": _build_evidence_mix(reports),
         "flow_sankey": _build_flow_sankey(tasks, reports),
-        "capability_metrics": _build_capability_metrics(reports, consultation_invites, consultation_sessions),
+        "capability_metrics": _build_capability_metrics(reports, collaboration_invites, collaboration_sessions),
         "data_warnings": data_warnings,
     }

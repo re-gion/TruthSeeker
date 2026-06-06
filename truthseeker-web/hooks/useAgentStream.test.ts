@@ -208,6 +208,33 @@ describe("mapAgentHistoryToStreamState", () => {
 })
 
 describe("consultation event helpers", () => {
+  it("normalizes canonical collaboration SSE payloads and legacy consultation payloads", () => {
+    const canonical = normalizeConsultationEvent({
+      type: "collaboration_required",
+      task_id: "task-1",
+      reason: "低置信停滞",
+      payload: {
+        context: { help_needed: ["判断是否达到工具能力上限"] },
+        session: { id: "session-1" },
+      },
+    })
+
+    const legacy = normalizeConsultationEvent({
+      type: "consultation_required",
+      task_id: "task-1",
+      reason: "低置信停滞",
+      payload: {
+        context: { help_needed: ["判断是否达到工具能力上限"] },
+        session: { id: "session-1" },
+      },
+    })
+
+    expect(canonical.status).toBe("started")
+    expect(canonical.context.helpNeeded).toEqual(["判断是否达到工具能力上限"])
+    expect(legacy.status).toBe(canonical.status)
+    expect(legacy.context.helpNeeded).toEqual(canonical.context.helpNeeded)
+  })
+
   it("normalizes the new consultation SSE payload into a user-facing context", () => {
     const state = normalizeConsultationEvent({
       type: "consultation_approval_required",

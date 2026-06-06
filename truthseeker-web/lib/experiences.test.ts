@@ -22,7 +22,7 @@ describe("personal experience library mapping", () => {
           problem_pattern: "域名工具降级时缺少注册人与 DNS 历史。",
           recommended_method: "使用搜索结果和威胁情报交叉补证。",
           evidence_to_check: ["DNS 历史"],
-          when_to_escalate: "外部来源全部不可用时再会诊。",
+          when_to_escalate: "外部来源全部不可用时再协同。",
           limitations: "搜索结果只能作为线索。",
           created_at: "2026-06-04T00:00:00+00:00",
           updated_at: "2026-06-04T00:00:00+00:00",

@@ -28,6 +28,8 @@ The frontend defaults to `http://localhost:3000` and expects the backend at `NEX
 - `components/detect/` - detection console and evidence timeline.
 - `components/dashboard/` - data dashboard charts and view.
 - `components/collaboration/` - expert consultation and presence UI.
+- `components/cases/` - public case library list/detail UI.
+- `components/experiences/` - personal experience library list/detail UI.
 - `hooks/` - client interaction, realtime, and animation hooks.
 - `lib/` - shared mapping, Supabase clients, reports, and utilities.
 - `public/` - icons, images, and local fonts.
@@ -45,10 +47,13 @@ The frontend defaults to `http://localhost:3000` and expects the backend at `NEX
 - Preserve the "digital forensic laboratory" visual language from `docs/FRONTEND_GUIDELINES.md`: dark default theme, Indigo AI, Cyber Lime accents, Liquid Glass surfaces, Bento layouts, purposeful motion, and accessible contrast.
 - For 3D work, keep `@react-three/fiber` and `@react-three/drei` versions compatible with React 19; verify visually if a dev server can run.
 - Do not place secrets in client code. Only `NEXT_PUBLIC_*` variables may be read by browser code.
+- Public pages currently include `/report/*` and `/cases/*`; authenticated pages include detection, dashboard, upload, and personal experience library.
+- Prefer canonical `/api/v1/collaboration` wording and events in new UI. Keep legacy consultation event handling only for old task history.
+- Personal feature naming is “个人经验库”; do not revert to “历史经验库”.
 
 ## Testing And Verification
 
 - For TypeScript or component changes, run `npm run lint` and `npm run typecheck`.
-- For dashboard or pure mapping logic, run `npm run test:unit`.
+- For dashboard, report, cases, collaboration, stream mapping, or pure mapping logic, run `npm run test:unit` when feasible.
 - For layout, animation, or responsive UI changes, run the dev server and inspect the affected page in a browser when feasible.
 - For production-impacting changes, run `npm run build` before completion.

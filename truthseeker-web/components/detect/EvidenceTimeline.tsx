@@ -53,6 +53,13 @@ const LOG_TYPE_STYLES: Record<string, { border: string; bg: string }> = {
   consultation_summary_confirmed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
   consultation_skipped: { border: "border-slate-400/25", bg: "bg-slate-400/[0.05]" },
   consultation_resumed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
+  collaboration_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
+  collaboration_approval_required: { border: "border-[#F59E0B]/40", bg: "bg-[#F59E0B]/[0.06]" },
+  collaboration_started: { border: "border-[#06B6D4]/35", bg: "bg-[#06B6D4]/[0.06]" },
+  collaboration_summary_pending: { border: "border-[#D4FF12]/35", bg: "bg-[#D4FF12]/[0.05]" },
+  collaboration_summary_confirmed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
+  collaboration_skipped: { border: "border-slate-400/25", bg: "bg-slate-400/[0.05]" },
+  collaboration_resumed: { border: "border-[#10B981]/35", bg: "bg-[#10B981]/[0.06]" },
 }
 
 function timeValue(entry: TimelineEntry) {
@@ -102,7 +109,7 @@ export function EvidenceTimeline({ logs, isComplete }: EvidenceTimelineProps) {
         const cfg = AGENT_CONFIG[entry.agent] || AGENT_CONFIG[entry.sourceKind || ""] || AGENT_CONFIG.forensics
         const typeStyle = LOG_TYPE_STYLES[entry.type] || LOG_TYPE_STYLES.action
         const isChallenge = entry.type === "challenge" || entry.type === "phase_review"
-        const isConsultation = entry.type.startsWith("consultation_")
+        const isConsultation = entry.type.startsWith("consultation_") || entry.type.startsWith("collaboration_")
         const isAudit = entry.type === "audit" || entry.sourceKind === "audit"
         const isSupplement = isSupplementEntry(entry)
         const roundSeparator = roundSeparators.get(index)

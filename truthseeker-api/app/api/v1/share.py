@@ -59,6 +59,15 @@ def _create_report_from_completed_task(task_id: str, share_token: str) -> dict:
         resp = supabase.table("reports").insert(report_row).execute()
         return resp.data[0] if resp.data else report_row
     except Exception as exc:
+        # The detection persistence worker can insert the report between
+        # _fetch_report() and this insert. Re-read before surfacing an error so
+        # the first user click does not fail while the second click succeeds.
+        existing_report = _fetch_report(task_id)
+        if existing_report:
+            if not existing_report.get("share_token"):
+                supabase.table("reports").update({"share_token": share_token}).eq("id", existing_report["id"]).execute()
+                existing_report["share_token"] = share_token
+            return existing_report
         logger.error("Failed to create report row for share task %s: %s", task_id, exc)
         raise HTTPException(status_code=500, detail="报告分享准备失败")
 

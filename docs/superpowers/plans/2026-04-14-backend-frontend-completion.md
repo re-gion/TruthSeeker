@@ -1,5 +1,7 @@
 # TruthSeeker 批次1+2 补全实施计划
 
+> **状态：历史执行计划。** 本文件保留当时的任务拆解与代码示例，其中 500MB、`MAX_ROUNDS=3`、Realtime 广播等口径已经过时；当前事实以源码、根 `README.md` 和 `docs/` 核心文档为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 补全数据库Schema/RLS、文件上传端点、JWT鉴权、前端真实文件上传、Dashboard真实数据接入、后端Supabase Realtime广播。

@@ -1,5 +1,21 @@
 # 各大检测API讲解
 
+> 文档状态：外部服务调研资料，更新时间 2026-06-06。外部厂商能力、配额和接口可能变化；TruthSeeker 当前真实接入边界以 `truthseeker-api/app/agents/tools/`、`truthseeker-api/app/config.py` 和 `docs/TECH_STACK.md` 为准。
+
+## TruthSeeker 当前接入速查
+
+| 能力 | 当前实现 | 主要用途 | 失败处理 |
+| --- | --- | --- | --- |
+| 图片 AIGC 检测 | Sightengine `genai` | 图片生成式 AI 概率 | 可按配置回退 Reality Defender；结构化降级 |
+| 音视频鉴伪 | Reality Defender | 合成、篡改、语音/视频风险 | 结构化降级，不把未取得结果写成通过 |
+| 文件/URL/域名威胁情报 | VirusTotal | 哈希、URL、域名信誉与扫描统计 | queued 时回查历史 URL 报告；失败结构化记录 |
+| 联网开源情报 | Exa | 脱敏线索搜索 | 仅发送公开实体、域名、URL、哈希和短声明 |
+| 域名注册与当前解析 | WhoisXML | WHOIS、DNS Lookup、IP Geolocation | 子产品 403 时可记录 `partial` |
+| 文本 AIGC 概率线索 | 内部 `ai_text_detector` | 多信号文本 AIGC 分析 | 不依赖外部文本检测 API，不作为单独定性证据 |
+| 公开案例/个人经验 RAG | Supabase pgvector + SiliconFlow embedding | 类案参考与账号私有方法参考 | 不直接改变当前案件分数 |
+
+Reality Defender 在当前系统中主要用于音频和视频；图片默认走 Sightengine，文本走内部检测器。下文的厂商通用能力介绍不等于 TruthSeeker 已启用全部能力。
+
 ## 视听鉴伪——Reality Defender API
 
 **Reality Defender API** 是一个企业级的**多模态恶意 AIGC 和 AI 生成内容检测接口**。它的核心价值在于帮助开发者、安全团队、金融机构或通讯平台在真实生产环境中，防御由 AI 生成的合成身份欺诈、语音克隆诈骗以及虚假信息传播。

@@ -79,8 +79,14 @@ class TruthSeekerState(TypedDict):
     degradation_status: Annotated[dict, merge_dicts]    # {"reality_defender": "ok"|"degraded"|"failed", ...}
     tool_results: Annotated[dict, merge_dicts]          # {"forensics": [...], "osint": [...]}
 
-    # 专家会诊消息
+    # 人机协同消息
     expert_messages: list[dict]  # [{role, content, timestamp}, ...]
+    collaboration_resume: Optional[dict]
+    collaboration_sessions: list[dict]
+    collaboration_trigger_history: list[dict]
+    active_collaboration_session: Optional[dict]
+    pending_collaboration_approval: Optional[dict]
+    confirmed_collaboration_summary: Optional[dict]
     consultation_resume: Optional[dict]
     consultation_sessions: list[dict]
     consultation_trigger_history: list[dict]
