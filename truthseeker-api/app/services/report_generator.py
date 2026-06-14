@@ -49,7 +49,19 @@ async def _fetch_task_data(task_id: str) -> dict:
 
 def _is_transient_read_error(exc: Exception) -> bool:
     text = f"{type(exc).__name__}: {exc}".lower()
-    return any(marker in text for marker in ("readerror", "read error", "timeout", "connection reset", "server disconnected"))
+    return any(
+        marker in text
+        for marker in (
+            "readerror",
+            "read error",
+            "timeout",
+            "connection reset",
+            "server disconnected",
+            "unexpected_eof_while_reading",
+            "eof occurred in violation of protocol",
+            "ssl",
+        )
+    )
 
 
 def _execute_supabase_query(factory, *, attempts: int = 3):

@@ -18,7 +18,7 @@ export function TechStack() {
         },
         {
             name: "Agent与检测工具",
-            tools: ["Kimi-K2.5", "Sightengine", "Reality Defender", "VirusTotal", "WhoisXML"]
+            tools: ["Kimi-K2.5", "Fed-MBPR检测模型","Reality Defender", "VirusTotal", "WhoisXML"]
         }
     ]
 

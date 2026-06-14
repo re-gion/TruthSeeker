@@ -6,12 +6,18 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, Loader2, Trash2 } from "lucide-react"
 import { deleteExperience, getExperienceDetail, type ExperienceEntry } from "@/lib/experiences"
 import { getAuthToken } from "@/lib/auth"
+import { ExperienceMarkdown } from "./ExperienceMarkdown"
 
 function agentName(agent: string) {
   if (agent === "forensics") return "取证 Agent"
   if (agent === "osint") return "溯源 Agent"
   if (agent === "challenger") return "质询 Agent"
   return agent
+}
+
+function evidenceMarkdown(items: string[]) {
+  if (!items.length) return "未记录"
+  return items.map((item) => `- ${item.replace(/\n/g, "\n  ")}`).join("\n")
 }
 
 export function ExperienceDetailClient({ entryId }: { entryId: string }) {
@@ -114,22 +120,30 @@ export function ExperienceDetailClient({ entryId }: { entryId: string }) {
       <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
           <h2 className="text-sm font-semibold text-[#67E8F9]">适用问题</h2>
-          <p className="mt-3 text-sm leading-7 text-white/68">{detail.problem_pattern}</p>
+          <ExperienceMarkdown className="mt-3 text-sm leading-7 text-white/68">
+            {detail.problem_pattern || "未记录"}
+          </ExperienceMarkdown>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
           <h2 className="text-sm font-semibold text-[#D4FF12]">推荐方法</h2>
-          <p className="mt-3 text-sm leading-7 text-white/68">{detail.recommended_method}</p>
+          <ExperienceMarkdown className="mt-3 text-sm leading-7 text-white/68">
+            {detail.recommended_method || "未记录"}
+          </ExperienceMarkdown>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
           <h2 className="text-sm font-semibold text-white">核验证据</h2>
-          <ul className="mt-3 space-y-2 text-sm text-white/65">
-            {detail.evidence_to_check.length ? detail.evidence_to_check.map((item) => <li key={item}>- {item}</li>) : <li>未记录</li>}
-          </ul>
+          <ExperienceMarkdown className="mt-3 text-sm text-white/65">
+            {evidenceMarkdown(detail.evidence_to_check)}
+          </ExperienceMarkdown>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
           <h2 className="text-sm font-semibold text-white">限制与升级条件</h2>
-          <p className="mt-3 text-sm leading-7 text-white/68">{detail.when_to_escalate || "未记录"}</p>
-          <p className="mt-3 text-sm leading-7 text-white/45">{detail.limitations || "未记录限制"}</p>
+          <ExperienceMarkdown className="mt-3 text-sm leading-7 text-white/68">
+            {detail.when_to_escalate || "未记录"}
+          </ExperienceMarkdown>
+          <ExperienceMarkdown className="mt-3 text-sm leading-7 text-white/45">
+            {detail.limitations || "未记录限制"}
+          </ExperienceMarkdown>
         </div>
       </section>
     </div>

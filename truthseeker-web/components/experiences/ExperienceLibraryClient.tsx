@@ -10,6 +10,7 @@ import {
   type ExperienceAgent,
   type ExperienceEntry,
 } from "@/lib/experiences"
+import { ExperienceMarkdown } from "./ExperienceMarkdown"
 
 const PAGE_SIZE = 9
 
@@ -37,9 +38,9 @@ function ExperienceCard({ item }: { item: ExperienceEntry }) {
           </div>
         </div>
       </div>
-      <p className="mt-4 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-white/62">
-        {item.problem_pattern}
-      </p>
+      <ExperienceMarkdown className="experience-markdown-card mt-4 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-white/62">
+        {item.problem_pattern || "未记录适用问题"}
+      </ExperienceMarkdown>
       <div className="mt-5 border-t border-white/10 pt-3 text-xs text-white/42">
         {item.created_at ? new Date(item.created_at).toLocaleString("zh-CN") : "未记录时间"}
       </div>

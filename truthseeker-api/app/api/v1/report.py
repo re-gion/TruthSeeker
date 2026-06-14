@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from app.services.audit_log import record_audit_event
 from app.services.report_generator import (
     _execute_supabase_query,
+    _is_transient_read_error,
     generate_audit_log_pdf,
     generate_audit_log_markdown,
     generate_markdown_report,
@@ -29,11 +30,15 @@ def _assert_task_owner(task_id: str, request: Request) -> None:
         resp = _execute_supabase_query(lambda: supabase.table("tasks").select("id,user_id").eq("id", task_id).execute())
     except Exception as exc:
         logger.warning("Failed to verify report owner for %s: %s", task_id, exc)
+        if _is_transient_read_error(exc):
+            raise HTTPException(status_code=503, detail="报告权限校验暂时不可用，请稍后重试")
         raise HTTPException(status_code=403, detail="无法验证任务归属")
 
     if not resp.data:
         raise HTTPException(status_code=404, detail="任务不存在")
     task_user_id = resp.data[0].get("user_id")
+    if task_user_id == "anonymous":
+        return
     if task_user_id and task_user_id != user_id:
         raise HTTPException(status_code=403, detail="无权访问该任务报告")
 
