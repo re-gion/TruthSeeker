@@ -62,7 +62,7 @@ export function StatsCounter() {
     }, [])
 
     const stats = [
-        { value: 91.2, label: "检测准确率", duration: 2500, isFloat: true },
+        { value: 91.9, label: "检测准确率", duration: 2500, isFloat: true },
         { value: 166.6, label: "平均响应速度", duration: 2000, suffix: "s" },
         { value: 4, label: "协同核心 Agent", duration: 1500 },
         { value: 24, label: "实时在线防护", duration: 2000, prefix: "7×", suffix: "h" },

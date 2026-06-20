@@ -161,7 +161,7 @@ export function WorkflowTabs() {
                     <div className="w-full max-w-sm bg-white border border-black/10 rounded-xl p-5 shadow-[0_10px_30px_rgba(0,0,0,0.05)] flex flex-col gap-4 transform rotate-1">
                         <div className="flex justify-between items-center border-b border-black/5 pb-3">
                             <div className="h-3 w-32 bg-black/10 rounded" />
-                            <div className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-50 text-red-600 border border-red-100">TAMPERED: 91.2%</div>
+                            <div className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-50 text-red-600 border border-red-100">TAMPERED: 91.9%</div>
                         </div>
                         <div className="flex gap-4 items-center">
                             <div className="w-20 h-20 bg-gray-100 rounded-lg border border-black/5" />
