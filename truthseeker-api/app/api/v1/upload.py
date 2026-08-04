@@ -1,4 +1,5 @@
 """文件上传端点 — Supabase Storage + 签名 URL"""
+import asyncio
 import logging
 import os
 import re
@@ -7,8 +8,10 @@ import hashlib
 from pathlib import Path
 
 import filetype
+import httpx
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+from storage3.exceptions import StorageApiError
 
 from app.services.audit_log import record_audit_event
 from app.services.evidence_files import infer_modality
@@ -117,6 +120,44 @@ def _verify_file_type(tmp_path: str, declared_mime: str, filename: str = "") -> 
     return None
 
 
+UPLOAD_MAX_ATTEMPTS = 3
+UPLOAD_RETRY_DELAY_SECONDS = 1.5
+
+
+async def _upload_to_storage(tmp_path: str, storage_path: str, content_type: str) -> None:
+    """把临时文件上传到 Supabase Storage media 桶。
+
+    服务端明确拒绝（413/403 等 StorageApiError）立即上抛；传输层瞬时错误
+    （连接中断、HTTP/2 流重置等）有限重试，重试时带 upsert 避免“上一次
+    服务端其实已写入”造成的重复对象报错。
+    """
+    from storage3.types import FileOptions
+
+    bucket = _get_supabase().storage.from_("media")
+    last_error: httpx.TransportError | None = None
+    for attempt in range(1, UPLOAD_MAX_ATTEMPTS + 1):
+        try:
+            # storage3 的 FileOptions 键带连字符；下划线写法不会覆盖默认 content-type。
+            # upsert 必须传字符串，布尔值会被原样塞进 x-upsert 请求头导致 TypeError。
+            options: FileOptions = {"content-type": content_type}
+            if attempt > 1:
+                options["upsert"] = "true"
+            with open(tmp_path, "rb") as f:
+                bucket.upload(storage_path, f, file_options=options)
+            return
+        except StorageApiError:
+            raise
+        except httpx.TransportError as exc:
+            last_error = exc
+            logger.warning(
+                "Storage upload transport error (attempt %d/%d): %s",
+                attempt, UPLOAD_MAX_ATTEMPTS, exc,
+            )
+            if attempt < UPLOAD_MAX_ATTEMPTS:
+                await asyncio.sleep(UPLOAD_RETRY_DELAY_SECONDS * attempt)
+    raise last_error
+
+
 @router.post("/")
 async def upload_file(
     request: Request,
@@ -192,13 +233,23 @@ async def upload_file(
                 text_file.write(utf8_bytes)
             upload_content_type = "text/plain; charset=utf-8"
 
-        # 4. 上传到 Supabase Storage
-        from storage3.types import FileOptions
-
+        # 4. 上传到 Supabase Storage（传输层瞬时错误自动重试）
         storage_path = f"{folder}/{os.path.basename(tmp_path)}"
-        with open(tmp_path, "rb") as f:
-            _get_supabase().storage.from_("media").upload(
-                storage_path, f, file_options=FileOptions(content_type=upload_content_type),
+        try:
+            await _upload_to_storage(tmp_path, storage_path, upload_content_type)
+        except StorageApiError as exc:
+            logger.error(
+                "Storage rejected upload: status=%s code=%s message=%s",
+                exc.status, exc.code, exc.message,
+            )
+            if str(exc.status) == "413":
+                return JSONResponse(
+                    {"detail": "文件超出云存储单文件上限，请压缩后重试"},
+                    status_code=400,
+                )
+            return JSONResponse(
+                {"detail": "文件上传失败，请稍后重试"},
+                status_code=500,
             )
 
         # 5. 生成签名 URL（有效 24 小时，U-5 修复）

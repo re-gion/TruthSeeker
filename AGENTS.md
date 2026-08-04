@@ -103,7 +103,7 @@ Registered route groups:
 - `GET /api/v1/cases`, `GET /api/v1/cases/{case_id}`, preview/text/delete helpers
 - `GET /api/v1/experiences`, `GET /api/v1/experiences/{entry_id}`, `POST /api/v1/experiences/confirm`, `DELETE /api/v1/experiences/{entry_id}`
 - Canonical collaboration routes under `/api/v1/collaboration`; `/api/v1/consultation` remains as a compatibility alias.
-- Before claiming canonical expert links are production-ready, resolve and test the authentication gap recorded in `docs/KNOWN_GAPS.md`.
+- Before claiming canonical expert links are production-ready, keep the collaboration auth regression tests passing (`tests/test_collaboration_invite_access.py`); other known gaps are tracked in the 当前已知缺口 section of `task.md`.
 
 ## Critical Runtime Rules
 

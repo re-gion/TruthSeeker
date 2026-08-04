@@ -9,6 +9,7 @@ from typing import Any
 
 from app.config import settings
 from app.agents.state import AgentLog, TruthSeekerState
+from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.edges.conditions import evaluate_phase_convergence
 from app.agents.tools.llm_client import (
     build_sample_references,
@@ -429,6 +430,19 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         })
 
     log("thinking", f"逻辑质询Agent 启动：phase={phase}, phase_round={phase_round}/{max_rounds}")
+    skill_load = load_agent_skill("challenger", "phase_review")
+    skill_initial = skill_load.execution
+    if skill_initial.get("load_status") == "loaded":
+        log("thinking", f"核心 Skill {skill_initial['skill_name']} v{skill_initial['skill_version']} 已加载，工作流 phase_review")
+    else:
+        reason = "；".join(skill_initial.get("limitations") or ["未知原因"])
+        log("action", f"核心 Skill 未加载，继续使用系统提示词与确定性硬门槛；原因：{reason}")
+    record_audit_event(
+        action=f"skill.{skill_initial.get('load_status', 'degraded')}",
+        task_id=task_id,
+        agent="challenger",
+        metadata=skill_initial,
+    )
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
     record_audit_event(
@@ -502,6 +516,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     if human_context:
         review_challenges.append(human_context)
     log("action", "调用 Kimi 多模态上下文进行逻辑交叉审查")
+    llm_status: dict[str, Any] = {}
     try:
         model_review = await challenger_model_review(
             forensics,
@@ -513,6 +528,8 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             phase_round=phase_round,
             base_confidence=base_quality,
             deterministic_issues=issues_found,
+            skill_context=skill_load.prompt_context,
+            llm_status=llm_status,
         )
         llm_cross_validation = str(model_review.get("markdown") or "")
         model_confidence = float(model_review.get("confidence", base_quality) or base_quality)
@@ -521,6 +538,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         model_issues = [issue for issue in (model_review.get("issues") or []) if isinstance(issue, dict)]
         model_residual_risks = [risk for risk in (model_review.get("residual_risks") or []) if isinstance(risk, dict)]
     except Exception as exc:
+        llm_status.update({"status": "degraded", "mode": "node_exception", "reason": f"Challenger LLM 审查异常：{type(exc).__name__}"})
         llm_cross_validation = (
             "### 质询对象与本轮置信度\n"
             f"- 质询对象: {phase}\n"
@@ -533,6 +551,25 @@ async def challenger_node(state: TruthSeekerState) -> dict:
             f"- 异常详情: {exc}"
         )
         log("action", f"LLM 逻辑审查异常: {type(exc).__name__}")
+
+    skill_execution = finalize_skill_execution(
+        skill_load,
+        llm_cross_validation,
+        llm_status=llm_status,
+    )
+    skill_status = str(skill_execution.get("execution_status") or "skipped")
+    if skill_status == "applied":
+        log("finding", "核心 Skill 已应用，Challenger 输出契约检查通过")
+    elif skill_status == "check_failed":
+        log("action", "核心 Skill 已注入，但 Challenger 输出契约检查未通过")
+    elif skill_execution.get("load_status") == "loaded":
+        log("action", "LLM 已降级或未执行，本轮无法证明实际采用核心 Skill")
+    record_audit_event(
+        action=f"skill.{skill_status}",
+        task_id=task_id,
+        agent="challenger",
+        metadata=skill_execution,
+    )
 
     issues_found = _merge_issues(issues_found, model_issues)
     challenger_experience = await experience_rag_search(
@@ -894,6 +931,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "confirmed_collaboration_summary": confirmed_consultation_summary,
         "collaboration_release": collaboration_release,
         "collaboration_release_reason": collaboration_release_reason,
+        "skill_execution": skill_execution,
         "timestamp": _now(),
     }
 
@@ -931,6 +969,7 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         "confirmed_consultation_summary": confirmed_consultation_summary,
         "confirmed_collaboration_summary": confirmed_consultation_summary,
         "challenger_feedback": feedback,
+        "degradation_status": {"skill.challenger": skill_status},
         "challenges": challenges,
         "logs": logs,
         "timeline_events": [build_timeline_event(

@@ -110,7 +110,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 ### 3. 配置后端
 
-首次接入新的 Supabase 项目时，现有迁移尚不能自动创建上传接口依赖的 `media` Storage bucket 与对应 Storage RLS。启动服务前需人工配置，或先补齐幂等迁移；否则健康检查可能正常，但文件上传会失败。详见 `docs/KNOWN_GAPS.md`。
+首次接入新的 Supabase 项目时，现有迁移尚不能自动创建上传接口依赖的 `media` Storage bucket 与对应 Storage RLS。启动服务前需人工配置，或先补齐幂等迁移；否则健康检查可能正常，但文件上传会失败。详见 `task.md`「当前已知缺口」小节。
 
 ```powershell
 cd truthseeker-api
@@ -185,7 +185,7 @@ python -m uvicorn app.main:app --reload
 - `GET /experiences`、`GET /experiences/{entry_id}`、`POST /experiences/confirm`、`DELETE /experiences/{entry_id}`
 - `POST/GET /collaboration/...`
 
-`/api/v1/consultation` 仍作为旧兼容别名保留，新功能应优先使用 `/api/v1/collaboration`。当前 canonical 专家公开路径的生产认证白名单仍待修复，见 `docs/KNOWN_GAPS.md`。
+`/api/v1/consultation` 仍作为旧兼容别名保留，新功能应优先使用 `/api/v1/collaboration`。canonical 专家公开路径的认证白名单已纳入双前缀匹配，并有回归测试（`truthseeker-api/tests/test_collaboration_invite_access.py`）。
 
 ## 数据库与迁移
 
@@ -206,8 +206,8 @@ pgvector 用于公开案例 RAG 与个人经验库 RAG。若真实 Supabase 尚�
 - `docs/BACKEND_STRUCTURE.md`：后端目录、状态字段、Graph、工具、持久化、测试要求
 - `docs/FRONTEND_GUIDELINES.md`：视觉语言、组件标准、动效与 3D 设计
 - `docs/PRD.md`：产品目标、功能模块、展示场景和风险
-- `docs/IMPLEMENTATION_PLAN.md`：历史实施计划与路线回顾
-- `task.md`：里程碑状态
+- `docs/AGENT_SKILL_ARCHITECTURE.md`：Agent 核心 Skill 包规格与实施状态
+- `task.md`：里程碑状态与当前已知缺口
 - `lessons.md`：开发错误记录本
 - `AGENTS.md`：AI 代理工作规则
 

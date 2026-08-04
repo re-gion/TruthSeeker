@@ -6,7 +6,7 @@ new writes target collaboration_* tables.
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -23,6 +23,31 @@ from app.utils.supabase_client import supabase
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_COMMANDER_SUMMARY_METADATA_KEYS = (
+    "expert_answer_summary",
+    "recommended_actions",
+    "unresolved_questions",
+    "help_needed",
+    "summary_provider",
+    "summary_raw_response",
+    "summary_degraded",
+    "skill_execution",
+    "experience_drafts",
+    "experience_drafts_error",
+    "experience_skill_execution",
+)
+
+
+def _merge_confirmed_summary_payload(
+    confirmed_payload: dict[str, Any],
+    previous_payload: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(confirmed_payload)
+    for key in _COMMANDER_SUMMARY_METADATA_KEYS:
+        if key in previous_payload:
+            merged[key] = previous_payload[key]
+    return merged
 
 INVITE_TTL_HOURS = 24
 SESSION_TABLE = "collaboration_sessions"
@@ -413,6 +438,7 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
     user_id = str(task.get("user_id") or getattr(request.state, "user_id", "") or "")
     if user_id:
         try:
+            experience_skill_execution: dict[str, Any] = {}
             summary_payload["experience_drafts"] = await build_experience_drafts(
                 user_id=user_id,
                 task_id=task_id,
@@ -420,7 +446,9 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
                 messages=messages,
                 context_payload=session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {},
                 summary_payload=summary_payload,
+                skill_execution_sink=experience_skill_execution,
             )
+            summary_payload["experience_skill_execution"] = experience_skill_execution
         except Exception as exc:
             logger.error("Failed to build experience drafts for consultation %s: %s", session_id, exc)
             summary_payload["experience_drafts"] = []
@@ -465,11 +493,7 @@ async def confirm_consultation_summary(
         messages=messages,
         user_confirmed_summary=req.summary,
     )
-    if isinstance(previous_summary_payload, dict):
-        if "experience_drafts" in previous_summary_payload:
-            summary_payload["experience_drafts"] = previous_summary_payload["experience_drafts"]
-        if "experience_drafts_error" in previous_summary_payload:
-            summary_payload["experience_drafts_error"] = previous_summary_payload["experience_drafts_error"]
+    summary_payload = _merge_confirmed_summary_payload(summary_payload, previous_summary_payload)
     updated = _update_session(session_id, {
         "status": "summary_confirmed",
         "summary_payload": summary_payload,

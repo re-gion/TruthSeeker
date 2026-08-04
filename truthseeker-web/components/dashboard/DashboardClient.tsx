@@ -1069,7 +1069,7 @@ function DigitalCardsChart({ metrics }: { metrics: ExternalInsightModule["metric
       {displayMetrics.map((metric, index) => (
         <div key={metric.label} className="flex flex-col items-center gap-3">
           <p className="text-center text-sm text-white/56">{metric.label}</p>
-          <p className="text-center text-3xl font-bold tracking-tight text-white" style={{ fontFamily: "monospace" }}>
+          <p className="text-center text-3xl font-bold tracking-tight text-white font-mono tabular-nums">
             {formatInsightValue(metric.value, metric.unit)}
           </p>
           <MiniBar

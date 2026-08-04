@@ -13,11 +13,10 @@ This file applies to `docs/`.
 - `FRONTEND_GUIDELINES.md` - UI/UX language, colors, motion, responsiveness, accessibility.
 - `BACKEND_STRUCTURE.md` - backend layout, Supabase schema, LangGraph design, API overview, security notes.
 - `APP_FLOW.md` - multi-agent state flow, realtime channels, data model, frontend state model.
-- `IMPLEMENTATION_PLAN.md` - historical phased roadmap and review checklist. It is not the current task source unless the user explicitly points to it.
-- `superpowers/plans/` - historical detailed execution plans. Treat these as implementation records or named handoff artifacts, not current truth.
-- `superpowers/specs/` - historical design specs. If a spec conflicts with current code or `APP_FLOW.md`, update durable docs rather than reviving the old spec as truth.
-- `CLEANUP_CANDIDATES.md` - dated cleanup record and items that require owner confirmation before deletion.
-- `KNOWN_GAPS.md` - confirmed implementation, deployment, and security gaps that must not be presented as completed capabilities.
+- `AGENT_SKILL_ARCHITECTURE.md` - Agent core skill package spec and implementation status.
+- `adr/` - architecture decision records; use `0001-fixed-core-agent-skills.md` as the format reference.
+- Root `CONTEXT.md` - TruthSeeker domain language glossary for Agent + Skill design.
+- Current known gaps live in the "当前缺口" section of root `task.md`; remove items once fixed and covered by tests.
 
 ## Writing Rules
 

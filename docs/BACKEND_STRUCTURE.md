@@ -6,7 +6,7 @@
 
 TruthSeeker 当前运行时是 **Fed-MBPR-compatible 多智能体研判架构**：
 
-- 四个 Agent 共享可配置的原生多模态推理基座；默认 Kimi 2.5，调用 Kimi K2.5 时禁用 thinking，也可切换小米 MiMo Token Plan。
+- 四个 Agent 共享可配置的原生多模态推理基座；默认 Kimi 2.6，调用 Kimi K2.6 时禁用 thinking，也可切换小米 MiMo Token Plan。
 - Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 等外部工具提供专业取证、威胁情报、联网搜索和域名溯源能力；文本 AIGC 检测改为内部工具。
 - 公开案例 RAG 使用 Supabase pgvector 和 SiliconFlow `Qwen/Qwen3-VL-Embedding-8B` embedding，为 Forensics/OSINT 提供类案参考。
 - 个人经验库使用同一 embedding 技术栈，为当前账号的 Forensics/OSINT/Challenger 提供私有方法参考。
@@ -22,11 +22,12 @@ truthseeker-api/
 ├── app/
 │   ├── config.py
 │   ├── api/v1/
+│   │   ├── router.py          # 所有路由集中注册入口
 │   │   ├── upload.py
 │   │   ├── tasks.py
 │   │   ├── detect.py
 │   │   ├── cases.py
-│   │   ├── consultation.py
+│   │   ├── consultation.py    # collaboration canonical + consultation 兼容别名
 │   │   ├── experiences.py
 │   │   ├── report.py
 │   │   ├── share.py
@@ -40,6 +41,7 @@ truthseeker-api/
 │   │   │   ├── osint.py       # 情报溯源与图谱 Agent
 │   │   │   ├── challenger.py
 │   │   │   └── commander.py
+│   │   ├── skills/            # Agent 核心 Skill 包（loader.py + 4 个固定绑定 SKILL.md 包）
 │   │   └── tools/
 │   │       ├── deepfake_api.py
 │   │       ├── domain_provenance.py
@@ -48,6 +50,7 @@ truthseeker-api/
 │   │       ├── text_detection.py
 │   │       ├── osint_search.py
 │   │       ├── provenance_graph.py
+│   │       ├── fallback.py    # DegradationManager 与 shared_degradation
 │   │       └── llm_client.py
 │   ├── services/
 │   │   ├── builtin_cases.py
@@ -65,6 +68,7 @@ truthseeker-api/
 │   │   ├── audit_log.py
 │   │   └── report_generator.py
 │   └── utils/supabase_client.py
+├── scripts/                   # 运维脚本（案例 RAG 重建/清理，见 §5）
 ├── sql/migrations/
 └── tests/
 ```
@@ -122,10 +126,10 @@ Commander 生成最终裁决后直接 `END`，不再回到 Challenger。旧的 C
 
 Agent LLM：
 
-- 默认 `KIMI_MODEL=kimi-k2.5`，调用时禁用 thinking。
-- `AGENT_LLM_PROVIDER=kimi-k2.5|mimo` 控制四个 Agent 的底层全模态模型入口；选择 K2.5 时，`KIMI_PROVIDER=official|coding|siliconflow` 选择具体渠道；选择 `mimo` 时，使用 `MIMO_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5`。
+- 默认 `KIMI_MODEL=kimi-k2.6`，调用时禁用 thinking。
+- `AGENT_LLM_PROVIDER=kimi-k2.6|mimo` 控制四个 Agent 的底层全模态模型入口；选择 K2.6 时，`KIMI_PROVIDER=official|coding|siliconflow` 选择具体渠道；选择 `mimo` 时，使用 `MIMO_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5`。
 - `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 控制 TruthSeeker 单次 Agent LLM 输出上限。
-- Kimi K2.5：输入 `text,image,video`，上下文 262144 tokens，本系统固定 `thinking=disabled`。
+- Kimi K2.6：输入 `text,image,video`，上下文 262144 tokens，本系统固定 `thinking=disabled`。
 - MiMo `mimo-v2.5`：输入 `text,image`，官方上下文 1048576 tokens，官方输出上限 131072 tokens；`MIMO_THINKING=enabled|disabled` 可显式控制思考模式，本系统默认 enabled。MiMo 不作为视频/音频原生理解底座，视频/音频仍依赖工具结果、文本摘要或抽帧图片。
 - Agent LLM provider 只影响 Forensics/OSINT/Challenger/Commander 的模型推理和摘要生成，不替换 Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 或 embedding API。
 - 多模态输入通过短期 signed URL 引用或 base64 图片内联传递。
@@ -204,7 +208,7 @@ Exa：
 - 前 4 轮 Challenger 置信度 `< 0.8` 必须打回目标 Agent；第 5 轮达到阶段最大轮次时直接放行，并把低置信或未解决问题写入残留风险。
 - 首次满足“同一目标最近 3 轮置信度均 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `collaboration_required` 并写入 active session。
 - 同一目标 Agent 再次满足门槛时，后端发送 `collaboration_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
-- 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；固定结构摘要仅作为 LLM 不可用时的兜底。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；LLM 不可用或输出契约无效时，本地兜底按编号意见提炼结论、确认态与回注建议，不得直接拼接或按字符截断聊天原文。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
 - 用户结束协同后，Commander 同步抽取个人经验草稿。摘要确认不会自动入库；前端展示草稿给用户编辑、删除和单独确认。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
 - `resume=true` 时读取 `collaboration_messages`、`collaboration_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。旧 `consultation_*` 数据作为历史兜底读取。
 - 报告必须保留协同触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。

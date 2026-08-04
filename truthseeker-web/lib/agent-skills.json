@@ -1,0 +1,22 @@
+{
+  "forensics": {
+    "name": "multimodal-forensics",
+    "label": "多模态电子取证",
+    "version": "1.0.0"
+  },
+  "osint": {
+    "name": "osint-provenance",
+    "label": "情报溯源与证据图谱",
+    "version": "1.0.0"
+  },
+  "challenger": {
+    "name": "evidence-challenge",
+    "label": "证据质询与收敛控制",
+    "version": "1.0.0"
+  },
+  "commander": {
+    "name": "command-collaboration",
+    "label": "研判指挥与协同编排",
+    "version": "1.0.0"
+  }
+}

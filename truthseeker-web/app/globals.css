@@ -2,31 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@xyflow/react/dist/style.css";
-
-@font-face {
-  font-family: 'ZhengKaiTi';
-  src: url('/fonts/ZhengKaiTi.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'SiyuanSong';
-  src: url('/fonts/思源宋体SemiBold.otf') format('opentype');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* Times New Roman for Latin/ASCII characters */
-@font-face {
-  font-family: 'TimesLatinOnly';
-  src: local('Times New Roman'), local('TimesNewRoman'), local('Times');
-  font-weight: normal;
-  font-style: normal;
-  unicode-range: U+0020-007E, U+00A0-00FF, U+2000-206F, U+20A0-20CF, U+2100-214F;
-}
+@import "./typography.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -68,8 +44,12 @@
   --color-info-cyan: #06B6D4;
 
   /* Fonts */
-  --font-sans: 'TimesLatinOnly', 'SiyuanSong', 'ZhengKaiTi', 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-interface: 'IBM Plex Sans SC', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
+  --font-telemetry: 'IBM Plex Mono', 'IBM Plex Sans SC', ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --font-sans: var(--font-interface);
+  --font-display: var(--font-interface);
+  --font-serif: var(--font-interface);
+  --font-mono: var(--font-telemetry);
 }
 
 /* ─── shadcn CSS Variables (Dark-first) ─── */
@@ -90,8 +70,6 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --font-sans: 'TimesLatinOnly', 'SiyuanSong', var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -392,7 +370,7 @@
     padding: 0.15rem 0.4rem;
     border-radius: 4px;
     font-size: 0.8rem;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-family: var(--font-telemetry);
   }
 
   .report-markdown ul, .report-markdown ol {
@@ -533,7 +511,7 @@
     padding: 0.1rem 0.3rem;
     border-radius: 4px;
     font-size: 0.85em;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-family: var(--font-telemetry);
   }
 
   .experience-markdown ul,
@@ -645,8 +623,6 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

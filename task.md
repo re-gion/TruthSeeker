@@ -5,6 +5,22 @@
 
 ---
 
+## 当前已知缺口
+
+> 原 `docs/KNOWN_GAPS.md` 已于 2026-06-20 归档删除，缺口清单迁移至此。完成修复后应补测试并从本清单移除。
+
+**已确认（代码/迁移静态审计）：**
+
+- [ ] `media` Storage bucket 与 Storage RLS 的幂等迁移缺失：`truthseeker-api/sql/migrations/` 无 bucket 创建语句，新 Supabase 项目不能只依赖仓库迁移跑通上传。影响：上传接口固定写入 `media`，bucket 缺失时文件上传失败。
+- [ ] 公开案例与公开案例 RAG 写入 RLS 过宽：`20260528_case_library_entries.sql` 的 `insert ... with check (true)` / `update ... using (true)` 允许任意 authenticated 用户写入或篡改公共案例与向量块。影响：登录用户可能篡改公开数据。建议收紧到服务端受控写入并用不同账号执行 RLS 集成测试。
+
+**待核验（需真实 Supabase 环境确认）：**
+
+- 历史空 `expires_at` 数据是否阻塞新 `collaboration_invites` NOT NULL 迁移。
+- Dashboard 协同统计是否已切新 `collaboration_*` 表主读、旧 `consultation_*` 表兼容。
+
+---
+
 ## 里程碑总览
 
 - [x] **M1 - MVP可用**: Layer1完成（视频检测 + 双Agent + SSE）
@@ -105,7 +121,7 @@
 - [x] Supabase Client 配置（client.ts + server.ts，使用 @supabase/ssr）
 - [x] 用户认证（注册、登录、登出，使用 Server Actions）
 - [x] 认证中间件 `middleware.ts`（路由保护）
-- [x] **数据库 Schema 迁移** — 历史阶段曾完成 9 表/17 迁移同步；当前新增表与 Storage 初始化仍需按 `docs/KNOWN_GAPS.md` 复核
+- [x] **数据库 Schema 迁移** — 历史阶段曾完成 9 表/17 迁移同步；当前新增表与 Storage 初始化仍需按上方「当前已知缺口」复核
 - [x] **RLS 策略** — 历史核心表已启用 RLS；公开案例写策略仍存在待修复的过宽权限
 - [x] 任务 API（POST/GET /api/v1/tasks，含 Supabase 持久化 + 降级）
 
@@ -254,12 +270,12 @@
 - [x] 全量同步 README、核心 docs、根目录和重要子目录 Agent 指南
 - [x] 清理日志、缓存、崩溃转储和可再生增量产物
 - [ ] 修复公开案例与公开案例 RAG 的过宽写入 RLS
-- [ ] 修复 canonical `/collaboration` 专家路径生产认证白名单并补 API 测试
+- [x] 修复 canonical `/collaboration` 专家路径生产认证白名单并补 API 测试 — 已修复（`app/middleware/auth.py` 双前缀匹配 + `tests/test_collaboration_invite_access.py` 回归测试）
 - [ ] 增加 `media` Storage bucket 与 RLS 的幂等迁移
 - [ ] 修复历史空 `expires_at` 导致的新协作迁移风险
 - [ ] Dashboard 协同统计切换为新表主读、旧表兼容
 
-详细证据、影响与验收要求见 `docs/KNOWN_GAPS.md`。
+详细证据、影响与验收要求见上方「当前已知缺口」小节。
 
 ### 2026-04-29 质询、报告与检测页体验修订
 - [x] Challenger 改为 Kimi 结构化质询建议 + 代码硬门槛兜底（置信度 >=0.8 且无阻断问题时放行、最多 5 轮；Δ(t)<0.08 用于协同停滞判断；Commander 完成后不再质询）
@@ -279,6 +295,16 @@
 - [x] Forensics / OSINT 接入内部文本 AIGC 检测工具矩阵（不再依赖外部文本检测 API）
 - [x] 公开案例库 Markdown 过滤“关键证据”章节，避免把结构化内部证据对象展示给公众
 - [x] 将新检测链路主字段从旧 `deepfake_*` 迁移到 `aigc_*`，旧字段仅作为历史快照兼容 fallback
+
+### 2026-08-04 Agent 核心 Skill 运行时
+
+- [x] 定义四 Agent 固定核心 Skill 包、严格 schema、版本与 SHA-256 内容摘要
+- [x] Commander 核心 Skill 固定包含 `final_adjudication`、`human_collaboration`、`experience_distillation` 三个显式工作流，不引入动态路由器
+- [x] 拆分 Skill 的加载、实际应用和输出检查状态；缺失或损坏时静默回退系统提示词并记录结构化降级
+- [x] 完成 Forensics 端到端试点：注入、章节检查、Agent 日志、审计事件、结果字段与降级状态
+- [x] 接入 OSINT、Challenger 和 Commander 三工作流，并补各自输出检查、显式 LLM 状态、日志、审计与降级字段
+- [x] 前端 Agent 卡片展示静态 Skill 名称/版本并标注“固定绑定”；最终报告从持久化元数据生成实际 Skill 执行摘要矩阵
+- [ ] 在人工开启外部调用时运行真实 Kimi Skill on/off 对照评测；CI 继续只跑离线契约
 
 ---
 

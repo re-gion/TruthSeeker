@@ -24,7 +24,7 @@ export default async function Home() {
 
 
         {/* Title */}
-        <h1 className="text-5xl md:text-7xl font-bold text-center mb-6 leading-tight drop-shadow-sm font-serif tracking-tighter" style={{ textShadow: 'none' }}>
+        <h1 className="text-5xl md:text-7xl font-bold text-center mb-6 leading-tight drop-shadow-sm font-display tracking-tighter" style={{ textShadow: 'none' }}>
           <GradientText
             colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}
             animationSpeed={16}

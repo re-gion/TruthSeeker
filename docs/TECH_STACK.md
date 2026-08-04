@@ -18,10 +18,17 @@
 | lucide-react | ^0.576.0 | 图标库 |
 | @xyflow/react | ^12.10.2 | 情报溯源图谱交互画布 |
 | `three` | ^0.183.2 | 3D 引擎 |
+| `@react-three/fiber` / `@react-three/drei` | ^9.5.0 / ^10.7.7 | R3F 3D 渲染与辅助组件 |
+| `postprocessing` | ^6.38.3 | 3D 后处理特效 |
+| `cobe` | ^0.6.5 | 3D 地球（数据大屏） |
 | `gsap` | ^3.14.2 | 高级动画库 |
 | `echarts` / `echarts-for-react` | ^6.0.0 / ^3.0.6 | 数据大屏图表 |
+| `recharts` | ^2.15.4 | Dashboard 图表 |
 | `react-markdown` / `remark-gfm` | ^10.1.0 / ^4.0.1 | Markdown 渲染（报告分享页） |
-| `postprocessing` | ^6.38.3 | 3D 后处理特效 |
+| `next-themes` | ^0.4.6 | 主题切换 |
+| `radix-ui` | ^1.4.3 | 无障碍基础组件 |
+| `tailwind-merge` / `class-variance-authority` / `clsx` | ^3.5.0 / ^0.7.1 / ^2.1.1 | 类名合并与变体工具 |
+| `ogl` / `maath` | ^1.0.11 / ^0.10.8 | 3D 渲染与数学辅助 |
 
 ### 前端脚本
 
@@ -46,15 +53,14 @@
 | langchain-openai | >=0.3.0 | OpenAI 适配 |
 | supabase | >=2.15.0 | Supabase Python 客户端 |
 | httpx | >=0.28.0 | HTTP 客户端 |
-| python-multipart | >=0.0.20 | FastAPI 文件上传表单解析 |
-| aiofiles | >=24.1.0 | 已声明但当前无直接引用，待依赖清理时复核 |
+| python-multipart | >=0.0.18 | FastAPI 文件上传表单解析 |
 | fpdf2 | >=2.8.0 | 文本型 PDF 输出 |
 | Pillow | >=10.0.0 | 图片处理（PDF 兜底、媒体元数据） |
 | PyJWT | >=2.8.0,<3.0.0 | JWT 验证 |
 | filetype | >=1.2.0 | 文件类型魔数校验 |
 | pydantic-settings | >=2.8.0 | 环境变量配置管理 |
 | python-dotenv | >=1.0.0 | .env 文件加载 |
-| pytest | >=8.3.0 | 当前与运行依赖同文件声明的测试框架，后续宜拆分开发依赖 |
+| pytest | >=8.3.0 | 测试框架，位于 `requirements-dev.txt`（开发依赖，与运行依赖分离） |
 | pgvector | Supabase 扩展 | 公开案例库 RAG 与个人经验库 RAG 向量检索 |
 
 ## 环境变量
@@ -65,6 +71,7 @@
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
 ### 后端 `.env`
@@ -88,18 +95,18 @@ WHOISXML_API_KEY=
 WHOISXML_TIMEOUT_SECONDS=20
 TEXT_AIGC_DETECTOR_ENABLED=true
 TEXT_AIGC_AI_THRESHOLD=0.6
-AGENT_LLM_PROVIDER=kimi-k2.5
+AGENT_LLM_PROVIDER=kimi-k2.6
 AGENT_LLM_MAX_OUTPUT_TOKENS=4096
 KIMI_PROVIDER=official
 KIMI_API_KEY=
 KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_MODEL=kimi-k2.5
+KIMI_MODEL=kimi-k2.6
 KIMI_CODING_API_KEY=
 KIMI_CODING_BASE_URL=https://api.kimi.com/coding/v1
-KIMI_CODING_MODEL=kimi-k2.5
+KIMI_CODING_MODEL=kimi-k2.6
 KIMI_SILICONFLOW_API_KEY=
 KIMI_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
-KIMI_SILICONFLOW_MODEL=Pro/moonshotai/Kimi-K2.5
+KIMI_SILICONFLOW_MODEL=Pro/moonshotai/Kimi-K2.6
 MIMO_API_KEY=
 MIMO_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1
 MIMO_MODEL=mimo-v2.5
@@ -134,11 +141,11 @@ CONVERGENCE_THRESHOLD=0.08
 
 ## 备注
 
-- 四个 Agent 共享可配置的原生多模态推理基座；默认使用 Kimi 2.5，并在调用 Kimi K2.5 时禁用 thinking。运行时可通过 `AGENT_LLM_PROVIDER=kimi-k2.5|mimo` 选择 K2.5 或小米 MiMo Token Plan；选择 K2.5 时再通过 `KIMI_PROVIDER=official|coding|siliconflow` 在 Kimi 官方 API、Kimi coding plan 和 SiliconFlow K2.5 之间切换；`mimo` 使用独立的 `MIMO_BASE_URL`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5`、`MIMO_THINKING=enabled|disabled`。这些配置只影响 Agent LLM，不替换 Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 或 embedding API。
-- Agent LLM 能力边界：Kimi K2.5 输入 `text,image,video`、上下文 262144 tokens、本系统固定 thinking disabled；MiMo `mimo-v2.5` 输入 `text,image`、上下文 1048576 tokens、官方输出上限 131072 tokens，支持显式 thinking enabled/disabled。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 统一限制单次 Agent LLM 输出。
+- 四个 Agent 共享可配置的原生多模态推理基座；默认使用 Kimi 2.6，并在调用 Kimi K2.6 时禁用 thinking。运行时可通过 `AGENT_LLM_PROVIDER=kimi-k2.6|mimo` 选择 K2.6 或小米 MiMo Token Plan；选择 K2.6 时再通过 `KIMI_PROVIDER=official|coding|siliconflow` 在 Kimi 官方 API、Kimi coding plan 和 SiliconFlow K2.6 之间切换；`mimo` 使用独立的 `MIMO_BASE_URL`、`MIMO_API_KEY`、`MIMO_MODEL=mimo-v2.5`、`MIMO_THINKING=enabled|disabled`。这些配置只影响 Agent LLM，不替换 Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 或 embedding API。
+- Agent LLM 能力边界：Kimi K2.6 输入 `text,image,video`、上下文 262144 tokens、本系统固定 thinking disabled；MiMo `mimo-v2.5` 输入 `text,image`、上下文 1048576 tokens、官方输出上限 131072 tokens，支持显式 thinking enabled/disabled。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 统一限制单次 Agent LLM 输出。
 - 图片 AIGC 检测默认使用 Sightengine `genai`，通过 `AIGC_IMAGE_PROVIDER=sightengine`、`SIGHTENGINE_API_USER` 和 `SIGHTENGINE_API_SECRET` 启用；Reality Defender 保留为音视频合成/篡改检测和图片检测降级备份。系统主字段使用 `aigc_*`，不再把图片 `AI_GENERATED` 结果上浮为 Deepfake 概率。
 - 文本 AIGC 检测使用内部工具，通过 `TEXT_AIGC_DETECTOR_ENABLED=true` 和 `TEXT_AIGC_AI_THRESHOLD` 控制。Forensics/OSINT 都会把结果以 `ai_text_detector` 写入工具矩阵；当前调用固定为 `analyze_text(..., use_llm=False)`，依据本地文本统计和社工诱导特征给出概率性线索，不单独定性。
 - 域名溯源使用 WhoisXML WHOIS + DNS Lookup + IP Geolocation，通过 `DOMAIN_PROVENANCE_ENABLED=true` 和 `WHOISXML_API_KEY` 启用；未配置 key 时 OSINT 会记录结构化降级。DNS Lookup 优先解析完整主机名的 A/AAAA，必要时跟随 CNAME，再回退注册域；WHOIS 可用但 DNS Lookup/IP Geolocation 403 时按 `partial` 处理，通常表示对应 WhoisXML 子产品权限或额度受限。
 - 公开案例库 RAG 和个人经验库 RAG 复用独立 embedding 配置，默认接入 SiliconFlow OpenAI-compatible `POST /v1/embeddings`，模型为 `Qwen/Qwen3-VL-Embedding-8B`，维度固定 1024。只需在本地 `.env` 填入 `EMBEDDING_API_KEY` 并运行对应迁移/索引流程即可启用。
-- 当前运行时是 Kimi 2.5 自主推理 + 内部文本/案例工具 + 外部媒体与情报 API + LangGraph 的 Fed-MBPR-compatible 架构；Fed-MBPR 训练/推理底座仍是可替换检测器方向。
+- 当前运行时是 Kimi 2.6 自主推理 + 内部文本/案例工具 + 外部媒体与情报 API + LangGraph 的 Fed-MBPR-compatible 架构；Fed-MBPR 训练/推理底座仍是可替换检测器方向。
 - 不要把真实密钥提交到仓库，只保留示例文件和本地 `.env` / `.env.local`。

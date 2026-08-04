@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
+from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.tools.llm_client import build_sample_references, osint_interpret
 from app.agents.tools.domain_provenance import analyze_domain_provenance
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text, text_fingerprint
@@ -284,6 +285,19 @@ async def osint_node(state: TruthSeekerState) -> dict:
 
     log("thinking", f"情报溯源图谱Agent 启动，任务 ID: {task_id}")
     log("thinking", f"读取全局证据板与电子取证结果，准备抽取实体、声明、引用和关系")
+    skill_load = load_agent_skill("osint", "primary_analysis")
+    skill_initial = skill_load.execution
+    if skill_initial.get("load_status") == "loaded":
+        log("thinking", f"核心 Skill {skill_initial['skill_name']} v{skill_initial['skill_version']} 已加载，工作流 primary_analysis")
+    else:
+        reason = "；".join(skill_initial.get("limitations") or ["未知原因"])
+        log("action", f"核心 Skill 未加载，继续使用系统提示词；原因：{reason}")
+    record_audit_event(
+        action=f"skill.{skill_initial.get('load_status', 'degraded')}",
+        task_id=task_id,
+        agent="osint",
+        metadata=skill_initial,
+    )
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
     record_audit_event(
@@ -545,6 +559,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "experience_rag": experience_rag,
         "degraded": degraded,
         "timestamp": _now(),
+        "skill_execution": skill_initial,
     }
     reinforcement_context = _build_reinforcement_context(state, "osint", state.get("osint_result") or {})
     if reinforcement_context:
@@ -552,8 +567,31 @@ async def osint_node(state: TruthSeekerState) -> dict:
         log("thinking", "读取 Challenger/会诊反馈，按打回点补强情报溯源分析")
 
     log("action", "正在调用 Kimi 进行情报归纳与溯源图谱解释")
-    llm_analysis = await osint_interpret(partial_result, input_type, case_prompt, sample_refs)
+    llm_status: dict[str, Any] = {}
+    llm_analysis = await osint_interpret(
+        partial_result,
+        input_type,
+        case_prompt,
+        sample_refs,
+        skill_context=skill_load.prompt_context,
+        llm_status=llm_status,
+    )
     partial_result["llm_analysis"] = llm_analysis
+    skill_execution = finalize_skill_execution(skill_load, llm_analysis, llm_status=llm_status)
+    partial_result["skill_execution"] = skill_execution
+    skill_status = str(skill_execution.get("execution_status") or "skipped")
+    if skill_status == "applied":
+        log("finding", "核心 Skill 已应用，OSINT 输出契约检查通过")
+    elif skill_status == "check_failed":
+        log("action", "核心 Skill 已注入，但 OSINT 输出契约检查未通过")
+    elif skill_execution.get("load_status") == "loaded":
+        log("action", "LLM 已降级或未执行，本轮无法证明实际采用核心 Skill")
+    record_audit_event(
+        action=f"skill.{skill_status}",
+        task_id=task_id,
+        agent="osint",
+        metadata=skill_execution,
+    )
 
     provenance_graph = build_provenance_graph(
         task_id=task_id,
@@ -603,6 +641,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "degradation_status": {
             "exa": exa_tool.get("status", "unknown"),
             "virustotal": "degraded" if any(item.get("tool") == "virustotal_osint_ioc" and item.get("degraded") for item in tool_results) else "ok",
+            "skill.osint": skill_status,
         },
         "tool_results": {"osint": tool_results},
         "logs": logs,

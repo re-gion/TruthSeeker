@@ -39,15 +39,12 @@ TruthSeeker的前端设计遵循"数字法医实验室"的隐喻——冷静、�
 | Info Cyan | `#06B6D4` |信息提示 |
 
 ###渐变定义
+项目不定义自定义渐变 CSS 变量；渐变统一用 Tailwind gradient 工具类组合 `@theme` 颜色令牌实现。示例：
+
 ```css
-/*主渐变 -科技蓝紫 */
---gradient-primary: linear-gradient(135deg, #6366F10%, #8B5CF650%, #A855F7100%);
-
-/*赛博光晕 */
---gradient-cyber: linear-gradient(90deg, #6366F10%, #D4FF12100%);
-
-/*深色面板 */
---gradient-panel: linear-gradient(180deg, rgba(48,54,61,0.9)0%, rgba(31,41,55,0.95)100%);
+/* 主渐变 -科技蓝紫：bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 */
+/* 赛博光晕：bg-gradient-to-r from-indigo-500 to-lime-400 */
+/* 深色面板：bg-gradient-to-b from-slate-600/90 to-slate-700/95 */
 ```
 
 ---
@@ -85,13 +82,16 @@ const LiquidGlassCard = ({ children }) => (
 
 ```
 ┌─────────────────────────────────────────┐
-│ [媒体预览] │ [法医分析流] │
-│3D悬浮展示 │实时数据瀑布 │
+│ [电子取证Agent] │ [情报溯源Agent] │
+│ AgentCard + 证据板 │ AgentCard + 溯源图谱 │
 ├──────────────────┼──────────────────────┤
-│ [溯源图谱] │ [质询官日志] │
-│网络拓扑可视化 │辩论时间轴 │
+│ [逻辑质询Agent] │ [研判指挥Agent] │
+│ AgentCard + 质询时间线 │ AgentCard + 裁决摘要 │
+│          [中央证据板]（跨四象限）        │
 └─────────────────────────────────────────┘
 ```
+
+实际实现见 `DetectConsole.tsx`：四象限为四个 Agent 面板 + 中央证据板；3D 仅作为背景（BentoScene），不可拖拽旋转（见第 4 节）。
 
 **响应式断点：**
 - Desktop (>1440px):4列网格
@@ -143,7 +143,7 @@ import { motion } from "framer-motion" //已废弃！
 
 ```tsx
 //当前 3D 背景结构
-<Canvas camera={{ position: [0,0,10], fov:50 }}>
+<Canvas camera={{ position: [0,0,8], fov:50 }}>
  <ambientLight intensity={0.5} />
  <pointLight position={[10,10,10]} color="#6366F1" />
 
@@ -161,25 +161,15 @@ import { motion } from "framer-motion" //已废弃！
 
 ##5.组件规范
 
-### Button变体
+### Button
+项目按钮组件为 `FluidGlassButton`（`components/ui/FluidGlassButton.tsx`），无 variant prop；主次/危险等视觉差异通过外层类组合区分。示例：
+
 ```tsx
-//主按钮 -赛博风格
-<Button variant="cyber">
-开始检测
-</Button>
-//样式：渐变背景 +发光边框 +悬停流光
+// 主按钮 -渐变背景 +发光边框 +悬停流光
+<FluidGlassButton onClick={startDetect}>开始检测</FluidGlassButton>
 
-//幽灵按钮 -玻璃效果
-<Button variant="ghost">
-查看详情
-</Button>
-//样式：透明背景 +白色边框 +悬停填充
-
-//危险按钮
-<Button variant="danger">
-删除任务
-</Button>
-//样式：红色渐变 +警告图标
+// 危险操作 -红色强调类组合
+<button className="bg-red-500/20 border border-red-400/40 ...">删除任务</button>
 ```
 
 ### Card变体
@@ -194,59 +184,49 @@ import { motion } from "framer-motion" //已废弃！
  {/*内容 */}
 </AgentCard>
 
-//证据卡片
-<EvidenceCard
- type="visual" // visual | audio | text | network
- severity="high" // low | medium | high | critical
- timestamp="00:12:34"
->
- {/*证据详情 */}
-</EvidenceCard>
 ```
 
-###数据可视化组件
-```tsx
-//置信度仪表盘
-<ConfidenceGauge value={0.87} size="lg" />
+### 数据可视化组件
+项目中实际存在并使用的可视化组件：
 
-//时间轴
-<Timeline events={debateEvents} activeIndex={2} />
+- `EvidenceTimeline`（`components/detect/EvidenceTimeline.tsx`）— 垂直证据时间轴，Agent 颜色编码 + 动画
+- `ProvenanceGraphView`（`components/detect/ProvenanceGraphView.tsx`）— 溯源图谱，@xyflow/react 画布（拖拽/缩放/节点详情/引用面板）
+- `AgentCard`（`components/agents/AgentCard.tsx`）— Agent 状态卡片（idle | analyzing | complete | error）
+- 数据大屏图表（ECharts：趋势/玫瑰图/裁决柱/雷达/Sankey，见 `DashboardClient.tsx`）
 
-//网络图谱
-<NetworkGraph nodes={intelNodes} edges={connections} />
-
-//代码流瀑布
-<CodeStream logs={apiLogs} speed="normal" />
-```
+置信度等单值指标直接由卡片内数字 + 颜色呈现，不依赖独立仪表盘组件。
 
 ---
 
-##6.字体规范
+## 6. 字体规范
 
-###字体族
+### 字体族
 ```css
-/*标题 -科技感无衬线 */
---font-heading: 'TimesLatinOnly', 'SiyuanSong', 'ZhengKaiTi', 'Inter', system-ui, sans-serif;
+/* 界面、正文与展示标题：自托管 IBM Plex Sans SC */
+--font-interface: 'IBM Plex Sans SC', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
 
-/*正文 -高可读性 */
---font-body: 'TimesLatinOnly', 'SiyuanSong', 'ZhengKaiTi', 'Inter', system-ui, sans-serif;
-
-/*代码/数据 -等宽 */
---font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-
-/*数字显示 -等宽tabular */
---font-numbers: 'SF Mono', 'Roboto Mono', monospace;
+/* 日志、代码、哈希、ID、时间戳：自托管 IBM Plex Mono；中文回退界面字体 */
+--font-telemetry: 'IBM Plex Mono', 'IBM Plex Sans SC', ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 ```
 
-###字号层级
-|级别 |大小 |字重 |用途 |
+字体文件位于 `truthseeker-web/public/fonts/ibm-plex/`，使用 IBM 官方 split WOFF2 与 OFL 许可证；运行时不得请求第三方字体服务。字体资产只提供 400、500、600 三个字重：新增代码应使用 normal/medium/semibold；历史 `font-bold`/`font-black` 会由浏览器匹配到最接近的 600，不应继续扩散。不再使用正楷、系统默认衬线字体或未随项目加载的等宽字体名称。
+
+### 字号层级
+
+> 以下为设计规范建议值；项目未定义 `--text-*` 令牌，页面实现直接使用 Tailwind 尺寸类。
+
+| 令牌 | 大小/行高 | 字重 | 用途 |
 |------|------|------|------|
-| H1 |48px |700 |页面主标题 |
-| H2 |32px |600 |区块标题 |
-| H3 |24px |600 |卡片标题 |
-| Body |16px |400 |正文 |
-| Small |14px |400 |辅助文本 |
-| Caption |12px |500 |标签/时间戳 |
+| Display | `clamp(40px, 7vw, 110px)` | 600 | Landing 主标题 |
+| Title | 24/32px | 600 | 页面标题 |
+| Title Small | 18/26px | 600 | 区块与卡片标题 |
+| Body Reading | 16/26px | 400 | 报告、协同长文 |
+| Body | 14/22px | 400 | 检测台默认正文 |
+| Body Small | 13/20px | 400 | 紧凑卡片、次级列表 |
+| Label | 13/18px | 500 | 表头、导航、字段名 |
+| Caption | 12/16px | 400/500 | 标签、时间戳 |
+
+数字纵向比较统一启用 `tabular-nums`。`font-mono` 只用于技术数据；普通中文说明使用界面字体。`tracking-widest` 只用于短英文/数字标签，不用于连续中文。
 
 ---
 
@@ -290,19 +270,17 @@ const easings = {
 ##8.响应式策略
 
 ###桌面优先（>1280px）
--完整3D场景展示
--四象限布局
--悬浮操作面板
+-完整 3D 背景场景展示
+-四 Agent 面板 + 中央证据板布局
+-悬浮操作面板（协同入口、回顶按钮等）
 
 ###平板适配（768-1280px）
--简化为2D网格
--侧边抽屉导航
--触摸友好的按钮尺寸
+-面板改为 2D 网格堆叠
+-触摸友好的按钮尺寸（当前未实现抽屉导航）
 
 ###移动端（<768px）
 -单列垂直滚动
--底部固定导航
--3D场景替换为轮播卡片
+-3D 背景保留但弱化（未实现底部固定导航与轮播卡片）
 
 ---
 

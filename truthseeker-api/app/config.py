@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         ),
     )
     AGENT_LLM_PROVIDER: str = Field(
-        default="kimi-k2.5",
+        default="kimi-k2.6",
         validation_alias=AliasChoices("AGENT_LLM_PROVIDER", "Agent_LLM_Provider"),
     )
     AGENT_LLM_MAX_OUTPUT_TOKENS: int = Field(
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_BASE_URL", "Kimi_Base_URL"),
     )
     KIMI_MODEL: str = Field(
-        default="kimi-k2.5",
+        default="kimi-k2.6",
         validation_alias=AliasChoices("KIMI_MODEL", "Kimi_Model"),
     )
     KIMI_CODING_API_KEY: str = Field(
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_CODING_BASE_URL", "Kimi_Coding_Base_URL"),
     )
     KIMI_CODING_MODEL: str = Field(
-        default="kimi-k2.5",
+        default="kimi-k2.6",
         validation_alias=AliasChoices("KIMI_CODING_MODEL", "Kimi_Coding_Model"),
     )
     KIMI_SILICONFLOW_API_KEY: str = Field(default="", validation_alias=AliasChoices("KIMI_SILICONFLOW_API_KEY"))
@@ -99,7 +99,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KIMI_SILICONFLOW_BASE_URL"),
     )
     KIMI_SILICONFLOW_MODEL: str = Field(
-        default="Pro/moonshotai/Kimi-K2.5",
+        default="Pro/moonshotai/Kimi-K2.6",
         validation_alias=AliasChoices("KIMI_SILICONFLOW_MODEL"),
     )
     MIMO_API_KEY: str = Field(default="", validation_alias=AliasChoices("MIMO_API_KEY", "MiMo_API_KEY"))
@@ -179,7 +179,7 @@ def _normalize_kimi_provider(provider: str) -> str:
 
 
 def _normalize_agent_llm_provider(provider: str) -> str:
-    value = (provider or "kimi-k2.5").strip().lower().replace("-", "_")
+    value = (provider or "kimi-k2.6").strip().lower().replace("-", "_")
     if value in {"mimo", "xiaomi_mimo", "mimo_v2.5", "mimo_v2_5", "mimo_token_plan", "xiaomi_token_plan"}:
         return "mimo"
     return "kimi"
@@ -222,7 +222,7 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
         agent_provider = "mimo"
 
     official_key = env.get("KIMI_API_KEY") or cfg.KIMI_API_KEY
-    official_model = (env.get("KIMI_MODEL") or cfg.KIMI_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
+    official_model = (env.get("KIMI_MODEL") or cfg.KIMI_MODEL or "kimi-k2.6").strip() or "kimi-k2.6"
     official_base = _normalize_kimi_base_url(env.get("KIMI_BASE_URL") or cfg.KIMI_BASE_URL, "official")
 
     if agent_provider == "mimo":
@@ -246,7 +246,7 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
         }
     if provider == "coding":
         coding_key = env.get("KIMI_CODING_API_KEY") or cfg.KIMI_CODING_API_KEY or official_key
-        coding_model = (env.get("KIMI_CODING_MODEL") or cfg.KIMI_CODING_MODEL or "kimi-k2.5").strip() or "kimi-k2.5"
+        coding_model = (env.get("KIMI_CODING_MODEL") or cfg.KIMI_CODING_MODEL or "kimi-k2.6").strip() or "kimi-k2.6"
         coding_base = _normalize_kimi_base_url(env.get("KIMI_CODING_BASE_URL") or cfg.KIMI_CODING_BASE_URL, "coding")
         return {
             "provider": "coding",
@@ -261,7 +261,7 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
         }
     if provider == "siliconflow":
         sf_key = env.get("KIMI_SILICONFLOW_API_KEY") or cfg.KIMI_SILICONFLOW_API_KEY or official_key
-        sf_model = (env.get("KIMI_SILICONFLOW_MODEL") or cfg.KIMI_SILICONFLOW_MODEL or "Pro/moonshotai/Kimi-K2.5").strip()
+        sf_model = (env.get("KIMI_SILICONFLOW_MODEL") or cfg.KIMI_SILICONFLOW_MODEL or "Pro/moonshotai/Kimi-K2.6").strip()
         sf_base = (env.get("KIMI_SILICONFLOW_BASE_URL") or cfg.KIMI_SILICONFLOW_BASE_URL or "https://api.siliconflow.cn/v1").strip().rstrip("/")
         return {
             "provider": "siliconflow",

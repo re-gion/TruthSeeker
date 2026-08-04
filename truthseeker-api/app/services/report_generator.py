@@ -34,7 +34,7 @@ AGENT_DISPLAY_NAMES = {
     "forensics": "电子取证 Agent",
     "osint": "情报溯源 Agent",
     "challenger": "逻辑质询 Agent",
-    "commander": "综合研判 Agent",
+    "commander": "研判指挥 Agent",
 }
 
 
@@ -224,6 +224,18 @@ async def generate_markdown_report(task_id: str) -> str:
                 else:
                     lines.append(f"  - {ev}")
         lines.append("")
+
+    # ---- Agent Skill 执行摘要 ----
+    lines.append("## Agent Skill 执行摘要")
+    lines.append("")
+    skill_sections = _build_skill_execution_sections(analysis_states, consultation_sessions)
+    if skill_sections:
+        lines.append("> 仅展示后端实际持久化的本轮执行记录；固定绑定不等于本轮已采用。")
+        lines.append("")
+        lines.extend(skill_sections)
+    else:
+        lines.append("- 本任务没有可核验的 Agent Skill 执行元数据，不能据此声称采用了 Skill。")
+    lines.append("")
 
     # ---- 降级状态汇总 ----
     forensics = _extract_agent_result(analysis_states, "forensics")
@@ -617,6 +629,112 @@ def _filter_audit_logs_for_detection_run(audit_logs: list, detection_run_id: str
 
 def _agent_display_name(agent_name: str) -> str:
     return AGENT_DISPLAY_NAMES.get(agent_name, agent_name)
+
+
+def _skill_table_cell(value) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text.replace("|", "／") or "—"
+
+
+def _skill_check_summary(execution: dict) -> str:
+    checks = [item for item in execution.get("check_results") or [] if isinstance(item, dict)]
+    if not checks:
+        return "未记录"
+    passed = sum(1 for item in checks if item.get("status") == "passed")
+    if passed == len(checks):
+        return f"通过 {passed}/{len(checks)}"
+    return f"未通过 {passed}/{len(checks)}"
+
+
+def _build_skill_execution_sections(analysis_states: list, consultation_sessions: list) -> list[str]:
+    """Build a truth-preserving matrix from persisted runtime metadata only."""
+    records: dict[tuple[str, str], dict] = {}
+
+    def remember(agent: str, candidate) -> None:
+        if not isinstance(candidate, dict):
+            return
+        skill_name = str(candidate.get("skill_name") or "").strip()
+        workflow = str(candidate.get("workflow") or "").strip()
+        if not skill_name or not workflow:
+            return
+        records[(agent, workflow)] = candidate
+
+    def state_order(state: dict) -> tuple[datetime, int]:
+        try:
+            round_number = int(state.get("round_number") or 0)
+        except (TypeError, ValueError):
+            round_number = 0
+        return _row_time(state), round_number
+
+    for state in sorted((item for item in analysis_states if isinstance(item, dict)), key=state_order):
+        snapshot = state.get("result_snapshot") if isinstance(state.get("result_snapshot"), dict) else {}
+        for agent in ("forensics", "osint", "challenger"):
+            result = snapshot.get(agent)
+            if isinstance(result, dict):
+                remember(agent, result.get("skill_execution"))
+        final_verdict = snapshot.get("final_verdict") or snapshot.get("commander")
+        if isinstance(final_verdict, dict):
+            remember("commander", final_verdict.get("skill_execution"))
+
+    for session in sorted(
+        (item for item in consultation_sessions if isinstance(item, dict)),
+        key=_row_time,
+    ):
+        context = session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {}
+        summary = session.get("summary_payload") if isinstance(session.get("summary_payload"), dict) else {}
+        remember("commander", context.get("skill_execution"))
+        remember("commander", summary.get("skill_execution"))
+        remember("commander", summary.get("experience_skill_execution"))
+
+    if not records:
+        return []
+
+    preferred_order = (
+        ("forensics", "primary_analysis"),
+        ("osint", "primary_analysis"),
+        ("challenger", "phase_review"),
+        ("commander", "final_adjudication"),
+        ("commander", "human_collaboration"),
+        ("commander", "experience_distillation"),
+    )
+    ordered_keys = [key for key in preferred_order if key in records]
+    ordered_keys.extend(sorted(key for key in records if key not in preferred_order))
+
+    load_labels = {
+        "loaded": "已加载",
+        "not_loaded": "未加载",
+        "degraded": "加载降级",
+    }
+    execution_labels = {
+        "applied": "已采用",
+        "check_failed": "未采用（检查失败）",
+        "skipped": "未采用（已跳过）",
+        "pending": "未执行（待定）",
+    }
+    lines = [
+        "| Agent | 核心 Skill | 版本 | 工作流 | 加载状态 | 本轮执行 | 输出检查 | 限制 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for agent, workflow in ordered_keys:
+        execution = records[(agent, workflow)]
+        limitations = "；".join(
+            _skill_table_cell(item) for item in execution.get("limitations") or [] if str(item).strip()
+        ) or "—"
+        cells = (
+            _agent_display_name(agent),
+            execution.get("skill_name"),
+            execution.get("skill_version"),
+            workflow,
+            load_labels.get(str(execution.get("load_status") or ""), execution.get("load_status") or "未记录"),
+            execution_labels.get(
+                str(execution.get("execution_status") or ""),
+                execution.get("execution_status") or "未记录",
+            ),
+            _skill_check_summary(execution),
+            limitations,
+        )
+        lines.append("| " + " | ".join(_skill_table_cell(cell) for cell in cells) + " |")
+    return lines
 
 
 def _normalize_report_agent_terms(markdown: str) -> str:

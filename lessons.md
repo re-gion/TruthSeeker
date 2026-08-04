@@ -1,6 +1,6 @@
 # TruthSeeker 开发错误记录本
 
-> 犯错后立即记录。开发前快速浏览。最后更新: 2026-06-05
+> 犯错后立即记录。开发前快速浏览。最后更新: 2026-08-04
 
 ---
 
@@ -34,7 +34,7 @@
 | 2026-06-02 | 后端/VirusTotal URL 扫描 | VT URL 新提交扫描可能长时间 `queued`，短轮询结束后会出现 `analysis_queued` 且没有厂商统计 | queued 时不要把空统计当 0 检出；应补充回查 `/api/v3/urls/{url_id}` 的既有 `last_analysis_stats`，仍无结果才标记 `scan_available=false` |
 | 2026-06-03 | 后端/Challenger 协同恢复 | `resume_after_consultation` 如果被当作自动放行，会导致仍需补证的阶段直接跳到下一 Agent；跨阶段复用 `consultation_trigger_history` 还会让 OSINT 阶段错误触发 forensics 协同 | 协同恢复载荷要先注入本轮 Challenger 上下文；低于阈值时只有用户/专家摘要明确打破能力上限或建议放行，或达到第 5 轮上限，才允许放行；协同触发必须按当前 `phase == target_agent` 的连续记录计算 |
 | 2026-06-03 | 后端/文本 AIGC 与协同上下文 | 同一问题连续三轮由 LLM 改写后会污染“需要帮助”字段；按某个案例写死 canonical 规则会过拟合 | Commander 在启动人机协同时调用 LLM 对 `help_needed` 语义合并，LLM 不可用才用通用相似度兜底；不要按单个工具/API 错误写死关键词规则 |
-| 2026-06-03 | 后端/协同轮次与摘要 | 第 5 轮仍触发协同会造成用户/专家回复无法再补强，因为再推理会变成第 6 轮；结束协同时只拼接聊天记录也不是摘要 | 每个目标 Agent 最多在第 3/4 轮触发协同，第 5 轮直接放行并保留残留风险；结束协同必须由 Commander LLM 总结 `help_needed`、协同任务和用户/专家对话，固定结构只做降级兜底 |
+| 2026-06-03 | 后端/协同轮次与摘要 | 第 5 轮仍触发协同会造成用户/专家回复无法再补强，因为再推理会变成第 6 轮；结束协同时只拼接聊天记录也不是摘要，字符截断还会产生残句 | 每个目标 Agent 最多在第 3/4 轮触发协同，第 5 轮直接放行并保留残留风险；结束协同优先由 Commander LLM 总结 `help_needed`、协同任务和用户/专家回复，LLM 降级兜底也必须提炼结论、确认态与后续动作，不得复制聊天原文 |
 | 2026-06-05 | 后端/Challenger 低置信门槛 | 低于 0.8 仍让 Challenger 自主放行，会让 57%/65% 这类明显未达标结论直接进入下一 Agent | 前 4 轮 `confidence < 0.8` 必须打回目标 Agent；连续 3 轮低置信且相邻变化 `<0.08` 启动人机协同；第 5 轮必须放行但写 `max_rounds_release=true` 和残留风险 |
 | 2026-06-05 | 后端/OSINT 图谱引用 | provenance graph 如果只给少数外源节点挂 citation，会造成 citation_coverage 过低、model_inferred_ratio 过高，报告不可审计 | 上传检材、工具结果、外源、公开案例 RAG、个人经验 RAG 都要生成带 `source_kind` 的 citation；claim/tool finding/source edge 必须绑定 `citation_ids`，模型推理只能显式标记 |
 | 2026-06-03 | 后端/AIGC 字段命名 | 图片 `AI_GENERATED`、音视频合成篡改和旧 Deepfake provider 字段混用，会让报告把 AIGC 概率误写成 Deepfake 概率 | 新运行时主字段统一用 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_*` 只作为历史 JSONB 读取 fallback，不能进入新报告主字段或用户可见术语 |
@@ -45,6 +45,12 @@
 | 2026-06-04 | 后端/Agent 报告日期推理 | LLM 会把样本日期和分析时间的先后关系判反，例如把 2026-04-22 误称为相对 2026-06-04 的未来日期 | 日期先后关系必须由代码生成确定性时间校验表后注入 Forensics/OSINT 提示词；LLM 不得输出与校验表相反的判断 |
 | 2026-06-04 | 后端/OSINT 文本工具边界 | `text_claim_extract` 如果继续暴露 `ai_probability`，会和内部 `ai_text_detector` 的正式文本 AIGC 概率混淆，报告读者无法判断哪个才是准确信号 | `text_claim_extract` 只保留社工风险 claim、诱导话术、URL 和异常线索；文本 AIGC 概率只由 `ai_text_detector` 输出和参与 AIGC 风险评分 |
 | 2026-06-06 | 文档/代理指引漂移 | `CLAUDE.md`、`AGENTS.md`、`.github/copilot-instructions.md` 如果各自复制技术栈、拓扑和命令，很容易出现 Next.js 15、旧并行拓扑或 Commander 后质询这类过期规则 | `AGENTS.md` 作为跨工具主指引；`CLAUDE.md` 只导入对应 `AGENTS.md`；`.github` 指令只保留速查并指向主文档，版本和拓扑以源码与 `docs/TECH_STACK.md` 为准 |
+| 2026-08-04 | 后端/Agent Skill 审计 | 只记录 `status=loaded` 会把“文件读取成功”误写成“本轮确实采用且输出合格”；字符串包含式章节检查、LLM 本地降级报告和未隔离的案件文本也可能伪造成功 | 分离 `load_status`、`execution_status` 和逐项 `check_results`；以显式 LLM 状态证明实际调用；Markdown 检查忽略代码块并验证标题唯一、顺序和正文；全部不可信案件字段统一转义后放入低优先级数据边界 |
+| 2026-08-04 | 后端/Commander 多工作流 Skill | 人机协同摘要和经验提炼不经过主 LangGraph 节点，如果只在 `commander_node` 接 Skill，会遗漏两条真实生产调用链，也无法在空草稿时携带执行状态 | 三个 Commander 工作流分别在实际调用点加载；协同上下文和摘要直接携带 `skill_execution`，经验提炼通过显式 sink 回传状态，再由协同摘要持久化并审计 |
+| 2026-08-04 | 后端/Skill 降级真实性 | LLM 初始化异常、带 JSON 的本地回退文本或确认摘要机械重算，可能让系统误报 LLM/Skill 成功，或覆盖 Commander 已提炼的语义元数据 | 所有解析前先检查显式 LLM 状态；格式或本地回退只能记为降级/`skipped`；确认操作只更新确认字段，Commander 摘要、未解决项和 Skill/经验元数据从原摘要保留 |
+| 2026-08-04 | 后端/Supabase 上传 | supabase-py storage 子客户端默认 `http2=True`；经本机系统代理上传时被远程重置流（`StreamReset PROTOCOL_ERROR`）或切断 TLS 握手，传输层吞掉真实状态码，前端只看到笼统 500；且无重试，瞬时抖动即失败 | `SyncClientOptions(httpx_client=httpx.Client(http2=False,...))` 注入共享 HTTP/1.1 客户端；上传端对 `httpx.TransportError` 有限重试且重试带 upsert；413 映射为明确文案。另修 storage3 `FileOptions` 两个坑：键必须带连字符（`content_type=` 下划线写法从不覆盖默认 content-type，历史上传全存成 text/plain），`upsert` 必须传字符串 `"true"`（布尔值会原样进 x-upsert 请求头触发 TypeError） |
+| 2026-08-04 | 后端/专家邀请鉴权 | 专家邀请链接匿名访问走规范前缀 `/api/v1/collaboration/...`，认证中间件公开白名单却只含历史别名 `/api/v1/consultation/`，匿名专家请求全部 401，前端统一提示“邀请链接无效或已失效” | 公开规则按双前缀（collaboration/consultation）同时匹配，且只放行带 invite_token 端内校验的只读/注入接口（invite、messages、agent-history、inject）；session、approve、skip、end_consultation 等 owner 接口保持 JWT 保护。邀请链接必须整段复制转发，手动转述 I/l、K/k 等字符极易被改且无法靠大小写回退修复 |
+| 2026-08-04 | 前后端/Skill 产品可见性 | Agent 固定绑定和本轮真实执行是两种不同事实；若卡片或报告都从静态配置推断，用户会把“具备该能力”误读为“本案已采用” | Agent 卡片只展示名称、版本与“固定绑定”；报告只读取分析快照和协同会话中的 `skill_execution`，按 `applied/check_failed/skipped` 展示，缺少元数据时明确无法核验 |
 
 ---
 

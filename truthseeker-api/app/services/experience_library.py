@@ -139,12 +139,14 @@ async def build_experience_drafts(
     messages: list[dict[str, Any]],
     context_payload: dict[str, Any] | None = None,
     summary_payload: dict[str, Any] | None = None,
+    skill_execution_sink: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     client = client or supabase
     raw_drafts = await commander_extract_experience_drafts(
         messages=messages,
         context_payload=context_payload or {},
         summary_payload=summary_payload or {},
+        skill_execution_sink=skill_execution_sink,
     )
     drafts: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()

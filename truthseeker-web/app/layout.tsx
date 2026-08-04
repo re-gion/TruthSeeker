@@ -1,28 +1,7 @@
 import type { Metadata } from "next"
-import localFont from "next/font/local"
 import { ScrollToTop } from "@/components/layout/ScrollToTop"
 import { PageTransition } from "@/components/layout/PageTransition"
 import "./globals.css"
-
-const interfaceSans = localFont({
-  src: "../public/fonts/思源宋体SemiBold.otf",
-  variable: "--font-geist-sans",
-  display: "swap",
-  weight: "600",
-})
-
-const interfaceMono = localFont({
-  src: "../public/fonts/ZhengKaiTi.ttf",
-  variable: "--font-geist-mono",
-  display: "swap",
-})
-
-const siyuanSong = localFont({
-  src: "../public/fonts/思源宋体SemiBold.otf",
-  variable: "--font-siyuan",
-  weight: "600",
-  display: "swap",
-})
 
 export const metadata: Metadata = {
   title: "TruthSeeker | 恶意 AIGC 鉴定系统",
@@ -43,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN" className="dark" suppressHydrationWarning>
-      <body className={`${interfaceSans.variable} ${interfaceMono.variable} ${siyuanSong.variable} ${siyuanSong.className} antialiased bg-background text-foreground`}>
+      <body className="font-sans antialiased bg-background text-foreground">
         <PageTransition>
           {children}
         </PageTransition>

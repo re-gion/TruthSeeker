@@ -2,6 +2,8 @@
 
 import { motion } from "motion/react"
 
+import { getAgentSkillBinding } from "@/lib/agent-skills"
+
 type AgentStatus = "idle" | "analyzing" | "complete" | "error"
 
 interface AgentCardProps {
@@ -31,6 +33,7 @@ const AGENT_COLORS: Record<string, string> = {
 export function AgentCard({ name, agentKey, icon, status, confidence, description, children }: AgentCardProps) {
     const config = STATUS_CONFIG[status]
     const accentColor = AGENT_COLORS[agentKey] || config.color
+    const skill = getAgentSkillBinding(agentKey)
 
     return (
         <motion.div
@@ -74,6 +77,27 @@ export function AgentCard({ name, agentKey, icon, status, confidence, descriptio
                     </span>
                 </div>
             </div>
+
+            {skill && (
+                <div
+                    className="mb-3 flex min-w-0 items-center gap-2 border-y border-white/[0.06] bg-white/[0.025] px-2.5 py-2"
+                    title={`${skill.name} v${skill.version}`}
+                >
+                    <span
+                        className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.16em]"
+                        style={{ color: accentColor }}
+                    >
+                        Core Skill
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/80">
+                        {skill.label}
+                    </span>
+                    <span className="shrink-0 font-mono text-[10px] text-white/45">v{skill.version}</span>
+                    <span className="shrink-0 rounded-sm border border-white/10 px-1.5 py-0.5 text-[9px] tracking-wide text-white/35">
+                        固定绑定
+                    </span>
+                </div>
+            )}
 
             {/* Confidence bar */}
             {confidence !== undefined && confidence > 0 && (

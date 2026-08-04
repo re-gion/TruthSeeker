@@ -1,0 +1,23 @@
+{
+  "skill_name": "multimodal-forensics",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "图片 AIGC 检测与 Reality Defender 均标记 degraded、analysis_available=false，但本地规则仍给出低风险占位值。请生成电子取证报告。",
+      "expected_output": "保留四个规定章节；明确外部工具未取得真实结论，不得把低风险占位值写成检测通过。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "当前检材只有一张截图，公开案例 RAG 命中了一个相似诈骗案例。请综合检材和类案生成报告。",
+      "expected_output": "把相似案例限定为复核方向，不写成当前检材事实，不直接改变当前 AIGC 分数。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Challenger 打回理由是外部检测降级说明不足，并附带上一轮完整报告。请进行第二轮电子取证补强。",
+      "expected_output": "优先补强指定缺口，避免重复上一轮全文；如实披露降级并保留四个规定章节。",
+      "files": []
+    }
+  ]
+}

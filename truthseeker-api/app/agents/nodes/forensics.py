@@ -8,11 +8,12 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
+from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text
 from app.agents.tools.llm_client import build_sample_references, forensics_interpret
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
-from app.config import settings
+from app.config import resolve_kimi_runtime, settings
 from app.services.audit_log import record_audit_event
 from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
@@ -257,6 +258,31 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             "timestamp": _now(),
         })
 
+    skill_load = load_agent_skill("forensics", "primary_analysis")
+    skill_execution = skill_load.execution
+    skill_load_status = str(skill_execution.get("load_status") or "degraded")
+    skill_limitations = [str(item) for item in (skill_execution.get("limitations") or [])]
+    if skill_load_status == "loaded":
+        log(
+            "action",
+            f"核心 Skill {skill_execution['skill_name']} v{skill_execution['skill_version']} 已加载，工作流 primary_analysis",
+        )
+    else:
+        reason = skill_limitations[0] if skill_limitations else "未知原因"
+        log("action", f"核心 Skill 未加载，继续使用系统提示词；原因：{reason}")
+    record_audit_event(
+        action=f"skill.{skill_load_status}",
+        task_id=task_id,
+        agent="forensics",
+        metadata={
+            "skill_name": skill_execution.get("skill_name"),
+            "skill_version": skill_execution.get("skill_version"),
+            "workflow": skill_execution.get("workflow"),
+            "content_digest": skill_execution.get("content_digest"),
+            "limitations": skill_limitations,
+        },
+    )
+
     files = _all_evidence_files(state)
     sample_refs = build_sample_references(files)
     media_files = [item for item in files if item.get("modality") in MEDIA_MODALITIES]
@@ -488,6 +514,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "text_samples": text_contents,
         "case_rag": case_rag,
         "experience_rag": experience_rag,
+        "skill_execution": skill_execution,
         "timestamp": _now(),
     }
     reinforcement_context = _build_reinforcement_context(state, "forensics", state.get("forensics_result") or {})
@@ -496,7 +523,60 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         log("thinking", "读取 Challenger/会诊反馈，按打回点补强电子取证分析")
 
     log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
-    llm_analysis = await forensics_interpret(raw_forensics, input_type, case_prompt, sample_refs, text_contents=text_contents)
+    llm_status: dict[str, Any] = {}
+    llm_analysis = await forensics_interpret(
+        raw_forensics,
+        input_type,
+        case_prompt,
+        sample_refs,
+        text_contents=text_contents,
+        skill_context=skill_load.prompt_context,
+        llm_status=llm_status,
+    )
+    skill_execution = finalize_skill_execution(skill_load, llm_analysis, llm_status=llm_status)
+    raw_forensics["skill_execution"] = skill_execution
+    if skill_execution.get("execution_status") == "applied":
+        log("finding", "核心 Skill 已应用，输出契约检查通过")
+        record_audit_event(
+            action="skill.applied",
+            task_id=task_id,
+            agent="forensics",
+            metadata={
+                "skill_name": skill_execution.get("skill_name"),
+                "skill_version": skill_execution.get("skill_version"),
+                "workflow": skill_execution.get("workflow"),
+                "content_digest": skill_execution.get("content_digest"),
+                "check_results": skill_execution.get("check_results"),
+            },
+        )
+    elif skill_execution.get("execution_status") == "check_failed":
+        log("action", "核心 Skill 已注入，但输出契约检查未通过；保留报告并标记降级")
+        record_audit_event(
+            action="skill.check_failed",
+            task_id=task_id,
+            agent="forensics",
+            metadata={
+                "skill_name": skill_execution.get("skill_name"),
+                "skill_version": skill_execution.get("skill_version"),
+                "workflow": skill_execution.get("workflow"),
+                "check_results": skill_execution.get("check_results"),
+                "limitations": skill_execution.get("limitations"),
+            },
+        )
+    elif skill_execution.get("load_status") == "loaded" and skill_execution.get("execution_status") == "skipped":
+        log("action", "LLM 已降级，本轮无法证明实际采用核心 Skill；继续保留本地降级报告")
+        record_audit_event(
+            action="skill.skipped",
+            task_id=task_id,
+            agent="forensics",
+            metadata={
+                "skill_name": skill_execution.get("skill_name"),
+                "skill_version": skill_execution.get("skill_version"),
+                "workflow": skill_execution.get("workflow"),
+                "llm_status": llm_status,
+                "limitations": skill_execution.get("limitations"),
+            },
+        )
     log("finding", f"电子取证报告生成完成，工具结果 {len(settled_results)} 条")
 
     forensics_score = confidence
@@ -508,7 +588,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "text_aigc_probability": text_aigc_prob,
         "confidence": confidence,
         "forensics_score": forensics_score,
-        "model_used": "sightengine_genai/reality_defender+virustotal+kimi-k2.5",
+        "model_used": f"sightengine_genai/reality_defender+virustotal+{resolve_kimi_runtime()['model']}",
         "model_scores": rd_success_results[:5],
         "degraded_model_scores": [item for item in rd_results if item.get("degraded")][:5],
         "frame_inferences_count": sum(len(item.get("frame_inferences") or []) for item in rd_success_results),
@@ -529,6 +609,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         },
         "case_rag": case_rag,
         "experience_rag": experience_rag,
+        "skill_execution": skill_execution,
         "sample_refs": sample_refs,
         "degraded": degraded,
         "degradation_status": degradation_level,
@@ -590,6 +671,9 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             "reality_defender": "degraded" if any(r.get("tool") == "reality_defender" and r.get("degraded") for r in settled_results) else "ok",
             "virustotal": "degraded" if any(str(r.get("tool", "")).startswith("virustotal") and r.get("degraded") for r in settled_results) else "ok",
             "ai_text_detector": "degraded" if any(r.get("tool") == "ai_text_detector" and r.get("degraded") for r in settled_results) else "ok",
+            "skill.forensics": skill_execution.get("execution_status")
+            if skill_execution.get("load_status") == "loaded"
+            else skill_execution.get("load_status"),
         },
         "tool_results": {"forensics": settled_results},
     }

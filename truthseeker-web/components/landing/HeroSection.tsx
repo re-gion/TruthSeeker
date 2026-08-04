@@ -232,26 +232,10 @@ export function HeroSection() {
                         </div>
                     </motion.div>
 
-                    {/* Top-Right: OSINT */}
+                    {/* Top-Right: Challenger */}
                     <motion.div
                         style={{ x: card2X, y: card2Y }}
-                        className="absolute right-[0%] top-[7%] hidden md:flex items-start gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-64 min-h-[142px] pointer-events-auto hover:border-emerald-500/50 transition-colors group"
-                    >
-                        <div className="size-11 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center self-start mt-0.5">
-                            <Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                            <div className="text-[11px] text-emerald-500 dark:text-emerald-300 font-mono font-bold tracking-[0.18em] uppercase">情报溯源</div>
-                            <div className="mt-1 text-sm font-semibold text-[#111827] dark:text-white">情报溯源Agent</div>
-                            <div className="mt-1.5 text-xs leading-5 opacity-80 text-black/75 dark:text-white/75">追踪传播链路，关联域名、社媒与公开线索。</div>
-                            <OsintChart />
-                        </div>
-                    </motion.div>
-
-                    {/* Bottom-Left: Challenger */}
-                    <motion.div
-                        style={{ x: card3X, y: card3Y }}
-                        className="absolute left-[1%] bottom-[13%] hidden md:flex items-start gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-64 min-h-[142px] pointer-events-auto hover:border-[#D4FF12]/50 transition-colors group"
+                        className="absolute right-[0%] top-[7%] hidden md:flex items-start gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-64 min-h-[142px] pointer-events-auto hover:border-[#D4FF12]/50 transition-colors group"
                     >
                         <div className="size-11 shrink-0 rounded-xl bg-[#D4FF12]/20 flex items-center justify-center self-start mt-0.5">
                             <Image src="/agent-icons/challenger.svg" alt="逻辑质询Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
@@ -261,6 +245,22 @@ export function HeroSection() {
                             <div className="mt-1 text-sm font-semibold text-[#111827] dark:text-white">逻辑质询Agent</div>
                             <div className="mt-1.5 text-xs leading-5 opacity-80 text-black/75 dark:text-white/75">识别证据冲突，触发复核并定位链路漏洞。</div>
                             <ChallengerChart />
+                        </div>
+                    </motion.div>
+
+                    {/* Bottom-Left: OSINT */}
+                    <motion.div
+                        style={{ x: card3X, y: card3Y }}
+                        className="absolute left-[1%] bottom-[13%] hidden md:flex items-start gap-4 rounded-2xl border border-white/10 shadow-2xl glass-card px-4 py-3 w-64 min-h-[142px] pointer-events-auto hover:border-emerald-500/50 transition-colors group"
+                    >
+                        <div className="size-11 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center self-start mt-0.5">
+                            <Image src="/agent-icons/osint.svg" alt="情报溯源Agent" width={24} height={24} className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[11px] text-emerald-500 dark:text-emerald-300 font-mono font-bold tracking-[0.18em] uppercase">情报溯源</div>
+                            <div className="mt-1 text-sm font-semibold text-[#111827] dark:text-white">情报溯源Agent</div>
+                            <div className="mt-1.5 text-xs leading-5 opacity-80 text-black/75 dark:text-white/75">追踪传播链路，关联域名、社媒与公开线索。</div>
+                            <OsintChart />
                         </div>
                     </motion.div>
 
@@ -300,7 +300,7 @@ export function HeroSection() {
                             className="absolute -inset-4 bg-gradient-to-r from-primary/0 via-primary/10 to-transparent blur-2xl z-0"
                         />
                         <motion.h1
-                            className="text-6xl md:text-8xl lg:text-[110px] font-bold tracking-tighter mb-4 leading-none flex justify-center flex-wrap relative z-10 font-serif drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
+                            className="text-6xl md:text-8xl lg:text-[110px] font-bold tracking-tighter mb-4 leading-none flex justify-center flex-wrap relative z-10 font-display drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
                         >
                             <GradientText
                                 colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}

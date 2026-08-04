@@ -25,6 +25,8 @@
 4. 前端调用 `POST /api/v1/tasks` 创建任务。
 5. 检测页只携带 `taskId`，不依赖 URL 中传 signed file URL。
 
+上传到 Supabase Storage 走共享 HTTP/1.1 客户端（HTTP/2 经代理时易被远程重置流且吞掉真实状态码）；传输层瞬时错误（连接中断、TLS 握手被代理切断等）有限重试，重试带 upsert 防重复对象；服务端 413 明确拒绝时直接返回“文件超出云存储单文件上限”。
+
 如果用户勾选“愿意脱敏后公开至案例库”，上传端额外要求每个文件不超过 50MB，并把文件 SHA-256 写入任务文件清单。任务创建时会用“文件 SHA-256 集合 + 规范化 `case_prompt`”检查公开案例库是否已有重复案例；重复时检测照常进行，但不会重复入库。
 
 任务表约定：
@@ -54,7 +56,7 @@ flowchart TD
 
 阶段规则：
 
-- 自主推理先行：四个 Agent 都先基于可配置的原生多模态 Agent LLM 读取可访问样本、文本内容、全局检测目标和证据板；默认 Kimi 2.5，调用 Kimi K2.5 时禁用 thinking，也可通过 `AGENT_LLM_PROVIDER=mimo` 切到小米 MiMo Token Plan 的 `mimo-v2.5`。Kimi K2.5 支持 `text,image,video` 输入、上下文 262144 tokens；MiMo `mimo-v2.5` 支持 `text,image` 输入、上下文 1048576 tokens，`MIMO_THINKING=enabled|disabled` 可显式控制思考模式。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 限制单次模型输出。随后各 Agent 再按角色调用外部工具，最后融合自主推理与工具结果完成任务。
+- 工具先行、LLM 最后融合：四个 Agent 都先按角色执行工具/硬规则（工具结果 all-settled 进入证据板），再基于可配置的原生多模态 Agent LLM（默认 Kimi 2.6，调用 Kimi K2.6 时禁用 thinking，也可通过 `AGENT_LLM_PROVIDER=mimo` 切到小米 MiMo Token Plan 的 `mimo-v2.5`）读取可访问样本、文本内容、全局检测目标和证据板后输出阶段结论。Kimi K2.6 支持 `text,image,video` 输入、上下文 262144 tokens；MiMo `mimo-v2.5` 支持 `text,image` 输入、上下文 1048576 tokens，`MIMO_THINKING=enabled|disabled` 可显式控制思考模式。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 限制单次模型输出。LLM 的输入 prompt 本身包含工具结果，不存在"LLM 先行"阶段。
 - `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Agent LLM 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
 - `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。
 - `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。
@@ -88,7 +90,7 @@ flowchart TD
 
 - 邀请按 `task_id` 和 `collaboration_session.id` 绑定，默认 24 小时 TTL；样本链接沿用本轮邀请有效期，不生成永久公开链接。旧 `consultation_session.id` 仅作历史兼容。
 - 消息保存为轻结构化记录：`session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
-- Commander 是主持人，负责在协同开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。用户结束协同时，Commander 还会调用大模型阅读协同上下文、`help_needed`、专家任务和用户/专家对话，生成可回注摘要；固定结构摘要只作为模型不可用时的兜底。
+- Commander 是主持人，负责在协同开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。用户结束协同时，Commander 还会调用大模型阅读协同上下文、`help_needed`、专家任务和用户/专家对话，生成可回注摘要；模型不可用时的本地兜底也必须提炼专家结论、用户确认、依据与后续动作，不得拼接或截断复制聊天原文。
 - 只有用户能批准重复协同、跳过本次、结束协同、编辑确认 Commander 摘要。摘要确认后回注全局证据板，流程恢复到 Challenger。
 - 协同恢复时，后端通过 `resume=true` 注入专家/用户消息、协同 sessions 和已确认摘要；若 LangGraph checkpoint 丢失，则从 `analysis_states`、`collaboration_messages` 和 `collaboration_sessions` 重建可裁决状态，旧 `consultation_*` 表只读兼容。
 
@@ -155,7 +157,6 @@ flowchart TD
 - `collaboration_required`
 - `collaboration_approval_required`
 - `collaboration_started`
-- `collaboration_summary_pending`
 - `collaboration_summary_confirmed`
 - `collaboration_skipped`
 - `collaboration_resumed`
@@ -190,7 +191,7 @@ flowchart TD
 
 `verdict_payload` 承载子结论：取证结论、溯源结论、威胁判断、图谱质量、Challenger 审查结果和 `provenance_graph`。主 verdict 不扩展枚举，避免破坏数据库和前端颜色体系。
 
-如果发生人机协同，`verdict_payload` 还应包含协同状态、邀请与确认摘要、专家意见数量、主持人最终动作和残留争议。Markdown/PDF 报告需要展示协同触发原因、专家共识/分歧、Commander 摘要、主持人确认时间，以及这些意见如何影响最终裁决；时间线需要展示协同触发、邀请创建、专家提交、摘要待确认、摘要确认、恢复或结束。旧任务中的 `consultation_*` 字段只作为历史兼容读取，新流程主写 `collaboration_*`。
+如果发生人机协同，`verdict_payload` 还应包含协同状态、邀请与确认摘要、专家意见数量、主持人最终动作和残留争议。Markdown/PDF 报告需要展示协同触发原因、专家共识/分歧、Commander 摘要、主持人确认时间，以及这些意见如何影响最终裁决；同时从分析快照和协同会话的持久化 `skill_execution` 元数据生成 Agent Skill 执行摘要矩阵。时间线需要展示协同触发、邀请创建、专家提交、摘要待确认、摘要确认、恢复或结束。旧任务中的 `consultation_*` 字段只作为历史兼容读取，新流程主写 `collaboration_*`。
 
 `report_hash` 使用 SHA-256，对规范化后的任务 ID、裁决、置信度、摘要、关键证据、建议和 verdict payload 做稳定 JSON 哈希。签名 URL、token、raw API 结果等敏感字段不进入哈希明文。
 

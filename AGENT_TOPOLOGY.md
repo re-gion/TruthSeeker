@@ -72,7 +72,7 @@ START
 | **Challenger** | 逻辑质询官 | 交叉验证、质询、决定是否放行 | Kimi/MiMo LLM（结构化 JSON 审查）、确定性代码检查器（硬规则）、个人经验 RAG |
 | **Commander** | 研判指挥官 | 综合所有证据做出最终裁决 | Kimi/MiMo LLM（最终裁决报告）、溯源图谱构建器、加权置信度计算器 |
 
-所有 Agent **先自主推理，后调用工具**：先基于配置的多模态 Agent LLM（默认 Kimi K2.5，可切 MiMo v2.5）读取样本和上下文自主分析，再按角色调用外部工具，最后融合两部分结果完成任务。
+所有 Agent **先执行工具/硬规则，LLM 最后融合**：先按角色 all-settled 调用外部工具（Forensics 的 `forensics_interpret` 在全部工具之后，OSINT 同理），Challenger 先跑确定性硬规则再调用 LLM 结构化质询，Commander 先计算权重与裁决再生成最终报告；LLM 的输入 prompt 本身包含工具结果，不存在"LLM 先行"阶段。
 
 ### Agent 间工具结果共享
 
@@ -251,7 +251,10 @@ if cross_phase_issues:
 
 ### 3.10 关于 `evaluate_phase_convergence`
 
-`conditions.py` 中定义了 `evaluate_phase_convergence` 和 `should_converge` 两个收敛函数，但**当前均未被实际调用**。收敛逻辑完全由 Commander 节点内联处理（`is_converged=True` 在 commander_node 返回时硬编码）。保留这些函数供未来图重构时启用。
+`conditions.py` 中定义了两个收敛函数，调用情况不同：
+
+- `evaluate_phase_convergence` **已被实际调用**：`app/agents/nodes/challenger.py` 使用它计算 `maxed` / `phase_stable`，作为三重门控和轮次上限放行的依据。不要按旧文档删除或停用该函数。
+- `should_converge` **当前未被调用**（`conditions.py` 注释与 `challenger_route` 均确认），收敛判断由 Challenger/Commander 节点内联处理。删除前应先补覆盖测试。
 
 ---
 
@@ -725,17 +728,19 @@ Challenger 重新审查（融合专家意见）
 
 ## 八、报告与持久化
 
-### 8.1 最终报告结构（Markdown 九章节）
+### 8.1 最终报告结构（Markdown，实际章节以 `report_generator.py` 为准）
 
-1. 任务信息（表格）
-2. 最终裁决（verdict, confidence, key_evidence）
-3. 降级状态汇总（仅在降级时出现）
-4. 电子取证 Agent 分析
-5. 情报溯源 Agent 分析
-6. 公开案例与个人经验 RAG 检索情况
-7. 逻辑质询时间线
-8. 全程审计日志（**最多展示 50 条**）
-9. 建议与说明
+1. 一、任务信息（表格）
+2. 二、最终裁决（verdict, confidence, key_evidence）
+3. Agent Skill 执行摘要（无编号，展示实际加载的 Skill 版本矩阵）
+4. ⚠️ 降级状态汇总（无编号，仅在降级时出现）
+5. 三、电子取证 Agent 分析
+6. 四、情报溯源 Agent 分析
+7. 五、公开案例与个人经验 RAG 检索情况
+8. 六、逻辑质询时间线
+9. 七、全程审计日志（**最多展示 50 条**）
+10. 八、人机协同（摘要确认/恢复/结束记录）
+11. 九、建议与说明
 
 ### 8.2 report_hash 计算
 
@@ -755,7 +760,7 @@ Challenger 重新审查（融合专家意见）
 
 ### 8.5 detection_run_id
 
-每次新检测生成 UUID，写入 task metadata、SSE 事件、审计日志和 final_verdict。三层回退查找：report → task → analysis_states → audit_logs → agent_logs。
+每次新检测生成 UUID，写入 task metadata、SSE 事件、审计日志和 final_verdict。依次回退查找：report → task → analysis_states → audit_logs → agent_logs（共五层）。
 
 ---
 
@@ -816,7 +821,6 @@ State 变化追踪（正常流程 3 轮结束）：
 | `collaboration_required` | 首次触发人机协同，自动暂停 |
 | `collaboration_approval_required` | 重复触发，需用户审批 |
 | `collaboration_started` | 协同会话开始 |
-| `collaboration_summary_pending` | 等待用户确认摘要 |
 | `collaboration_summary_confirmed` | 摘要已确认，准备恢复 |
 | `collaboration_skipped` | 用户跳过协同 |
 | `collaboration_resumed` | 协同恢复，流程继续 |

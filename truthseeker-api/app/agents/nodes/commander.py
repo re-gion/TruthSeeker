@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
+from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.tools.llm_client import build_sample_references, commander_ruling
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.services.audit_log import record_audit_event
@@ -44,6 +45,19 @@ async def commander_node(state: TruthSeekerState) -> dict:
         return entry
 
     log("thinking", f"研判Agent 启动，开始综合电子取证、情报图谱和质询过程...")
+    skill_load = load_agent_skill("commander", "final_adjudication")
+    skill_initial = skill_load.execution
+    if skill_initial.get("load_status") == "loaded":
+        log("thinking", f"核心 Skill {skill_initial['skill_name']} v{skill_initial['skill_version']} 已加载，工作流 final_adjudication")
+    else:
+        reason = "；".join(skill_initial.get("limitations") or ["未知原因"])
+        log("action", f"核心 Skill 未加载，继续使用系统提示词与确定性裁决；原因：{reason}")
+    record_audit_event(
+        action=f"skill.{skill_initial.get('load_status', 'degraded')}",
+        task_id=task_id,
+        agent="commander",
+        metadata=skill_initial,
+    )
     log("thinking", f"证据板共 {len(evidence_board)} 条，质询官报告 {challenger.get('issue_count', 0)} 个问题")
     if case_prompt:
         log("thinking", f"全局检测目标: {case_prompt[:120]}")
@@ -147,6 +161,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
 
     # === LLM 最终裁决报告 ===
     llm_ruling = ""
+    llm_status: dict = {}
     log("action", "正在调用大模型生成最终裁决报告...")
     try:
         enriched_challenger = {
@@ -163,14 +178,37 @@ async def commander_node(state: TruthSeekerState) -> dict:
             case_prompt,
             sample_refs,
             confidence_context=confidence_context,
+            skill_context=skill_load.prompt_context,
+            llm_status=llm_status,
         )
-        if llm_ruling.startswith("[LLM降级]"):
+        if llm_status.get("status") != "success":
             log("action", "LLM 裁决不可用，使用规则推断")
         else:
             log("finding", f"LLM 裁决报告生成完成，{len(llm_ruling)} 字")
     except Exception as e:
+        llm_status.update({"status": "degraded", "mode": "node_exception", "reason": f"Commander LLM 裁决异常：{type(e).__name__}"})
         llm_ruling = f"[LLM降级] 裁决推理异常: {e}"
         log("action", f"LLM 裁决异常: {e}")
+
+    skill_execution = finalize_skill_execution(
+        skill_load,
+        llm_ruling,
+        llm_status=llm_status,
+        contract_context={"expected_verdict_cn": verdict_cn},
+    )
+    skill_status = str(skill_execution.get("execution_status") or "skipped")
+    if skill_status == "applied":
+        log("finding", "核心 Skill 已应用，Commander 最终裁决输出契约检查通过")
+    elif skill_status == "check_failed":
+        log("action", "核心 Skill 已注入，但 Commander 最终裁决输出契约检查未通过")
+    elif skill_execution.get("load_status") == "loaded":
+        log("action", "LLM 已降级或未执行，本轮无法证明实际采用核心 Skill")
+    record_audit_event(
+        action=f"skill.{skill_status}",
+        task_id=task_id,
+        agent="commander",
+        metadata=skill_execution,
+    )
 
     provenance_graph = osint.get("provenance_graph") or state.get("provenance_graph") or {}
 
@@ -232,6 +270,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         ],
         "recommendations": _generate_recommendations(verdict, forensics, osint, challenger),
         "llm_ruling": llm_ruling,
+        "skill_execution": skill_execution,
         "task_id": task_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -289,6 +328,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         "is_converged": True,
         "termination_reason": "commander_ruling",
         "timeline_events": timeline_events,
+        "degradation_status": {"skill.commander": skill_status},
     }
 
 
