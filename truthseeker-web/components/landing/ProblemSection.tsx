@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react"
 import { Ban, Unplug, EyeOff, Unlink } from "lucide-react"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 
 export function ProblemSection() {
     const challenges = [
@@ -74,7 +75,7 @@ export function ProblemSection() {
                                     <span className="text-primary">✦</span> 破局之道
                                 </h3>
                                 <p className="text-[15px] font-medium leading-relaxed text-black/70">
-                                    TruthSeeker ：不能仅仅作为一个“检测工具”，相反我们需要建立一个具备
+                                    <BrandWordmark />：不能仅仅作为一个“检测工具”，相反我们需要建立一个具备
                                     <strong className="text-primary mx-1 font-bold">专家团队思维</strong>
                                     的智能研判中枢。
                                 </p>

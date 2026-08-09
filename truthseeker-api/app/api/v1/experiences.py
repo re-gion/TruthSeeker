@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.services.audit_log import record_audit_event
 from app.services.experience_library import confirm_experience_drafts, delete_experience
 from app.utils.supabase_client import supabase
 
@@ -109,7 +110,7 @@ async def get_experience(entry_id: str, request: Request):
 async def confirm_experiences(request_body: ExperienceDraftRequest, request: Request):
     user_id = _current_user_id(request)
     try:
-        return await confirm_experience_drafts(
+        result = await confirm_experience_drafts(
             user_id=user_id,
             task_id=request_body.task_id,
             session_id=request_body.session_id,
@@ -117,7 +118,28 @@ async def confirm_experiences(request_body: ExperienceDraftRequest, request: Req
         )
     except Exception as exc:
         logger.error("Failed to confirm experience drafts for task %s: %s", request_body.task_id, exc)
-        raise HTTPException(status_code=503, detail="个人经验入库失败")
+        record_audit_event(
+            action="experience.confirm_failed",
+            task_id=request_body.task_id,
+            user_id=user_id,
+            agent="experiences",
+            metadata={"error": f"{type(exc).__name__}: {str(exc)[:400]}"},
+        )
+        raise HTTPException(status_code=503, detail=f"个人经验入库失败: {type(exc).__name__}")
+    record_audit_event(
+        action="experience.confirm",
+        task_id=request_body.task_id,
+        user_id=user_id,
+        agent="experiences",
+        metadata={
+            "status": result.get("status"),
+            "inserted": result.get("inserted"),
+            "indexed_chunks": result.get("indexed_chunks"),
+            "failed_count": len(result.get("failed") or []),
+            "failed": (result.get("failed") or [])[:5],
+        },
+    )
+    return result
 
 
 @router.delete("/{entry_id}", status_code=204)

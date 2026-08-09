@@ -123,7 +123,7 @@ export default function ResetPasswordPage() {
                         <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <motion.span
-                        className="text-2xl font-bold bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"
+                        className="brand-wordmark text-2xl bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"
                         animate={{ backgroundPosition: ["0% center", "100% center", "0% center"] }}
                         transition={{ duration: 6, ease: "linear", repeat: Infinity }}
                     >

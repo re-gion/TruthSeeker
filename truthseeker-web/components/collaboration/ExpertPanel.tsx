@@ -2,11 +2,18 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "motion/react"
+import type { RealtimeChannel } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 import { getAuthToken } from "@/lib/auth"
 import { UserRole } from "@/hooks/useRealtimeSession"
 import { canModerateConsultation, ConsultationState } from "@/hooks/useAgentStream"
-import { confirmExperienceDrafts, type ExperienceDraft } from "@/lib/experiences"
+import {
+    confirmExperienceDrafts,
+    readExperienceDraftsFromSession,
+    readExperienceDraftStatusFromSession,
+    remainingExperienceDraftsAfterConfirm,
+    type ExperienceDraft,
+} from "@/lib/experiences"
 import {
     filterDisplayComments,
     mergeConsultationComments,
@@ -171,24 +178,32 @@ export function ExpertPanel({
     inviteToken,
     currentRole,
     consultationState,
+    eventChannel,
     onResume,
 }: {
     taskId: string
     inviteToken?: string | null
     currentRole: UserRole
     consultationState?: ConsultationState
+    eventChannel?: RealtimeChannel | null
     onResume?: () => void
 }) {
     const [comments, setComments] = useState<ExpertComment[]>([])
     const [inputValue, setInputValue] = useState("")
+    const [messageError, setMessageError] = useState<string | null>(null)
     const [contextExpanded, setContextExpanded] = useState(false)
     const [editableSummary, setEditableSummary] = useState("")
     const [editableExperienceDrafts, setEditableExperienceDrafts] = useState<ExperienceDraft[]>([])
+    const experienceSessionIdRef = useRef<string | undefined>(undefined)
+    const experienceDraftsDirtyRef = useRef(false)
     const [experiencePending, setExperiencePending] = useState(false)
     const [experienceStatus, setExperienceStatus] = useState<string | null>(null)
     const [statusOverride, setStatusOverride] = useState<ConsultationState["status"] | null>(null)
     const [moderationPending, setModerationPending] = useState(false)
     const sentIdsRef = useRef<Set<string>>(new Set())
+    const messageLoadPendingRef = useRef(false)
+    const messageLoadControllerRef = useRef<AbortController | null>(null)
+    const messageLoadGenerationRef = useRef(0)
     const scrollRef = useRef<HTMLDivElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const canModerate = canModerateConsultation(currentRole)
@@ -198,7 +213,7 @@ export function ExpertPanel({
         return createClient()
     }, [])
     const broadcastChannel = useMemo(() => {
-        return supabase?.channel(`task:${taskId}`) ?? null
+        return supabase?.channel(`collaboration:${taskId}`) ?? null
     }, [supabase, taskId])
 
     // 自动滚动到底部
@@ -227,15 +242,29 @@ export function ExpertPanel({
     }, [consultationState?.status, consultationState?.summaryDraft])
 
     useEffect(() => {
-        setEditableExperienceDrafts(consultationState?.experienceDrafts ?? [])
-        setExperienceStatus(null)
-    }, [consultationState?.lastEventType, consultationState?.experienceDrafts])
+        const session = consultationState?.session
+        const sessionId = session && typeof session.id === "string" ? session.id : undefined
+        const sessionChanged = sessionId !== experienceSessionIdRef.current
+        if (!sessionChanged && experienceDraftsDirtyRef.current) return
+        const drafts = consultationState?.experienceDrafts
+            ?? readExperienceDraftsFromSession(session)
+        experienceSessionIdRef.current = sessionId
+        experienceDraftsDirtyRef.current = false
+        setEditableExperienceDrafts(drafts)
+        setExperienceStatus(
+            drafts.length > 0 ? null : readExperienceDraftStatusFromSession(session)
+        )
+    }, [consultationState?.lastEventType, consultationState?.experienceDrafts, consultationState?.session])
 
     useEffect(() => {
         setStatusOverride(null)
     }, [consultationState?.lastEventType, consultationState?.status])
 
-    const loadMessages = useCallback(async () => {
+    const loadMessages = useCallback(async (generation = messageLoadGenerationRef.current) => {
+        if (generation !== messageLoadGenerationRef.current || messageLoadPendingRef.current) return
+        const controller = new AbortController()
+        messageLoadPendingRef.current = true
+        messageLoadControllerRef.current = controller
         const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
         try {
             const authToken = await getAuthToken()
@@ -243,9 +272,10 @@ export function ExpertPanel({
             if (inviteToken) url.searchParams.set("invite_token", inviteToken)
             const headers: Record<string, string> = {}
             if (authToken) headers.Authorization = `Bearer ${authToken}`
-            const response = await fetch(url.toString(), { headers })
+            const response = await fetch(url.toString(), { headers, signal: controller.signal })
             if (!response.ok) return
             const data = await response.json()
+            if (controller.signal.aborted || generation !== messageLoadGenerationRef.current) return
             if (!Array.isArray(data.messages)) return
 
             const history = (data.messages as unknown[])
@@ -254,12 +284,18 @@ export function ExpertPanel({
             setComments(prev => mergeConsultationComments(prev, history))
         } catch {
             // 历史消息加载失败不影响实时协同输入。
+        } finally {
+            if (messageLoadControllerRef.current === controller) {
+                messageLoadControllerRef.current = null
+                messageLoadPendingRef.current = false
+            }
         }
     }, [inviteToken, taskId])
 
     useEffect(() => {
         const channel = broadcastChannel
         if (!channel) return
+        const generation = ++messageLoadGenerationRef.current
 
         channel
             .on("broadcast", { event: "expert_comment" }, (payload: { payload?: unknown }) => {
@@ -287,16 +323,22 @@ export function ExpertPanel({
                 },
             )
 
-        void loadMessages()
+        void loadMessages(generation)
 
         const pollTimer = window.setInterval(() => {
-            void loadMessages()
-        }, 10000)
+            void loadMessages(generation)
+        }, 3000)
 
         void channel.subscribe()
 
         return () => {
             window.clearInterval(pollTimer)
+            if (messageLoadGenerationRef.current === generation) {
+                messageLoadGenerationRef.current += 1
+            }
+            messageLoadControllerRef.current?.abort()
+            messageLoadControllerRef.current = null
+            messageLoadPendingRef.current = false
             void channel.unsubscribe()
         }
     }, [broadcastChannel, loadMessages, taskId])
@@ -329,8 +371,8 @@ export function ExpertPanel({
     }
 
     const broadcastConsultationEvent = (event: Record<string, unknown>) => {
-        if (!broadcastChannel) return
-        void broadcastChannel.send({
+        if (!eventChannel) return
+        void eventChannel.send({
             type: "broadcast",
             event: "agent_stream",
             payload: event,
@@ -340,6 +382,7 @@ export function ExpertPanel({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!canSendMessage || !inputValue.trim() || !broadcastChannel) return
+        setMessageError(null)
         const clientMessageId = window.crypto?.randomUUID?.() || Math.random().toString(36).substring(7)
 
         const newComment: ExpertComment = {
@@ -358,31 +401,38 @@ export function ExpertPanel({
         sentIdsRef.current.add(newComment.id)
         setComments(prev => mergeConsultationComments(prev, [newComment]))
 
-        // Realtime broadcast for other clients
-        void broadcastChannel.send({
-            type: 'broadcast',
-            event: 'expert_comment',
-            payload: newComment
-        })
-
-        // Inject into backend agent state via consultation API, then reconcile with the persisted row.
-        sendConsultationMessage(newComment)
-            .then(async response => {
-                if (!response.ok) return
-                const data = await response.json().catch(() => null) as { message_id?: unknown } | null
-                const messageId = typeof data?.message_id === "string" ? data.message_id : null
-                if (messageId) {
-                    setComments(prev => mergeConsultationComments(prev, [{
-                        ...newComment,
-                        id: messageId,
-                        optimistic: false,
-                    }]))
-                }
-                void loadMessages()
-            })
-            .catch(err => console.error("Failed to inject expert message:", err))
-
         setInputValue("")
+        const messageGeneration = messageLoadGenerationRef.current
+        try {
+            // Persist first so other clients never receive a message that the backend rejected.
+            const response = await sendConsultationMessage(newComment)
+            if (messageGeneration !== messageLoadGenerationRef.current) return
+            if (!response.ok) {
+                const body = await response.json().catch(() => null) as { detail?: unknown } | null
+                throw new Error(typeof body?.detail === "string" ? body.detail : `消息发送失败（HTTP ${response.status}）`)
+            }
+            const data = await response.json().catch(() => null) as { message_id?: unknown } | null
+            const messageId = typeof data?.message_id === "string" ? data.message_id : null
+            const persistedComment: ExpertComment = {
+                ...newComment,
+                id: messageId ?? newComment.id,
+                optimistic: false,
+            }
+            setComments(prev => mergeConsultationComments(prev, [persistedComment]))
+            void broadcastChannel.send({
+                type: "broadcast",
+                event: "expert_comment",
+                payload: persistedComment,
+            })
+            void loadMessages(messageGeneration)
+        } catch (err) {
+            if (messageGeneration !== messageLoadGenerationRef.current) return
+            sentIdsRef.current.delete(newComment.id)
+            setComments(prev => prev.filter(comment => comment.id !== newComment.id))
+            setInputValue(current => current || newComment.text)
+            setMessageError(err instanceof Error ? err.message : "消息发送失败，请稍后重试")
+            console.error("Failed to inject expert message:", err)
+        }
     }
 
     const callSessionAction = async (action: "approve" | "skip" | "close" | "summary", body?: Record<string, unknown>) => {
@@ -402,12 +452,14 @@ export function ExpertPanel({
     }
 
     const updateExperienceDraft = (index: number, patch: Partial<ExperienceDraft>) => {
+        experienceDraftsDirtyRef.current = true
         setEditableExperienceDrafts((current) => current.map((item, itemIndex) => (
             itemIndex === index ? { ...item, ...patch } : item
         )))
     }
 
     const removeExperienceDraft = (index: number) => {
+        experienceDraftsDirtyRef.current = true
         setEditableExperienceDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index))
     }
 
@@ -439,8 +491,19 @@ export function ExpertPanel({
                 session_id: sessionId,
                 drafts,
             }, token)
-            setEditableExperienceDrafts([])
-            setExperienceStatus(`已入库 ${result.inserted} 条个人经验，索引 ${result.indexed_chunks} 个向量块`)
+            const remainingDrafts = remainingExperienceDraftsAfterConfirm(drafts, result)
+            experienceDraftsDirtyRef.current = remainingDrafts.length > 0
+            setEditableExperienceDrafts(remainingDrafts)
+            const failures = result.failed || []
+            if (failures.length > 0) {
+                const sample = failures.slice(0, 3).map((item) => item.title || item.error).filter(Boolean).join("；")
+                setExperienceStatus(
+                    `已入库 ${result.inserted} 条个人经验，索引 ${result.indexed_chunks} 个向量块；` +
+                    `${failures.length} 条入库失败${sample ? `：${sample}` : ""}`,
+                )
+            } else {
+                setExperienceStatus(`已入库 ${result.inserted} 条个人经验，索引 ${result.indexed_chunks} 个向量块`)
+            }
         } catch (err) {
             setExperienceStatus(err instanceof Error ? err.message : "个人经验入库失败")
         } finally {
@@ -480,6 +543,9 @@ export function ExpertPanel({
                 const data = await callSessionAction("close")
                 const draft = summaryDraftFromSession(data.session)
                 if (draft) setEditableSummary(draft)
+                experienceDraftsDirtyRef.current = false
+                setEditableExperienceDrafts(readExperienceDraftsFromSession(data.session))
+                setExperienceStatus(readExperienceDraftStatusFromSession(data.session))
                 setStatusOverride("summary_pending")
                 broadcastConsultationEvent({
                     type: "collaboration_summary_pending",
@@ -494,6 +560,9 @@ export function ExpertPanel({
                 const summary = editableSummary.trim()
                 if (!summary) return
                 const data = await callSessionAction("summary", { summary })
+                experienceDraftsDirtyRef.current = false
+                setEditableExperienceDrafts(readExperienceDraftsFromSession(data.session))
+                setExperienceStatus(readExperienceDraftStatusFromSession(data.session))
                 setStatusOverride("summary_confirmed")
                 broadcastConsultationEvent({
                     type: "collaboration_summary_confirmed",
@@ -845,11 +914,21 @@ export function ExpertPanel({
                                     </button>
                                 </div>
                             )}
+                            {editableExperienceDrafts.length === 0 && experienceStatus && (
+                                <div aria-live="polite" className="rounded-md border border-[#F59E0B]/25 bg-[#F59E0B]/8 px-2 py-1.5 text-[10px] text-[#FCD34D]">
+                                    {experienceStatus}
+                                </div>
+                            )}
                         </div>
                     )}
                     {!canModerate && (
                         <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[10px] text-white/40">
                             专家可提交意见，不能结束协同或确认摘要。
+                        </div>
+                    )}
+                    {messageError && (
+                        <div aria-live="polite" className="rounded-lg border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-300">
+                            {messageError}
                         </div>
                     )}
                     <div className="flex gap-2 items-end">

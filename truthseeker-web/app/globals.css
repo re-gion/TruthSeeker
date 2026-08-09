@@ -46,10 +46,18 @@
   /* Fonts */
   --font-interface: 'IBM Plex Sans SC', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
   --font-telemetry: 'IBM Plex Mono', 'IBM Plex Sans SC', ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --font-brand: 'Unbounded', 'IBM Plex Sans SC', system-ui, sans-serif;
   --font-sans: var(--font-interface);
   --font-display: var(--font-interface);
   --font-serif: var(--font-interface);
   --font-mono: var(--font-telemetry);
+}
+
+.brand-wordmark {
+  font-family: var(--font-brand);
+  font-weight: 600;
+  font-synthesis: none;
+  letter-spacing: -0.035em;
 }
 
 /* ─── shadcn CSS Variables (Dark-first) ─── */

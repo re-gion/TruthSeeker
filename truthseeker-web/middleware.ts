@@ -25,7 +25,14 @@ export async function middleware(request: NextRequest) {
         }
     )
 
-    const { data: { user } } = await supabase.auth.getUser()
+    let user = null
+    try {
+        const { data } = await supabase.auth.getUser()
+        user = data.user
+    } catch (error) {
+        // Supabase 不可达（瞬时网络失败等）时按未登录处理，避免全站 500
+        console.warn("[middleware] 获取用户失败（Supabase 网络不可达？），按未登录处理：", (error as Error)?.message ?? error)
+    }
 
     const pathname = request.nextUrl.pathname
     const isAuthPage = pathname === '/login' || pathname === '/signup'

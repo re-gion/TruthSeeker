@@ -6,11 +6,13 @@ On failure, gracefully degrades to a local rule-based fallback string.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import html
 import json
 import logging
 import re
+import traceback
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -419,6 +421,237 @@ def _build_temporal_fact_table(payload: dict[str, Any]) -> str:
     ])
 
 
+def enforce_temporal_consistency(output_text: str, payload: dict[str, Any]) -> str:
+    """Replace an LLM-inverted sample-time claim with the deterministic relation."""
+    reference = (
+        _parse_reference_time(payload.get("timestamp"))
+        or _parse_reference_time(payload.get("analysis_time"))
+        or _parse_reference_time(payload.get("generated_at"))
+        or datetime.now(timezone.utc).astimezone(_CN_TZ)
+    )
+    known_sample_times: set[datetime] = set()
+    for _name, content in _iter_text_sample_contents(payload):
+        for match in _TEMPORAL_PATTERN.finditer(content):
+            parsed = _parse_sample_time(match.group("date"), match.group("time"))
+            if parsed is not None and parsed <= reference:
+                known_sample_times.add(parsed)
+
+    future_claim = re.compile(r"(?:将来时|未来时|未来时间|未来日期|属于未来)")
+    image_time_label = re.compile(
+        r"(?:图片(?:内嵌|画面|水印)?时间|内嵌时间|画面时间|水印时间|截图时间|拍摄时间|OCR.{0,8}时间)",
+        re.IGNORECASE,
+    )
+
+    def correct_clause(clause: str) -> str:
+        positive_claim_text = re.sub(
+            r"(?:不是|并非|不属于|并不属于|非)"
+            r"(?:将来时|未来时|未来时间|未来日期|属于未来|未来|将来)",
+            "",
+            clause,
+        )
+        if not future_claim.search(positive_claim_text):
+            return clause
+        candidates: list[datetime] = []
+        for match in _TEMPORAL_PATTERN.finditer(clause):
+            parsed = _parse_sample_time(match.group("date"), match.group("time"))
+            if parsed is None or parsed >= reference:
+                continue
+            if known_sample_times and parsed not in known_sample_times:
+                continue
+            candidates.append(parsed)
+        # 图片-only 流程未必有结构化 OCR；仅在模型明确声称这是图片内嵌/画面时间时，
+        # 才允许用报告中的日期做确定性纠偏，避免把其他普通日期误当检材时间。
+        if not candidates or (not known_sample_times and not image_time_label.search(clause)):
+            return clause
+        parsed = candidates[0]
+        original = parsed.strftime("%Y-%m-%d %H:%M:%S" if parsed.second else "%Y-%m-%d %H:%M")
+        prefix_match = re.match(r"^(\s*(?:[-*+]\s+)?(?:\*\*[^*]+\*\*[：:]\s*)?)", clause)
+        prefix = prefix_match.group(1) if prefix_match else ""
+        return (
+            f"{prefix}样本时间“{original}”早于分析时间"
+            f"“{reference.strftime('%Y-%m-%d %H:%M:%S')}”（北京时间），不是未来日期；"
+            "该时间本身的真实性仍需结合文件元数据、来源记录等独立证据核验"
+        )
+
+    corrected: list[str] = []
+    for line in str(output_text or "").splitlines():
+        parts = re.split(r"([；;。！？!?])", line)
+        rebuilt: list[str] = []
+        for index in range(0, len(parts), 2):
+            clause = parts[index]
+            separator = parts[index + 1] if index + 1 < len(parts) else ""
+            rebuilt.append(correct_clause(clause) + separator)
+        corrected.append("".join(rebuilt))
+    return "\n".join(corrected)
+
+
+MAX_REINFORCEMENT_PAYLOAD_CHARS = 12_000
+# 约为 Kimi max_prompt_tokens (262140) 的 2/3 安全阈值，防单轮提示词超限整体降级
+_MAX_PROMPT_TEXT_CHARS = 180_000
+
+
+def summarize_previous_analysis(payload: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded summary of a previous agent result for reinforcement context.
+
+    多轮打回补强时，若把上一轮完整结果（含上一轮 reinforcement_context、
+    tool_results、provenance_graph）原样塞进 prompt，会随轮次递归膨胀，
+    超过 LLM max_prompt_tokens 触发 400 后整体降级为本地占位。
+    这里只保留固定的小字段集，切断递归嵌套。
+    """
+    if not isinstance(payload, dict):
+        return {"summary": str(payload)[:MAX_REINFORCEMENT_PAYLOAD_CHARS]}
+    tool_summary = payload.get("tool_summary")
+    if not isinstance(tool_summary, dict):
+        tool_summary = None
+    summary: dict[str, Any] = {
+        "llm_analysis": str(payload.get("llm_analysis") or payload.get("analysis_summary") or "")[:MAX_REINFORCEMENT_PAYLOAD_CHARS],
+        "confidence": payload.get("confidence"),
+        "degraded": bool(payload.get("degraded")),
+        "tool_summary": tool_summary,
+        "threat_indicators": (payload.get("threat_indicators") or [])[:8],
+        "model_claims": (payload.get("model_claims") or [])[:8],
+        "tool_result_summaries": [
+            str(item.get("summary") or "")[:300]
+            for item in (payload.get("tool_results") or [])
+            if isinstance(item, dict) and item.get("summary")
+        ][:12],
+    }
+    for key in ("threat_score", "social_engineering_score", "aigc_probability", "is_aigc"):
+        if payload.get(key) is not None:
+            summary[key] = payload[key]
+    return summary
+
+
+def _cap_prompt_text(human_text: str) -> str:
+    """防御性截断：提示词总长超限时保留前缀，避免整轮降级为本地占位。"""
+    if len(human_text) <= _MAX_PROMPT_TEXT_CHARS:
+        return human_text
+    logger.warning(
+        "LLM prompt 文本 %d 字符超过 %d 上限，截断保留前缀防超限降级",
+        len(human_text),
+        _MAX_PROMPT_TEXT_CHARS,
+    )
+    return human_text[:_MAX_PROMPT_TEXT_CHARS]
+
+
+# 503/429/连接超时等瞬时错误退避重试，降低外部服务过载导致的偶发降级
+_LLM_TRANSIENT_RETRIES = 2
+_LLM_RETRY_BACKOFF_SECONDS = (0.5, 1.5)
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """判断是否值得退避重试的瞬时错误（服务端过载/限流/网络抖动）。"""
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in (
+        "429", "rate_limit", "503", "too busy", "overloaded",
+        "apitimeout", "connection error", "connection reset", "timeout",
+    ))
+
+
+def _runtime_config_preview(runtime: dict[str, Any] | None) -> dict[str, Any]:
+    """初始化失败的脱敏配置预览，便于审计定位（不暴露 key 本体）。"""
+    if not isinstance(runtime, dict):
+        return {"resolve_failed": True}
+    api_key = str(runtime.get("api_key") or "")
+    return {
+        "provider": runtime.get("provider"),
+        "model": runtime.get("model"),
+        "base_url": runtime.get("base_url"),
+        "api_key_set": bool(api_key),
+        "api_key_length": len(api_key),
+    }
+
+
+def _safe_runtime() -> dict[str, Any] | None:
+    """初始化失败时尽力解析当前 runtime 供审计预览，解析本身失败不阻断。"""
+    try:
+        return resolve_kimi_runtime()
+    except Exception:
+        return None
+
+
+MAX_CHALLENGER_LLM_ANALYSIS_CHARS = 8_000
+MAX_CHALLENGER_TOOL_SUMMARY_CHARS = 300
+MAX_CHALLENGER_RAG_MATCH_CHARS = 300
+
+
+def _summarize_agent_evidence(payload: dict[str, Any], *, label: str) -> dict[str, Any]:
+    """Challenger 质询用的 Agent 证据摘要。
+
+    Challenger 的 prompt 曾直接把完整 forensics_result + osint_result 序列化
+    （各含 tool_results 原始大对象、RAG 匹配全文、provenance_graph 完整 JSON），
+    合计约 31 万字符，超过模型 max_prompt_tokens 触发降级。
+    这里只保留质询所需的结论、分数、工具状态摘要和 RAG 标题级信息。
+    """
+    if not isinstance(payload, dict):
+        return {"label": label, "summary": str(payload)[:2000]}
+    tool_summaries: list[dict[str, Any]] = []
+    for item in (payload.get("tool_results") or []):
+        if not isinstance(item, dict):
+            continue
+        tool_summaries.append({
+            "tool": item.get("tool"),
+            "target": item.get("target"),
+            "status": item.get("status"),
+            "degraded": bool(item.get("degraded")),
+            "summary": str(item.get("summary") or "")[:MAX_CHALLENGER_TOOL_SUMMARY_CHARS],
+        })
+        if len(tool_summaries) >= 12:
+            break
+    rag_summary: dict[str, Any] = {}
+    for key in ("case_rag", "experience_rag"):
+        rag = payload.get(key)
+        if not isinstance(rag, dict):
+            continue
+        rag_summary[key] = {
+            "status": rag.get("status"),
+            "summary": rag.get("summary"),
+            "match_count": len(rag.get("matches") or []),
+            "matches": [
+                {
+                    "title": item.get("title"),
+                    "summary": str(item.get("summary") or item.get("snippet") or "")[:MAX_CHALLENGER_RAG_MATCH_CHARS],
+                }
+                for item in (rag.get("matches") or [])[:4]
+                if isinstance(item, dict)
+            ],
+        }
+    graph = payload.get("provenance_graph") if isinstance(payload.get("provenance_graph"), dict) else {}
+    graph_quality = graph.get("quality") if isinstance(graph.get("quality"), dict) else None
+    summary: dict[str, Any] = {
+        "label": label,
+        "llm_analysis": str(payload.get("llm_analysis") or "")[:MAX_CHALLENGER_LLM_ANALYSIS_CHARS],
+        "confidence": payload.get("confidence"),
+        "degraded": bool(payload.get("degraded")),
+        "tool_summary": payload.get("tool_summary") if isinstance(payload.get("tool_summary"), dict) else None,
+        "tool_result_summaries": tool_summaries,
+        "threat_indicators": (payload.get("threat_indicators") or [])[:8],
+        "model_claims": (payload.get("model_claims") or [])[:8],
+        "rag": rag_summary,
+        "provenance_graph_summary": (
+            {
+                "node_count": len(graph.get("nodes") or []),
+                "edge_count": len(graph.get("edges") or []),
+                "citation_count": len(graph.get("citations") or []),
+                "quality": graph_quality,
+            }
+            if graph
+            else None
+        ),
+        "text_samples": [
+            {"name": item.get("name"), "content": str(item.get("content") or "")[:800]}
+            for item in (payload.get("text_samples") or [])[:3]
+            if isinstance(item, dict)
+        ],
+    }
+    for key in ("aigc_probability", "is_aigc", "threat_score", "social_engineering_score", "text_risk_score"):
+        if payload.get(key) is not None:
+            summary[key] = payload[key]
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Shared LLM invocation helper
 # ---------------------------------------------------------------------------
@@ -446,39 +679,55 @@ async def _invoke_llm(
                 agent="llm_client",
                 metadata={
                     "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc()[:500],
                     "stage": "initialization",
                     "multimodal": False,
+                    **_runtime_config_preview(_safe_runtime()),
                 },
             )
         except Exception:
             logger.exception("记录 LLM 初始化降级审计失败")
         return f"[降级模式: LLM不可用] {fallback_text}"
     chain = prompt | llm | StrOutputParser()
-    try:
-        return await chain.ainvoke(variables)
-    except Exception as exc:
-        error_str = f"{type(exc).__name__}: {exc}"
-        is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
-        if is_rate_limit:
+    last_exc: Exception | None = None
+    for attempt in range(1 + _LLM_TRANSIENT_RETRIES):
+        try:
+            return await chain.ainvoke(variables)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_llm_error(exc) or attempt >= _LLM_TRANSIENT_RETRIES:
+                break
             logger.warning(
-                "Kimi %s 模型 %s 触发速率限制(TPD): %s",
-                runtime["provider"], runtime["model"], exc,
+                "Agent LLM 瞬时错误（%s），第 %d/%d 次退避重试",
+                f"{type(exc).__name__}: {exc}"[:200],
+                attempt + 1,
+                _LLM_TRANSIENT_RETRIES,
             )
-        else:
-            logger.exception("Kimi %s 模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
-        record_audit_event(
-            action="llm.degraded",
-            agent="llm_client",
-            metadata={
-                "error": error_str,
-                "provider": runtime["provider"],
-                "model": runtime["model"],
-                "base_url": runtime["base_url"],
-                "rate_limited": is_rate_limit,
-            },
+            await asyncio.sleep(_LLM_RETRY_BACKOFF_SECONDS[attempt - 1])
+    assert last_exc is not None
+    exc = last_exc
+    error_str = f"{type(exc).__name__}: {exc}"
+    is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
+    if is_rate_limit:
+        logger.warning(
+            "Kimi %s 模型 %s 触发速率限制(TPD): %s",
+            runtime["provider"], runtime["model"], exc,
         )
-        hint = "（TPD 速率限制已超限，请等待重置或更换账号）" if is_rate_limit else ""
-        return f"[降级模式: LLM不可用{hint}] {fallback_text}"
+    else:
+        logger.exception("Kimi %s 模型 %s 调用失败: %s", runtime["provider"], runtime["model"], exc)
+    record_audit_event(
+        action="llm.degraded",
+        agent="llm_client",
+        metadata={
+            "error": error_str,
+            "provider": runtime["provider"],
+            "model": runtime["model"],
+            "base_url": runtime["base_url"],
+            "rate_limited": is_rate_limit,
+        },
+    )
+    hint = "（TPD 速率限制已超限，请等待重置或更换账号）" if is_rate_limit else ""
+    return f"[降级模式: LLM不可用{hint}] {fallback_text}"
 
 
 async def _invoke_multimodal_llm(
@@ -490,6 +739,7 @@ async def _invoke_multimodal_llm(
     status_sink: dict[str, Any] | None = None,
 ) -> str:
     """Invoke Kimi with multimodal content parts, then degrade to text-only prompt."""
+    human_text = _cap_prompt_text(human_text)
     if status_sink is not None:
         status_sink.clear()
         status_sink.update({"status": "pending", "mode": None})
@@ -528,8 +778,10 @@ async def _invoke_multimodal_llm(
                 agent="llm_client",
                 metadata={
                     "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc()[:500],
                     "stage": "initialization",
                     "multimodal": True,
+                    **_runtime_config_preview(_safe_runtime()),
                 },
             )
         except Exception:
@@ -542,44 +794,75 @@ async def _invoke_multimodal_llm(
             "所有图片 base64 转换失败，跳过多模态调用，直接使用文本模式"
         )
     else:
+        multimodal_messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=_build_multimodal_parts(human_text, resolved_refs)),
+        ]
+        multimodal_exc: Exception | None = None
+        for attempt in range(1 + _LLM_TRANSIENT_RETRIES):
+            try:
+                response = await llm.ainvoke(multimodal_messages)
+                content = getattr(response, "content", "")
+                if isinstance(content, str) and content.strip():
+                    if status_sink is not None:
+                        status_sink.update({"status": "success", "mode": "multimodal"})
+                    return content
+                if isinstance(content, list):
+                    if status_sink is not None:
+                        status_sink.update({"status": "success", "mode": "multimodal"})
+                    return json.dumps(content, ensure_ascii=False)
+                break
+            except Exception as exc:
+                multimodal_exc = exc
+                if not _is_transient_llm_error(exc) or attempt >= _LLM_TRANSIENT_RETRIES:
+                    break
+                logger.warning(
+                    "Kimi %s 多模态模型 %s 瞬时错误（%s），第 %d/%d 次退避重试",
+                    runtime["provider"], runtime["model"],
+                    f"{type(exc).__name__}: {exc}"[:200],
+                    attempt + 1,
+                    _LLM_TRANSIENT_RETRIES,
+                )
+                await asyncio.sleep(_LLM_RETRY_BACKOFF_SECONDS[attempt - 1])
+        if multimodal_exc is not None:
+            logger.warning("Kimi %s 多模态模型 %s 调用失败，改用同模型文本摘要重试: %s", runtime["provider"], runtime["model"], multimodal_exc)
+
+    is_rate_limit = False
+    text_messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=_append_case_context_data(
+            human_text,
+            f"样本引用摘要：\n{_sample_references_text(sample_refs)}",
+        )),
+    ]
+    last_exc: Exception | None = None
+    for attempt in range(1 + _LLM_TRANSIENT_RETRIES):
         try:
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=_build_multimodal_parts(human_text, resolved_refs)),
-            ]
-            response = await llm.ainvoke(messages)
+            response = await llm.ainvoke(text_messages)
             content = getattr(response, "content", "")
             if isinstance(content, str) and content.strip():
                 if status_sink is not None:
-                    status_sink.update({"status": "success", "mode": "multimodal"})
+                    status_sink.update({"status": "success", "mode": "text"})
                 return content
             if isinstance(content, list):
                 if status_sink is not None:
-                    status_sink.update({"status": "success", "mode": "multimodal"})
+                    status_sink.update({"status": "success", "mode": "text"})
                 return json.dumps(content, ensure_ascii=False)
+            break
         except Exception as exc:
-            logger.warning("Kimi %s 多模态模型 %s 调用失败，改用同模型文本摘要重试: %s", runtime["provider"], runtime["model"], exc)
-
-    is_rate_limit = False
-    try:
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=_append_case_context_data(
-                human_text,
-                f"样本引用摘要：\n{_sample_references_text(sample_refs)}",
-            )),
-        ]
-        response = await llm.ainvoke(messages)
-        content = getattr(response, "content", "")
-        if isinstance(content, str) and content.strip():
-            if status_sink is not None:
-                status_sink.update({"status": "success", "mode": "text"})
-            return content
-        if isinstance(content, list):
-            if status_sink is not None:
-                status_sink.update({"status": "success", "mode": "text"})
-            return json.dumps(content, ensure_ascii=False)
-    except Exception as exc:
+            last_exc = exc
+            if not _is_transient_llm_error(exc) or attempt >= _LLM_TRANSIENT_RETRIES:
+                break
+            logger.warning(
+                "Kimi %s 文本摘要重试模型 %s 瞬时错误（%s），第 %d/%d 次退避重试",
+                runtime["provider"], runtime["model"],
+                f"{type(exc).__name__}: {exc}"[:200],
+                attempt + 1,
+                _LLM_TRANSIENT_RETRIES,
+            )
+            await asyncio.sleep(_LLM_RETRY_BACKOFF_SECONDS[attempt - 1])
+    if last_exc is not None:
+        exc = last_exc
         error_str = f"{type(exc).__name__}: {exc}"
         # 检测速率限制
         is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
@@ -665,7 +948,7 @@ async def forensics_interpret(
         f"{escaped_case_payload}\n"
         "</case_context>"
     )
-    return await _invoke_multimodal_llm(
+    output = await _invoke_multimodal_llm(
         system_prompt=system_prompt,
         human_text=human_text,
         sample_refs=sample_refs,
@@ -682,6 +965,7 @@ async def forensics_interpret(
         ),
         status_sink=llm_status,
     )
+    return enforce_temporal_consistency(output, raw_api_result)
 
 
 # ---------------------------------------------------------------------------
@@ -727,7 +1011,7 @@ async def osint_interpret(
         "raw_intel": raw_intel,
         "deterministic_temporal_facts": temporal_facts or None,
     })
-    return await _invoke_multimodal_llm(
+    output = await _invoke_multimodal_llm(
         system_prompt=system_prompt,
         human_text=human_text,
         sample_refs=sample_refs,
@@ -744,6 +1028,7 @@ async def osint_interpret(
         ),
         status_sink=llm_status,
     )
+    return enforce_temporal_consistency(output, raw_intel)
 
 
 # ---------------------------------------------------------------------------
@@ -788,10 +1073,12 @@ async def challenger_model_review(
         "phase_round": phase_round,
         "base_confidence": base_confidence,
         "sample_references": sample_refs or [],
-        "forensics": forensics,
-        "osint": osint,
+        # 证据摘要而非完整结果：完整 forensics/osint 序列化可达 31 万字符
+        # 超过模型 max_prompt_tokens，导致整轮降级为本地占位。
+        "forensics": _summarize_agent_evidence(forensics, label="forensics"),
+        "osint": _summarize_agent_evidence(osint, label="osint"),
         "deterministic_issues": deterministic_issues,
-        "challenges": challenges,
+        "challenges": [str(item)[:800] for item in challenges[:8]],
     })
     fallback_payload = {
         "confidence": base_confidence,
@@ -912,6 +1199,125 @@ def _normalize_help_items(value: Any) -> list[str]:
         seen.add(key)
         result.append(text[:400])
     return result
+
+
+def _normalize_contract_text(value: Any, *, limit: int) -> Any:
+    """Convert a model's structured prose field into the public string contract."""
+    if isinstance(value, str):
+        return value.strip()[:limit]
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))[:limit]
+    return value
+
+
+def _normalize_contract_text_list(
+    value: Any, *, limit: int = 6, item_limit: int = 300
+) -> tuple[list[str], Any]:
+    """Return display strings plus an audit payload that retains invalid items."""
+    if not isinstance(value, list):
+        return [], value
+    display: list[str] = []
+    audited: list[Any] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            label_value = next((item.get(key) for key in ("action", "title", "question", "recommendation") if item.get(key) is not None), "")
+            detail_value = next((item.get(key) for key in ("detail", "description", "reason", "content") if item.get(key) is not None), "")
+            if not isinstance(label_value, str) or not isinstance(detail_value, str):
+                audited.append(item)
+                continue
+            label = label_value.strip()
+            detail = detail_value.strip()
+            text = f"{label}：{detail}" if label and detail else (label or detail)
+            if not text:
+                audited.append(item)
+                continue
+        else:
+            audited.append(item)
+            continue
+        if text:
+            normalized = text[:item_limit]
+            display.append(normalized)
+            audited.append(normalized)
+        if len(audited) >= limit:
+            break
+    return display, audited
+
+
+_EXPERIENCE_TARGET_AGENTS = {"forensics", "osint", "challenger"}
+
+
+def _normalize_evidence_checklist(value: Any) -> list[str] | None:
+    """Normalize common model schema drift for an optional editable checklist."""
+
+    def collect(candidate: Any, *, label: str = "", depth: int = 0) -> list[str] | None:
+        if depth > 3:
+            return None
+        if isinstance(candidate, str):
+            items = [item.strip() for item in re.split(r"[\n;；]+", candidate) if item.strip()]
+            return [f"{label}：{item}"[:100] if label else item[:100] for item in items]
+        if isinstance(candidate, list):
+            collected: list[str] = []
+            for item in candidate:
+                nested = collect(item, label=label, depth=depth + 1)
+                if nested is None:
+                    return None
+                collected.extend(nested)
+            return collected
+        if isinstance(candidate, dict):
+            if "items" in candidate or "checks" in candidate:
+                nested = candidate.get("items") if "items" in candidate else candidate.get("checks")
+                return collect(nested, label=label, depth=depth + 1)
+            collected = []
+            for key, item in candidate.items():
+                nested = collect(item, label=str(key).strip(), depth=depth + 1)
+                if nested is None:
+                    return None
+                collected.extend(nested)
+            return collected
+        return None
+
+    if value is None:
+        return []
+    normalized = collect(value)
+    return normalized[:4] if normalized is not None else None
+
+
+def _normalize_experience_contract_draft(value: Any) -> dict[str, Any] | None:
+    """Return the same canonical draft shape that downstream code actually consumes."""
+    if not isinstance(value, dict):
+        return None
+    raw_targets = value.get("target_agents") or value.get("target_agent")
+    if isinstance(raw_targets, str):
+        raw_targets = [raw_targets]
+    targets: list[str] = []
+    for item in raw_targets if isinstance(raw_targets, list) else []:
+        target = str(item).strip().lower()
+        if target in _EXPERIENCE_TARGET_AGENTS and target not in targets:
+            targets.append(target)
+    required_text_fields = (
+        "title", "problem_pattern", "recommended_method", "when_to_escalate", "limitations"
+    )
+    if any(not isinstance(value.get(field), str) for field in required_text_fields):
+        return None
+    evidence_to_check = _normalize_evidence_checklist(value.get("evidence_to_check"))
+    if evidence_to_check is None:
+        return None
+    title = (value.get("title") or "").strip()
+    problem_pattern = (value.get("problem_pattern") or "").strip()
+    recommended_method = (value.get("recommended_method") or "").strip()
+    if not targets or not title or not problem_pattern or not recommended_method:
+        return None
+    return {
+        "title": title[:80],
+        "target_agents": targets,
+        "problem_pattern": problem_pattern[:320],
+        "recommended_method": recommended_method[:600],
+        "evidence_to_check": evidence_to_check,
+        "when_to_escalate": (value.get("when_to_escalate") or "").strip()[:240],
+        "limitations": (value.get("limitations") or "").strip()[:240],
+    }
 
 
 def _help_tokens(text: str) -> set[str]:
@@ -1191,7 +1597,8 @@ async def commander_summarize_consultation(
         )
         return fallback_summary
 
-    generated = str(parsed.get("generated_summary") or "").strip()
+    generated_value = parsed.get("generated_summary")
+    generated = generated_value.strip() if isinstance(generated_value, str) else ""
     if not generated:
         fallback_summary.setdefault("summary_provider", "fallback_static")
         fallback_summary["skill_execution"] = _finalize_commander_skill_execution(
@@ -1202,21 +1609,31 @@ async def commander_summarize_consultation(
         )
         return fallback_summary
 
+    normalized_output: dict[str, Any] = {"generated_summary": generated[:2000]}
+    if "expert_answer_summary" in parsed:
+        normalized_output["expert_answer_summary"] = _normalize_contract_text(
+            parsed["expert_answer_summary"], limit=1200
+        )
+    display_lists: dict[str, list[str]] = {}
+    for field in ("recommended_actions", "unresolved_questions"):
+        if field not in parsed:
+            continue
+        display, audited = _normalize_contract_text_list(parsed[field])
+        display_lists[field] = display
+        normalized_output[field] = audited
     result = dict(fallback_summary)
-    result["generated_summary"] = generated[:2000]
-    result["confirmed_summary"] = generated[:2000]
+    result["generated_summary"] = normalized_output["generated_summary"]
+    result["confirmed_summary"] = normalized_output["generated_summary"]
     result["summary_provider"] = "commander_llm"
     result["summary_raw_response"] = raw[:1200]
-    if isinstance(parsed.get("expert_answer_summary"), str):
-        result["expert_answer_summary"] = parsed["expert_answer_summary"][:1200]
-    if isinstance(parsed.get("recommended_actions"), list):
-        result["recommended_actions"] = [str(item)[:300] for item in parsed["recommended_actions"][:6] if str(item).strip()]
-    if isinstance(parsed.get("unresolved_questions"), list):
-        result["unresolved_questions"] = [str(item)[:300] for item in parsed["unresolved_questions"][:6] if str(item).strip()]
+    if isinstance(normalized_output.get("expert_answer_summary"), str):
+        result["expert_answer_summary"] = normalized_output["expert_answer_summary"]
+    result["recommended_actions"] = display_lists.get("recommended_actions", [])
+    result["unresolved_questions"] = display_lists.get("unresolved_questions", [])
     result["help_needed"] = help_needed
     result["skill_execution"] = _finalize_commander_skill_execution(
         skill_load,
-        parsed,
+        normalized_output,
         llm_status,
         context_payload=context_payload,
     )
@@ -1284,16 +1701,51 @@ async def commander_extract_experience_drafts(
         return []
     parsed = _extract_json_object(raw)
     drafts = parsed.get("drafts") if isinstance(parsed, dict) else None
+
+    def has_contract_failure(candidate: Any) -> bool:
+        if not isinstance(candidate, list):
+            return True
+        return any(_normalize_experience_contract_draft(item) is None for item in candidate)
+
+    if llm_status.get("status") == "success" and has_contract_failure(drafts):
+        repair_text = (
+            f"{human_text}\n\n<contract_repair priority=\"system_contract\">\n"
+            "上一次 JSON 未通过 experience_distillation_contract。请只返回修正后的 JSON 对象；"
+            "drafts 必须是数组，每条必须完整包含 title、target_agents、problem_pattern、"
+            "recommended_method、evidence_to_check、when_to_escalate、limitations；"
+            "target_agents 只能取 forensics、osint、challenger，数组项和文本字段类型必须正确。\n"
+            f"上一次输出：{html.escape(raw[:4000], quote=False)}\n</contract_repair>"
+        )
+        raw = await _invoke_multimodal_llm(
+            system_prompt=system_prompt,
+            human_text=repair_text,
+            sample_refs=None,
+            fallback_text=json.dumps(fallback_payload, ensure_ascii=False),
+            status_sink=llm_status,
+        )
+        parsed = _extract_json_object(raw)
+        drafts = parsed.get("drafts") if isinstance(parsed, dict) else None
+    normalized_drafts: list[dict[str, Any]] = []
+    rejected_drafts: list[Any] = []
+    for item in drafts if isinstance(drafts, list) else []:
+        normalized = _normalize_experience_contract_draft(item)
+        if normalized is None:
+            rejected_drafts.append(item)
+        else:
+            normalized_drafts.append(normalized)
+    # Safe schema drift is normalized, but wholly invalid items stay visible to
+    # the contract checker instead of being silently converted into "no drafts".
+    normalized_output = {"drafts": [*normalized_drafts, *rejected_drafts]}
     _finalize_commander_skill_execution(
         skill_load,
-        parsed if isinstance(parsed, dict) else {},
+        normalized_output if isinstance(drafts, list) else {},
         llm_status,
         context_payload=context_payload,
         sink=skill_execution_sink,
     )
     if not isinstance(drafts, list):
         return []
-    return [item for item in drafts if isinstance(item, dict)]
+    return normalized_drafts
 
 
 # ---------------------------------------------------------------------------
@@ -1310,6 +1762,7 @@ async def commander_ruling(
     confidence_context: dict | None = None,
     *,
     skill_context: str = "",
+    expected_verdict_cn: str = "",
     llm_status: dict[str, Any] | None = None,
 ) -> str:
     """Let the LLM produce a final ruling based on all agent evidence."""
@@ -1323,8 +1776,12 @@ async def commander_ruling(
             "### Agent 结论与关键分歧；### 后续建议与风险。"
             "其中最终裁决结论（伪造/可疑/真实/无法判定）必须明确写出。"
             "最终裁决结论只能是伪造、可疑、真实、无法判定之一。"
-            "综合置信度必须引用结构化 final_verdict.confidence_overall 或权重加权结果，"
-            "不得把 OSINT 自身置信度、人工意见或模型自行估计写成最终综合置信度。"
+            f"确定性 Python 已计算的最终裁决是“{expected_verdict_cn or '无法判定'}”；"
+            "必须原样采用该值，不得根据证据自行改写四分类结果。"
+            "“置信度与证据链”章节只解释证据链质量、分歧和限制，不得自行输出第二个综合置信度数值；"
+            "综合置信度及加权计算过程由研判指挥 Agent 的确定性代码统一插入，"
+            "不得引用 forensics_score 充当综合置信度，也不得把 OSINT 自身置信度、"
+            "人工意见或模型自行估计写成最终综合置信度。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
             "请直接输出分析文本，不要用代码块包裹。"
     )
@@ -1337,6 +1794,7 @@ async def commander_ruling(
         "challenger_feedback": challenger_feedback,
         "agent_weights": agent_weights,
         "confidence_context": confidence_context or {},
+        "deterministic_verdict_cn": expected_verdict_cn or "无法判定",
     })
     return await _invoke_multimodal_llm(
         system_prompt=system_prompt,

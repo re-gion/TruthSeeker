@@ -8,10 +8,16 @@ from typing import Any, Awaitable
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
-from app.agents.tools.llm_client import build_sample_references, osint_interpret
+from app.agents.tools.llm_client import build_sample_references, osint_interpret, summarize_previous_analysis
 from app.agents.tools.domain_provenance import analyze_domain_provenance
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text, text_fingerprint
-from app.agents.tools.osint_search import build_deidentified_queries, search_osint
+from app.agents.tools.osint_search import (
+    EXA_CONNECT_MAX_ATTEMPTS,
+    EXA_TIMEOUT_SECONDS,
+    MAX_EXA_QUERIES,
+    build_deidentified_queries,
+    search_osint,
+)
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
 from app.agents.tools.threat_intel import analyze_urls
@@ -25,6 +31,9 @@ from app.services.text_validation import decode_text_bytes
 logger = logging.getLogger(__name__)
 
 TEXT_MAX_CHARS = 10000
+EXA_BATCH_TIMEOUT_SECONDS = (
+    EXA_TIMEOUT_SECONDS * MAX_EXA_QUERIES * EXA_CONNECT_MAX_ATTEMPTS + 10.0
+)
 
 
 def _now() -> str:
@@ -82,7 +91,7 @@ def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_a
         "collaboration_summary_payload": consultation_summary if summary_relevant else None,
         "consultation_summary_payload": consultation_summary if summary_relevant else None,
         "previous_analysis": previous_analysis_text,
-        "previous_analysis_payload": previous_analysis,
+        "previous_analysis_payload": summarize_previous_analysis(previous_analysis),
         "instruction": "本轮只针对逻辑质询 Agent 打回点和人机协同摘要补强，不重复上一轮完整报告。",
     }
 
@@ -164,6 +173,14 @@ async def _settle_tool(
 
 def _summarize_tool(tool: str, result: dict[str, Any]) -> str:
     if tool == "exa_search":
+        reason = result.get("reason")
+        if reason == "no_case_specific_matches":
+            return (
+                f"Exa 搜索完成，检查 {int(result.get('searched_result_count', 0) or 0)} 条候选，"
+                "未发现与本案 IOC 直接匹配的公开来源"
+            )
+        if reason == "no_results":
+            return "Exa 搜索完成，未返回公开结果"
         return f"Exa status={result.get('status')}, results={len(result.get('results') or [])}"
     if tool == "virustotal_osint_ioc":
         vt = result.get("virustotal") or {}
@@ -344,11 +361,14 @@ async def osint_node(state: TruthSeekerState) -> dict:
         if maybe_reuse("text_claim_extract", "uploaded_text"):
             text_tool = tool_results[-1]
         else:
+            # 社工声明抽取只依赖本地规则（URL/结构化特征/诱导话术），
+            # 不调用 LLM：LLM 版 AIGC 概率由下方独立 ai_text_detector 工具承担，
+            # 避免 LLM 不可用时本工具挂起至 120s 超时导致整轮降级。
             text_tool = await _settle_tool(
                 tool="text_claim_extract",
                 target="uploaded_text",
-                coro=analyze_text(combined),
-                timeout=120.0,
+                coro=analyze_text(combined, use_llm=False),
+                timeout=30.0,
             )
             tool_results.append(text_tool)
         if isinstance(text_tool.get("result"), dict):
@@ -388,7 +408,9 @@ async def osint_node(state: TruthSeekerState) -> dict:
             tool="whoisxml_domain_provenance",
             target=url,
             coro=analyze_domain_provenance(url),
-            timeout=30.0,
+            # 工具内部按 whois -> dns -> geo 串行调用最多 3 个组件，
+            # 超时预算必须覆盖组件总和，否则慢响应会在中途被整体杀掉。
+            timeout=90.0,
         )
         for url in urls_to_check[:5]
         if not maybe_reuse("whoisxml_domain_provenance", url)
@@ -443,7 +465,7 @@ async def osint_node(state: TruthSeekerState) -> dict:
             tool="exa_search",
             target=exa_target,
             coro=search_osint(queries),
-            timeout=60.0,
+            timeout=EXA_BATCH_TIMEOUT_SECONDS,
         )
         tool_results.append(exa_tool)
     search_results = (exa_tool.get("result") or {}).get("results") or []

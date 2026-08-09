@@ -161,12 +161,16 @@ WhoisXML：
 - DNS Lookup 优先查询完整主机名；完整主机名没有 A/AAAA 时查询 CNAME 并解析 CNAME 目标；仍没有 IP 时再回退到注册域。
 - 未配置 key、超时或网络失败时返回结构化降级结果，不把“缺数据”写成“无异常”。
 - WHOIS 主查询成功但 DNS Lookup 或 IP Geolocation 返回 403 时记录为 `partial`：报告保留注册时间/注册商等已取得信息，并提示子产品权限或额度受限，而不是写成整个 WhoisXML 工具失败。
+- 默认链路不调用 DNS History/历史 IP 产品。Commander 会依据本轮组件状态校正建议：WHOIS 已成功或部分成功取得注册信息时不得再次列为待执行动作；若确需历史 IP，只能明确写成需要另行启用并授权 DNS History 的扩展复核。
 
 Exa：
 
 - 只在后端运行时调用 Exa API。
-- 只发送脱敏搜索线索。
-- 无 key、超时或网络失败时返回结构化降级结果。
+- 只发送脱敏且具备案件特异性的搜索线索；存在 URL/域名 IOC 时优先使用精确主机查询，不把 WhoisXML/VirusTotal 工具摘要或泛化风险标签当作搜索词。
+- 域名查询结果必须在标题、URL 或摘要中命中该主机/注册域，未命中的厂商产品页和泛化页面不进入证据链，也不增加风险分。
+- `ConnectError` 对同一幂等搜索最多执行 3 次总尝试（0.5s、1.5s 退避）；仍失败时对本批次熔断并合并为一个结构化 `connection_failed`，避免按查询重复展示同一连接故障。OSINT 外层超时覆盖全部 3 条查询及其重试预算。
+- 搜索调用成功但没有案件 IOC 直接命中时返回 `success + no_case_specific_matches`，表示“已检索、暂无直接公开佐证”，不计为工具降级；无关语义候选仍会被拒绝并记录检查数量。
+- 无 key、超时或网络失败时才返回结构化降级/失败结果。
 
 公开案例 RAG：
 
@@ -202,14 +206,15 @@ Exa：
 - `collaboration_messages`: 保存 Commander、用户和专家消息；结构化列包括 `session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
 - `consultation_sessions` / `consultation_invites` / `consultation_messages`: 旧表保留只读兼容；迁移 `20260605_collaboration_tables.sql` 会复制历史数据到新表，不在本次删除旧表。
 - `audit_logs`: 记录协同触发、审批、跳过、结束、摘要确认、恢复研判和邀请创建。
+- `/collaboration/{task_id}/agent-history` 只把任务本体作为强依赖；`agent_logs`、`analysis_states`、`reports`、`audit_logs` 任一历史源临时失败时返回其余可用数据，并在 `history_warnings` 标出降级来源，避免刷新检测台整体 500。
 
 协同恢复：
 
 - 前 4 轮 Challenger 置信度 `< 0.8` 必须打回目标 Agent；第 5 轮达到阶段最大轮次时直接放行，并把低置信或未解决问题写入残留风险。
 - 首次满足“同一目标最近 3 轮置信度均 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `collaboration_required` 并写入 active session。
 - 同一目标 Agent 再次满足门槛时，后端发送 `collaboration_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
-- 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；LLM 不可用或输出契约无效时，本地兜底按编号意见提炼结论、确认态与回注建议，不得直接拼接或按字符截断聊天原文。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
-- 用户结束协同后，Commander 同步抽取个人经验草稿。摘要确认不会自动入库；前端展示草稿给用户编辑、删除和单独确认。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
+- 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；摘要生成与个人经验草稿提炼并发运行，总耗时取两次调用中的较慢者。协同路由不再额外设置 12 秒短超时，稍慢但有效的模型结果仍会被采纳；底层 LLM 客户端继续负责网络超时、瞬时错误重试和真实失败降级。LLM 不可用或输出契约无效时，本地兜底按编号意见提炼结论、确认态与回注建议，不得直接拼接或按字符截断聊天原文。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
+- 用户结束协同后，Commander 同步抽取个人经验草稿；`evidence_to_check` 等可编辑非关键清单的字符串/常见对象漂移会先安全归一化为数组，必填标题、适用 Agent、问题模式和方法仍保持严格合同。草稿生成或合同检查失败时返回空草稿及可见降级原因。摘要确认不会自动入库；前端直接消费 close/confirm 接口返回的 session 展示草稿，不依赖发送端收到自己的 Realtime 广播；历史空快照也显示缺失原因。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
 - `resume=true` 时读取 `collaboration_messages`、`collaboration_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。旧 `consultation_*` 数据作为历史兜底读取。
 - 报告必须保留协同触发原因、用户确认后的摘要和关键意见摘录，而不是完整复刻聊天或静默合并人工意见。
 

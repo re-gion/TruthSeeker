@@ -3,6 +3,7 @@
 The module keeps the legacy consultation route names for compatibility, but
 new writes target collaboration_* tables.
 """
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from app.services.audit_log import record_audit_event
 from app.services.consultation_workflow import (
@@ -143,6 +145,28 @@ def _select_rows(table_name: str, task_id: str, *, order_desc: bool = False) -> 
     except Exception as exc:
         logger.warning("Failed to read %s for %s: %s", table_name, task_id, exc)
         return []
+
+
+def _select_history_rows(
+    table_name: str,
+    task_id: str,
+    *,
+    order_by: str,
+    order_desc: bool = False,
+) -> tuple[list[dict], bool]:
+    """Read an optional history source without taking down the whole replay API."""
+    try:
+        resp = (
+            supabase.table(table_name)
+            .select("*")
+            .eq("task_id", task_id)
+            .order(order_by, desc=order_desc)
+            .execute()
+        )
+        return resp.data or [], False
+    except Exception as exc:
+        logger.warning("Failed to read optional history %s for %s: %s", table_name, task_id, exc)
+        return [], True
 
 
 def _fetch_session_or_404(task_id: str, session_id: str) -> dict:
@@ -429,30 +453,52 @@ async def close_consultation_session(task_id: str, session_id: str, request: Req
         raise HTTPException(status_code=400, detail="当前协同状态不能结束")
     messages = _session_messages(task_id, session_id)
     fallback_summary = build_moderator_summary(messages=messages)
-    summary_payload = await commander_summarize_consultation(
+    context_payload = session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {}
+    summary_task = commander_summarize_consultation(
         messages=messages,
-        context_payload=session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {},
+        context_payload=context_payload,
         fallback_summary=fallback_summary,
-        case_prompt=(session.get("context_payload") or {}).get("case_prompt", "") if isinstance(session.get("context_payload"), dict) else "",
+        case_prompt=context_payload.get("case_prompt", ""),
     )
     user_id = str(task.get("user_id") or getattr(request.state, "user_id", "") or "")
     if user_id:
-        try:
-            experience_skill_execution: dict[str, Any] = {}
-            summary_payload["experience_drafts"] = await build_experience_drafts(
-                user_id=user_id,
-                task_id=task_id,
-                session_id=session_id,
-                messages=messages,
-                context_payload=session.get("context_payload") if isinstance(session.get("context_payload"), dict) else {},
-                summary_payload=summary_payload,
-                skill_execution_sink=experience_skill_execution,
-            )
+        experience_skill_execution: dict[str, Any] = {}
+        experience_task = build_experience_drafts(
+            user_id=user_id,
+            task_id=task_id,
+            session_id=session_id,
+            messages=messages,
+            context_payload=context_payload,
+            summary_payload=fallback_summary,
+            skill_execution_sink=experience_skill_execution,
+        )
+        summary_result, experience_result = await asyncio.gather(
+            summary_task,
+            experience_task,
+            return_exceptions=True,
+        )
+        summary_payload = summary_result if isinstance(summary_result, dict) else dict(fallback_summary)
+        if isinstance(summary_result, Exception):
+            logger.warning("Commander summary degraded for consultation %s: %s", session_id, summary_result)
+            summary_payload["summary_provider"] = "fallback_static"
+            summary_payload["summary_degraded"] = True
+        if isinstance(experience_result, list):
+            summary_payload["experience_drafts"] = experience_result
             summary_payload["experience_skill_execution"] = experience_skill_execution
-        except Exception as exc:
-            logger.error("Failed to build experience drafts for consultation %s: %s", session_id, exc)
+            if not experience_result and experience_skill_execution.get("execution_status") == "check_failed":
+                summary_payload["experience_drafts_error"] = "个人经验草稿未通过输出检查，请重新发起协同或重试检测"
+        else:
+            logger.warning("Failed to build experience drafts for consultation %s: %s", session_id, experience_result)
             summary_payload["experience_drafts"] = []
             summary_payload["experience_drafts_error"] = "个人经验库草稿生成失败"
+    else:
+        try:
+            summary_payload = await summary_task
+        except Exception as exc:
+            logger.warning("Commander summary degraded for consultation %s: %s", session_id, exc)
+            summary_payload = dict(fallback_summary)
+            summary_payload["summary_provider"] = "fallback_static"
+            summary_payload["summary_degraded"] = True
     updated = _update_session(session_id, {
         "status": "summary_pending",
         "closed_at": utc_now_iso(),
@@ -556,18 +602,22 @@ async def validate_consultation_invite(token: str):
 async def get_consultation_messages(task_id: str, request: Request, invite_token: Optional[str] = None):
     """获取任务的人机协同消息"""
     is_authenticated = bool(getattr(request.state, "is_authenticated", False))
-    invite = None
-    if not is_authenticated:
-        invite = _validate_invite_token(task_id, invite_token)
-    else:
-        task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
-        if not task_resp.data:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        _assert_task_owner(task_resp.data[0], request)
 
-    latest = _session_for_invite_or_latest(task_id, invite)
-    session_id = invite.get("session_id") if invite and invite.get("session_id") else latest.get("id") if latest else None
-    return {"messages": _session_messages(task_id, session_id)}
+    def load_messages() -> dict[str, list[dict]]:
+        invite = None
+        if not is_authenticated:
+            invite = _validate_invite_token(task_id, invite_token)
+        else:
+            task_resp = supabase.table("tasks").select("id,user_id").eq("id", task_id).execute()
+            if not task_resp.data:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            _assert_task_owner(task_resp.data[0], request)
+
+        latest = _session_for_invite_or_latest(task_id, invite)
+        session_id = invite.get("session_id") if invite and invite.get("session_id") else latest.get("id") if latest else None
+        return {"messages": _session_messages(task_id, session_id)}
+
+    return await run_in_threadpool(load_messages)
 
 
 @router.get("/{task_id}/agent-history")
@@ -587,43 +637,31 @@ async def get_agent_history(task_id: str, request: Request, invite_token: Option
     if not task_resp.data:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    logs_resp = (
-        supabase.table("agent_logs")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("timestamp", desc=False)
-        .execute()
-    )
-    states_resp = (
-        supabase.table("analysis_states")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=False)
-        .execute()
-    )
-    reports_resp = (
-        supabase.table("reports")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("generated_at", desc=True)
-        .execute()
-    )
-    audit_resp = (
-        supabase.table("audit_logs")
-        .select("*")
-        .eq("task_id", task_id)
-        .order("created_at", desc=False)
-        .execute()
-    )
+    logs, logs_failed = _select_history_rows("agent_logs", task_id, order_by="timestamp")
+    states, states_failed = _select_history_rows("analysis_states", task_id, order_by="created_at")
+    reports, reports_failed = _select_history_rows("reports", task_id, order_by="generated_at", order_desc=True)
+    audit_logs, audit_failed = _select_history_rows("audit_logs", task_id, order_by="created_at")
+    history_warnings = [
+        table_name
+        for table_name, failed in (
+            ("agent_logs", logs_failed),
+            ("analysis_states", states_failed),
+            ("reports", reports_failed),
+            ("audit_logs", audit_failed),
+        )
+        if failed
+    ]
+    collaboration_session = _session_for_invite_or_latest(task_id, invite)
 
     return {
         "task": task_resp.data[0],
-        "agent_logs": logs_resp.data or [],
-        "analysis_states": states_resp.data or [],
-        "audit_logs": audit_resp.data or [],
-        "consultation_session": _session_for_invite_or_latest(task_id, invite),
-        "collaboration_session": _session_for_invite_or_latest(task_id, invite),
-        "report": reports_resp.data[0] if reports_resp.data else None,
+        "agent_logs": logs,
+        "analysis_states": states,
+        "audit_logs": audit_logs,
+        "consultation_session": collaboration_session,
+        "collaboration_session": collaboration_session,
+        "report": reports[0] if reports else None,
+        "history_warnings": history_warnings,
     }
 
 

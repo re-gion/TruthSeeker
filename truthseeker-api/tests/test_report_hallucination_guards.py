@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -65,3 +67,57 @@ def test_temporal_fact_table_marks_april_before_june_as_not_future():
     assert "早于分析时间" in facts
     assert "不是未来日期" in facts
     assert "不得称为未来日期" in facts
+
+
+@pytest.mark.asyncio
+async def test_forensics_output_cannot_call_april_a_future_time_in_august(monkeypatch):
+    from app.agents.tools import llm_client
+
+    async def wrong_model_output(**_kwargs):
+        return (
+            "### 自主检材观察\n内容\n"
+            "### 外部检测结果解读\n内容\n"
+            "### 融合判断\n内容\n"
+            "### 限制与复核建议\n"
+            "**时间戳不可验证**：图片内嵌时间‘2026-04-22 19:42’为将来时"
+            "（相对于分析时间 2026-08-06 北京时间 10:35）。"
+        )
+
+    monkeypatch.setattr(llm_client, "_invoke_multimodal_llm", wrong_model_output)
+
+    result = await llm_client.forensics_interpret(
+        {
+            "timestamp": "2026-08-06T02:35:00+00:00",
+        },
+        "image",
+    )
+
+    assert "为将来时" not in result
+    assert "，是未来日期" not in result
+    assert "为未来日期" not in result
+    assert "早于分析时间" in result
+
+
+def test_temporal_guard_preserves_a_real_future_date_in_another_clause():
+    from app.agents.tools.llm_client import enforce_temporal_consistency
+
+    result = enforce_temporal_consistency(
+        "图片内嵌时间 2026-04-22 19:42 不是未来日期；"
+        "公告时间 2026-09-01 09:00 属于未来。",
+        {"timestamp": "2026-08-06T02:35:00+00:00"},
+    )
+
+    assert "2026-04-22 19:42 不是未来日期" in result
+    assert "公告时间 2026-09-01 09:00 属于未来" in result
+
+
+def test_temporal_guard_does_not_rewrite_not_in_future_wording():
+    from app.agents.tools.llm_client import enforce_temporal_consistency
+
+    source = "图片内嵌时间 2026-04-22 19:42 不属于未来。"
+    result = enforce_temporal_consistency(
+        source,
+        {"timestamp": "2026-08-06T02:35:00+00:00"},
+    )
+
+    assert result == source

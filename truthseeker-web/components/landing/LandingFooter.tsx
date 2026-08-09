@@ -2,15 +2,16 @@
 
 import Link from "next/link"
 import { BrandLogo } from "@/components/logo/BrandLogo"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 
 export function LandingFooter() {
     return (
         <footer className="w-full relative overflow-hidden bg-background pt-20 pb-10">
             {/* Huge Background Text */}
             <div className="absolute bottom-0 inset-x-0 w-full flex justify-center pointer-events-none overflow-hidden opacity-10 dark:opacity-[0.03] z-0">
-                <span className="text-[12vw] font-bold tracking-tighter leading-none bg-clip-text text-transparent bg-gradient-to-b from-foreground to-background flex select-none uppercase translate-y-[15%]">
+                <BrandWordmark className="text-[12vw] leading-none bg-clip-text text-transparent bg-gradient-to-b from-foreground to-background flex select-none uppercase translate-y-[15%]">
                     TRUTHSEEKER
-                </span>
+                </BrandWordmark>
             </div>
 
             <div className="absolute inset-x-0 top-0 h-px w-full bg-gradient-to-r from-transparent via-[#6366F1]/50 to-transparent" />
@@ -22,7 +23,7 @@ export function LandingFooter() {
                             <div className="w-10 h-10 flex items-center justify-center">
                                 <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-sm" size={36} />
                             </div>
-                            <span className="font-bold tracking-tight text-xl">TruthSeeker</span>
+                            <BrandWordmark className="text-xl" />
                         </Link>
                         <p className="text-muted-foreground text-sm leading-relaxed max-w-sm">
                             基于鲁棒联邦学习与多智能体交叉验证的跨模态鉴伪与溯源系统。
@@ -53,7 +54,7 @@ export function LandingFooter() {
 
                 <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
                     <p className="text-xs text-foreground/70 font-mono">
-                        TruthSeeker © 2026 · 构建安全可信的数字未来
+                        <BrandWordmark /> © 2026 · 构建安全可信的数字未来
                     </p>
                     <div className="flex gap-4">
                         <span className="text-xs text-[#6366F1] font-mono opacity-80 uppercase px-2 py-1 rounded bg-[#6366F1]/10">

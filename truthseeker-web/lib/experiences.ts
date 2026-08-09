@@ -10,6 +10,63 @@ export interface ExperienceDraft {
   limitations: string
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+export function readExperienceDraftsFromSession(session: unknown): ExperienceDraft[] {
+  const summaryPayload = asRecord(asRecord(session)?.summary_payload)
+  const source = summaryPayload?.experience_drafts
+  if (!Array.isArray(source)) return []
+  return source.flatMap((item): ExperienceDraft[] => {
+    const row = asRecord(item)
+    if (!row) return []
+    const title = nonEmptyString(row.title)
+    const problemPattern = nonEmptyString(row.problem_pattern)
+    const recommendedMethod = nonEmptyString(row.recommended_method)
+    const targetAgents = Array.isArray(row.target_agents)
+      ? row.target_agents.map(String).map((value) => value.trim()).filter(Boolean)
+      : []
+    if (!title || !problemPattern || !recommendedMethod || targetAgents.length === 0) return []
+    return [{
+      title,
+      target_agents: targetAgents,
+      problem_pattern: problemPattern,
+      recommended_method: recommendedMethod,
+      evidence_to_check: Array.isArray(row.evidence_to_check)
+        ? row.evidence_to_check.map(String).map((value) => value.trim()).filter(Boolean)
+        : [],
+      when_to_escalate: nonEmptyString(row.when_to_escalate) ?? "",
+      limitations: nonEmptyString(row.limitations) ?? "",
+    }]
+  })
+}
+
+export function readExperienceDraftStatusFromSession(session: unknown): string | null {
+  const summaryPayload = asRecord(asRecord(session)?.summary_payload)
+  const error = nonEmptyString(summaryPayload?.experience_drafts_error)
+  if (error) return error
+  const skillExecution = asRecord(summaryPayload?.experience_skill_execution)
+  if (skillExecution?.execution_status === "check_failed") {
+    return "个人经验草稿未通过输出检查，请重新发起协同或重试检测"
+  }
+  if (Array.isArray(summaryPayload?.experience_drafts)) {
+    if (summaryPayload.experience_drafts.length > 0) {
+      return readExperienceDraftsFromSession(session).length === 0
+        ? "个人经验草稿格式无效，暂时无法展示"
+        : null
+    }
+    return "本次协同未生成新的个人经验草稿，可能没有可复用结论或已与现有经验重复"
+  }
+  return null
+}
+
 export interface ExperienceEntry extends ExperienceDraft {
   id: string
   source_task_id: string | null
@@ -95,11 +152,33 @@ export async function getExperienceDetail(entryId: string, token: string, fetchI
   return normalizeExperienceEntry(await resp.json())
 }
 
+export interface ConfirmExperienceResult {
+  status?: "ok" | "partial" | "failed"
+  inserted: number
+  indexed_chunks: number
+  failed?: Array<{ title?: string; error?: string; indexing_failed?: boolean }>
+}
+
+export function remainingExperienceDraftsAfterConfirm(
+  drafts: ExperienceDraft[],
+  result: ConfirmExperienceResult,
+): ExperienceDraft[] {
+  const failures = result.failed || []
+  if (failures.length === 0) {
+    return result.status === "failed" ? drafts : []
+  }
+  const failedTitles = new Set(
+    failures.map((item) => nonEmptyString(item.title)).filter((title): title is string => Boolean(title)),
+  )
+  if (failedTitles.size === 0) return drafts
+  return drafts.filter((draft) => failedTitles.has(draft.title.trim()))
+}
+
 export async function confirmExperienceDrafts(
   payload: { task_id: string; session_id: string; drafts: ExperienceDraft[] },
   token: string,
   fetchImpl: typeof fetch = fetch,
-) {
+): Promise<ConfirmExperienceResult> {
   const resp = await fetchImpl(`${API_BASE}/api/v1/experiences/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -110,7 +189,7 @@ export async function confirmExperienceDrafts(
     try { detail = (await resp.json()).detail || detail } catch { /* ignore */ }
     throw new Error(detail)
   }
-  return resp.json() as Promise<{ inserted: number; indexed_chunks: number }>
+  return (await resp.json()) as ConfirmExperienceResult
 }
 
 export async function deleteExperience(entryId: string, token: string, fetchImpl: typeof fetch = fetch): Promise<void> {

@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 
 import { DashboardChart } from "@/components/dashboard/DashboardChart"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 import type {
   DashboardCapabilityMetric,
   DashboardDistributionItem,
@@ -1265,7 +1266,7 @@ export function DashboardClient({ viewModel }: DashboardClientProps) {
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-full border border-[#D4FF3C]/25 bg-[#D4FF3C]/10 px-4 py-1.5 text-xs tracking-[0.18em] text-[#D4FF3C] uppercase">
-                TruthSeeker Data Screen
+                <BrandWordmark>TruthSeeker Data Screen</BrandWordmark>
               </span>
               <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs tracking-[0.18em] text-white/58 uppercase">
                 外部权威 + 内部汇总

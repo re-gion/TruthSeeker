@@ -20,7 +20,7 @@ export function HeaderClient({ user }: HeaderClientProps) {
                 <div className="flex flex-col">
                     <ShinyText
                         text="TruthSeeker"
-                        className="text-foreground font-black tracking-tighter text-xl leading-none"
+                        className="brand-wordmark text-foreground text-xl leading-none"
                         speed={3}
                     />
                 </div>

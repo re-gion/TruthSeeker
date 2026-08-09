@@ -1,6 +1,7 @@
 """Domain provenance helpers backed by WhoisXML APIs."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +12,11 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 瞬时网络错误（连接建立/读取失败）重试次数，HTTP 4xx/5xx 不重试
+_RETRYABLE_CONNECTION_ERRORS = (httpx.NetworkError, httpx.TimeoutException)
+_CONNECTION_RETRIES = 1
+_CONNECTION_RETRY_DELAY_SECONDS = 0.5
 
 WHOISXML_WHOIS_URL = "https://www.whoisxmlapi.com/whoisserver/WhoisService"
 WHOISXML_DNS_LOOKUP_URL = "https://www.whoisxmlapi.com/whoisserver/DNSService"
@@ -117,6 +123,39 @@ def _normalize_ip_geolocation(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _get_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, Any],
+    attempts: int = 1 + _CONNECTION_RETRIES,
+) -> httpx.Response:
+    """GET with retry on transient connection errors (ConnectError/ReadTimeout).
+
+    WhoisXML 是国内网络下会间歇性连接失败的海外接口，瞬时重试能显著降低
+    “整工具降级”的概率；HTTP 4xx/5xx（配置或额度问题）不重试。
+    """
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return resp
+        except _RETRYABLE_CONNECTION_ERRORS as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                logger.warning(
+                    "WhoisXML %s 连接失败，重试 %d/%d: %s",
+                    url,
+                    attempt + 1,
+                    attempts,
+                    exc,
+                )
+                await asyncio.sleep(_CONNECTION_RETRY_DELAY_SECONDS)
+    assert last_error is not None
+    raise last_error
+
+
 def _format_component_error(component: str, exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code
@@ -152,7 +191,8 @@ def _extract_ips_from_dns_lookup(dns_lookup: list[dict[str, Any]]) -> list[str]:
 
 
 async def _dns_lookup(client: httpx.AsyncClient, name: str, record_type: str, source: str) -> list[dict[str, Any]]:
-    resp = await client.get(
+    resp = await _get_with_retry(
+        client,
         WHOISXML_DNS_LOOKUP_URL,
         params={
             "apiKey": settings.WHOISXML_API_KEY,
@@ -161,7 +201,6 @@ async def _dns_lookup(client: httpx.AsyncClient, name: str, record_type: str, so
             "outputFormat": "JSON",
         },
     )
-    resp.raise_for_status()
     return _normalize_dns_records(resp.json(), source=source, queried_name=name)
 
 
@@ -261,11 +300,11 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=settings.WHOISXML_TIMEOUT_SECONDS) as client:
         try:
-            whois_resp = await client.get(
+            whois_resp = await _get_with_retry(
+                client,
                 WHOISXML_WHOIS_URL,
                 params={"apiKey": settings.WHOISXML_API_KEY, "domainName": domain, "outputFormat": "JSON"},
             )
-            whois_resp.raise_for_status()
             whois = _normalize_whois(whois_resp.json())
         except Exception as exc:
             logger.warning("WhoisXML WHOIS degraded for %s: %s", domain, exc)
@@ -279,11 +318,11 @@ async def analyze_domain_provenance(value: str) -> dict[str, Any]:
 
         for ip in _extract_ips_from_dns_lookup(dns_lookup):
             try:
-                geo_resp = await client.get(
+                geo_resp = await _get_with_retry(
+                    client,
                     WHOISXML_IP_GEOLOCATION_URL,
                     params={"apiKey": settings.WHOISXML_API_KEY, "ipAddress": ip, "outputFormat": "JSON"},
                 )
-                geo_resp.raise_for_status()
                 geo = _normalize_ip_geolocation(geo_resp.json())
                 if geo.get("ip"):
                     ip_geolocation.append(geo)

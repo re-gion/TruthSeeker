@@ -810,6 +810,7 @@ export function DetectConsole({ taskId }: { taskId: string }) {
                             inviteToken={inviteToken}
                             currentRole={role}
                             consultationState={consultationState}
+                            eventChannel={channel}
                             onResume={resume}
                         />
                     </motion.div>

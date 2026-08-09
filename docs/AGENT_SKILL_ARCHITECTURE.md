@@ -107,7 +107,7 @@ workflows: [primary_analysis]
 
 ## 6. 注入与校验边界
 
-加载器在 Agent 调用 LLM 前完成解析和校验，只把当前 Agent、当前工作流需要的 Skill 片段注入上下文。Forensics、OSINT、Challenger 和 Commander 最终裁决会检查各自必需 Markdown 章节真实存在、唯一、顺序正确且正文非空；Commander 最终裁决还要求四分类唯一，并与 Python 确定性裁决一致。协同主持检查 `help_needed/expert_tasks` 或摘要字段，经验提炼检查 `drafts` 数组及条目必填字段。所有路径都依据显式 LLM 调用状态判断是否具备“实际采用”的证据；LLM 初始化失败、调用降级或格式回退时，即使本地结果符合格式，也只能记为 `skipped`，且不得声称 LLM 可用。案件字段会先序列化并转义，再置于低于 Skill 的统一数据边界中。更深入的引用覆盖、工具状态真实性与业务语义检查仍可继续扩充。
+加载器在 Agent 调用 LLM 前完成解析和校验，只把当前 Agent、当前工作流需要的 Skill 片段注入上下文。Forensics、OSINT、Challenger 和 Commander 最终裁决会检查各自必需 Markdown 章节真实存在、唯一、顺序正确且正文非空；Commander 最终裁决还要求四分类唯一，并与 Python 确定性裁决一致。最终裁决值会作为硬规则显式注入，并由 Python 覆盖报告的结论章节，LLM 只负责证据解释。Commander 综合置信度同样只有一个权威值：由各 Agent 置信度乘动态权重后求和；报告上方显示该值，下方“置信度与证据链”由 Python 写入同值及逐项计算过程，LLM 不得引用 `forensics_score` 或生成第二套综合置信度。协同主持和经验提炼先把模型常见的安全结构漂移归一化为系统实际持久化、消费的公开合同，再对该规范产物执行检查；经验草稿第一次出现可修复的字段缺失或类型漂移时，会携带完整字段合同自动纠正重试一次，重试后仍无效的条目继续明确记为检查失败，不能静默伪装成空结果。所有路径都依据显式 LLM 调用状态判断是否具备“实际采用”的证据；LLM 初始化失败、调用降级或格式回退时，即使本地结果符合格式，也只能记为 `skipped`，且不得声称 LLM 可用。案件字段会先序列化并转义，再置于低于 Skill 的统一数据边界中。更深入的引用覆盖、工具状态真实性与业务语义检查仍可继续扩充。
 
 系统必须分别记录 `load_status`、`execution_status` 和逐项 `check_results`，避免把成功读取文件等同于成功执行方法。只有 `load_status=loaded`、`execution_status=applied` 且约定检查通过时，界面或报告才可写“本轮采用了该 Skill”；其余状态只能陈述降级或检查失败事实。
 

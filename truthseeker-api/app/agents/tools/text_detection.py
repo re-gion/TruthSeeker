@@ -20,6 +20,9 @@ from langchain_core.output_parsers import StrOutputParser
 
 logger = logging.getLogger(__name__)
 
+# LLM 分析单次调用上限：超过即放弃并降级为本地结果，避免拖垮整轮工具调用
+_TEXT_LLM_TIMEOUT_SECONDS = 20.0
+
 
 # ---------------------------------------------------------------------------
 # 1. LLM-based AI text detection
@@ -65,7 +68,10 @@ async def analyze_text_llm(text_content: str) -> dict:
     }
 
     try:
-        raw_output = await chain.ainvoke({"text_content": text_content})
+        raw_output = await asyncio.wait_for(
+            chain.ainvoke({"text_content": text_content}),
+            timeout=_TEXT_LLM_TIMEOUT_SECONDS,
+        )
         # 尝试解析 JSON —— 可能被 ```json 包裹
         cleaned = raw_output.strip()
         if cleaned.startswith("```"):
@@ -371,6 +377,43 @@ def analyze_social_engineering_risk(text: str, urls: list[str]) -> dict:
     }
 
 
+_BRAND_BRACKET_RE = re.compile(r"[【\[]\s*([^【】\[\]]{1,24}?)\s*[】\]]")
+_QUOTED_CLAIM_RE = re.compile(r"[“\"「『]([^”\"」』]{2,48})[”\"」』]")
+_AMOUNT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:万元|亿元|元|美元|港币|日元|欧元)")
+_DEADLINE_RE = re.compile(r"(?:在|于|请于)?\s*\d+\s*(?:小时|天|日|分钟|工作日)\s*内")
+
+
+def extract_key_claims_local(text: str, urls: list[str], social_engineering: dict) -> list[str]:
+    """纯本地规则抽取文本关键声明，LLM 不可用时仍提供结构化 claim。
+
+    覆盖：品牌/主体（如【云邮通】）、引述声明、引导链接、金额、时间压力
+    与社工诱导特征；每条声明带来源类型标签，供下游核验声明主体真实性。
+    """
+    claims: list[str] = []
+    seen: set[str] = set()
+
+    def add(claim: str) -> None:
+        key = re.sub(r"\s+", "", claim).lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        claims.append(claim)
+
+    for match in _BRAND_BRACKET_RE.finditer(text):
+        add(f"声明主体: {match.group(1).strip()}")
+    for match in _QUOTED_CLAIM_RE.finditer(text):
+        add(f"引述声明: {match.group(1).strip()}")
+    for url in urls[:5]:
+        add(f"引导访问链接: {url}")
+    for amount in _AMOUNT_RE.findall(text)[:3]:
+        add(f"金额表述: {amount}")
+    for deadline in _DEADLINE_RE.findall(text)[:3]:
+        add(f"时间压力: {re.sub(r'\\s+', '', deadline)}内需完成操作")
+    for indicator in (social_engineering.get("indicators") or [])[:5]:
+        add(f"诱导特征: {indicator}")
+    return claims
+
+
 # ---------------------------------------------------------------------------
 # 4. Main entry point
 # ---------------------------------------------------------------------------
@@ -387,6 +430,10 @@ async def analyze_text(text_content: str, *, use_llm: bool = True) -> dict:
         structural_analysis, key_claims, anomalies, extracted_urls,
         confidence, timestamp 的字典。
     """
+    # 提取 URL 与本地社工风险（不依赖 LLM），供各分支复用
+    extracted_urls = extract_urls_from_text(text_content)
+    social_engineering = analyze_social_engineering_risk(text_content, extracted_urls)
+
     # 并发执行 LLM 分析和结构分析。内部 AIGC 工具可关闭 LLM，使同一文本概率稳定。
     async def _run_structural():
         return analyze_text_structure(text_content)
@@ -403,7 +450,7 @@ async def analyze_text(text_content: str, *, use_llm: bool = True) -> dict:
         llm_result = {
             "ai_probability": local_score,
             "manipulation_score": 0.0,
-            "key_claims": [],
+            "key_claims": extract_key_claims_local(text_content, extracted_urls, social_engineering),
             "anomalies": [],
             "writing_style_analysis": "内部文本 AIGC 检测使用确定性本地结构特征，未调用 LLM。",
             "degraded": False,
@@ -433,10 +480,6 @@ async def analyze_text(text_content: str, *, use_llm: bool = True) -> dict:
             "vocabulary_diversity": 0.0,
             "anomalies": [f"结构分析异常: {structural_result}"],
         }
-
-    # 提取 URL
-    extracted_urls = extract_urls_from_text(text_content)
-    social_engineering = analyze_social_engineering_risk(text_content, extracted_urls)
 
     # 合并结果
     ai_probability = llm_result.get("ai_probability", 0.5)

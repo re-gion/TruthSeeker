@@ -58,7 +58,7 @@ flowchart TD
 
 - 工具先行、LLM 最后融合：四个 Agent 都先按角色执行工具/硬规则（工具结果 all-settled 进入证据板），再基于可配置的原生多模态 Agent LLM（默认 Kimi 2.6，调用 Kimi K2.6 时禁用 thinking，也可通过 `AGENT_LLM_PROVIDER=mimo` 切到小米 MiMo Token Plan 的 `mimo-v2.5`）读取可访问样本、文本内容、全局检测目标和证据板后输出阶段结论。Kimi K2.6 支持 `text,image,video` 输入、上下文 262144 tokens；MiMo `mimo-v2.5` 支持 `text,image` 输入、上下文 1048576 tokens，`MIMO_THINKING=enabled|disabled` 可显式控制思考模式。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 限制单次模型输出。LLM 的输入 prompt 本身包含工具结果，不存在"LLM 先行"阶段。
 - `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Agent LLM 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
-- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。
+- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。`text_claim_extract` 是纯本地规则执行（不调用 Agent LLM）：LLM 不可用时不会挂起超时，关键声明（品牌主体、链接、时间压力、诱导特征）由本地规则提取。
 - `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。
 - `commander` 生成最终鉴伪与溯源报告。它综合样本、证据板、Challenger 反馈和各 Agent 结论进行自主裁决；裁决完成后直接结束检测，不再进入 Challenger，避免最终报告阶段重复前序质询。
 - 每阶段最多 5 轮。Challenger 的阶段放行条件是置信度不低于 `0.8` 且不存在阻断问题；前 4 轮不满足条件时打回目标 Agent，第 5 轮达到上限后继续推进并写入残留风险。`0.08` 变化阈值用于识别连续低置信停滞并触发人机协同，不直接决定阶段放行。
@@ -90,14 +90,15 @@ flowchart TD
 
 - 邀请按 `task_id` 和 `collaboration_session.id` 绑定，默认 24 小时 TTL；样本链接沿用本轮邀请有效期，不生成永久公开链接。旧 `consultation_session.id` 仅作历史兼容。
 - 消息保存为轻结构化记录：`session_id`、`message_type`、`anchor_agent`、`anchor_phase`、`confidence`、`suggested_action` 和 `metadata`。
-- Commander 是主持人，负责在协同开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。用户结束协同时，Commander 还会调用大模型阅读协同上下文、`help_needed`、专家任务和用户/专家对话，生成可回注摘要；模型不可用时的本地兜底也必须提炼专家结论、用户确认、依据与后续动作，不得拼接或截断复制聊天原文。
+- Commander 是主持人，负责在协同开始时给出背景、进展、卡点和求助点；用户显示为“用户”，邀请链接访问者显示为“专家”。用户结束协同时，Commander 还会调用大模型阅读协同上下文、`help_needed`、专家任务和用户/专家对话，生成可回注摘要；摘要与个人经验草稿并发生成，使总耗时接近两次调用中较慢的一次，而不是两次相加。协同层不再设置短时硬截止，允许稍慢的有效 LLM 结果完成；只有模型初始化、网络请求或输出合同真实失败时才采用本地语义兜底。本地兜底仍须提炼专家结论、用户确认、依据与后续动作，不得拼接或截断复制聊天原文。
 - 只有用户能批准重复协同、跳过本次、结束协同、编辑确认 Commander 摘要。摘要确认后回注全局证据板，流程恢复到 Challenger。
 - 协同恢复时，后端通过 `resume=true` 注入专家/用户消息、协同 sessions 和已确认摘要；若 LangGraph checkpoint 丢失，则从 `analysis_states`、`collaboration_messages` 和 `collaboration_sessions` 重建可裁决状态，旧 `consultation_*` 表只读兼容。
+- 用户侧协同聊天使用独立的 `collaboration:{task_id}` Realtime topic，避免与检测流/Presence 的 `task:{task_id}` 重复订阅互相干扰；批准、结束、摘要确认等状态事件仍通过 `task:{task_id}` 广播。持久化消息每 3 秒轮询一次作为 Realtime 降级兜底，但上一轮请求未结束时必须跳过本轮，避免慢查询叠加耗尽 Supabase 连接池；后端消息历史读取在线程池执行，不能用同步 Supabase 客户端阻塞 FastAPI 事件循环。消息持久化失败时撤回乐观气泡、恢复输入并显示后端错误，不能让专家误以为已经送达。
 
 用户结束协同时，Commander 会同时生成两类内容：
 
 - 协同摘要：用户编辑确认后回注给后续 Agent，恢复研判。
-- 个人经验草稿：从用户与专家多轮交流中提取可复用方法、判据、补证路径和升级条件。草稿会先按当前账号和目标 Agent 检查已有相似经验，达到相似阈值的草稿直接过滤，不再展示给用户。用户确认摘要不会自动入库；前端只展示剩余草稿，允许编辑、删除草稿条目，再单独确认入库。
+- 个人经验草稿：从用户与专家多轮交流中提取可复用方法、判据、补证路径和升级条件。草稿会先按当前账号和目标 Agent 检查已有相似经验，达到相似阈值的草稿直接过滤，不再展示给用户。用户确认摘要不会自动入库；前端立即读取结束/确认摘要接口返回的 session 展示剩余草稿，不等待 Realtime 自广播，允许编辑、删除草稿条目，再单独确认入库。编辑中的草稿不会被同一 session 的重复快照覆盖；批量入库部分失败时只移除成功项，保留失败草稿供修改和重试。若提炼失败、合同检查失败或没有新的非重复经验，面板必须显示原因，不能静默空白。
 
 ## 5. 工具调用与降级
 
@@ -109,6 +110,7 @@ flowchart TD
 - 后续智能重跑：只重跑失败、降级、被 Challenger 命中或新 IOC 对应的工具。
 - Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
 - VirusTotal URL 检测必须等待 URL analysis `completed` 后才采信新扫描统计；如果提交后的 analysis 仍是 `queued`，会回查 VT 已有 URL 报告的 `last_analysis_stats` 作为补救。同一任务内相同 URL 复用同一个 completed 或历史报告结果，避免 Forensics/OSINT 对同一 URL 得到互相矛盾的“8 家 vs 0 家”统计。
+- 样本日期与分析时间的先后关系由 Python 按北京时间生成并在 Forensics、OSINT 和 Commander 输出后再次校正；LLM 即使忽略提示词，也不得把早于分析时间的日期保留为“将来时/未来日期”。
 - 公开案例 RAG 由 Forensics 和 OSINT 作为内部工具调用。语料来自用户授权公开的真实案例和 4 个内置案例 Markdown，使用 pgvector + 全文检索混合召回；命中结果只作为类案参考和复核方向，不直接改变当前裁决分数。
 - 个人经验库 RAG 由 Forensics、OSINT 和 Challenger 作为内部工具调用。语料来自当前账号确认入库的人机协同经验，按 `user_id + target_agent` 隔离检索；Forensics/OSINT 只把命中经验作为个人方法参考和检查清单，不写成当前案件事实，不直接改分。Challenger 可用个人经验减少冗余质询点，也可在原本将触发协同时先让目标 Agent 按经验补强一轮；补强后仍连续低置信停滞才进入人机协同。
 - 内部文本 AIGC 检测由 Forensics 和 OSINT 作为内部工具调用，当前固定关闭 LLM 判断，使用本地句长、词汇、重复、模板化统计和社工诱导特征；输出是概率性线索，不作为单独定性证据。

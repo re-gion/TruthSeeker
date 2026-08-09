@@ -24,12 +24,12 @@ export default async function Home() {
 
 
         {/* Title */}
-        <h1 className="text-5xl md:text-7xl font-bold text-center mb-6 leading-tight drop-shadow-sm font-display tracking-tighter" style={{ textShadow: 'none' }}>
+        <h1 className="brand-wordmark text-5xl md:text-7xl text-center mb-6 leading-tight drop-shadow-sm" style={{ textShadow: 'none' }}>
           <GradientText
             colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}
             animationSpeed={16}
             showBorder={false}
-            className="drop-shadow-[0_0_40px_rgba(212,255,18,0.4)] px-4"
+            className="brand-wordmark drop-shadow-[0_0_40px_rgba(212,255,18,0.4)] px-4"
           >
             TruthSeeker
           </GradientText>

@@ -64,28 +64,14 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # ─── Middleware ───
 # Starlette 中间件按注册逆序包装：最后注册 = 最外层 = 最先执行请求
-# CORS 必须是最外层，确保所有错误响应都带 CORS 头
 # 纯 ASGI 中间件通过 monkey-patch build_middleware_stack 注入，
 # 因为 add_middleware 只支持 BaseHTTPMiddleware 子类。
+# CORS 必须是最外层：Auth/RateLimit 直接 send 的 401/429 响应也需要
+# 携带 CORS 头，否则浏览器跨域时会把这类响应当作网络错误
+# （console 报 TypeError: Failed to fetch），用户看不到真实错误原因。
 # 执行顺序（由外到内）：CORS → Auth → RateLimit → App
 
 _original_build_middleware_stack = app.build_middleware_stack
-
-
-def _build_with_pure_asgi_middlewares():
-    stack = _original_build_middleware_stack()
-    # 内层先包：RateLimit，外层再包：Auth
-    stack = RateLimitMiddleware(stack, limit=30, window=60)
-    if AUTH_MIDDLEWARE_ENABLED:
-        stack = AuthMiddleware(
-            stack,
-            supabase_jwt_secret=settings.SUPABASE_JWT_SECRET,
-            supabase_url=settings.SUPABASE_URL,
-        )
-    return stack
-
-
-app.build_middleware_stack = _build_with_pure_asgi_middlewares
 
 
 def _cors_allowed_origins(frontend_url: str) -> list[str]:
@@ -98,13 +84,28 @@ def _cors_allowed_origins(frontend_url: str) -> list[str]:
     return sorted(origin for origin in origins if origin)
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_allowed_origins(settings.FRONTEND_URL),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-)
+def _build_with_pure_asgi_middlewares():
+    stack = _original_build_middleware_stack()
+    # 内层先包：RateLimit，外层再包：Auth
+    stack = RateLimitMiddleware(stack, limit=30, window=60)
+    if AUTH_MIDDLEWARE_ENABLED:
+        stack = AuthMiddleware(
+            stack,
+            supabase_jwt_secret=settings.SUPABASE_JWT_SECRET,
+            supabase_url=settings.SUPABASE_URL,
+        )
+    # 不用 add_middleware 注册 CORS：那样 CORS 会被包在 Auth 内层，
+    # Auth 直接发送的 401 响应将缺失 CORS 头，浏览器会把它当作跨域失败。
+    return CORSMiddleware(
+        stack,
+        allow_origins=_cors_allowed_origins(settings.FRONTEND_URL),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
+app.build_middleware_stack = _build_with_pure_asgi_middlewares
 
 app.include_router(api_router, prefix="/api/v1")
 

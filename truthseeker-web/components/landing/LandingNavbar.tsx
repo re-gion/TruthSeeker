@@ -4,6 +4,7 @@ import Link from "next/link"
 import { motion } from "motion/react"
 import { ThemeToggle } from "./ThemeToggle"
 import { BrandLogo } from "@/components/logo/BrandLogo"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 import { useScrollProgress } from "@/hooks/useScrollProgress"
 import { useEffect, useState } from "react"
 
@@ -35,7 +36,7 @@ export function LandingNavbar() {
                         <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <div className="flex flex-col">
-                        <span className="font-black tracking-tighter text-2xl leading-none">TruthSeeker</span>
+                        <BrandWordmark className="text-2xl leading-none" />
                         <span className="text-[10px] text-[#6366F1] font-mono tracking-[0.2em] font-bold opacity-80 uppercase mt-0.5">
                      
                         </span>

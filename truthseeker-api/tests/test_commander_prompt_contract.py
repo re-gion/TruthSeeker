@@ -29,3 +29,5 @@ async def test_commander_prompt_matches_the_four_structured_verdict_classes(monk
 
     assert result == "裁决报告"
     assert "最终裁决结论（伪造/可疑/真实/无法判定）" in captured["system_prompt"]
+    assert "不得自行输出第二个综合置信度数值" in captured["system_prompt"]
+    assert "不得引用 forensics_score 充当综合置信度" in captured["system_prompt"]

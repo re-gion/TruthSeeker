@@ -1,13 +1,144 @@
 """Commander Agent - 研判指挥Agent，负责综合所有证据做出最终裁决 + LLM 推理"""
+import re
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from app.agents.state import TruthSeekerState, EvidenceItem, AgentLog
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
-from app.agents.tools.llm_client import build_sample_references, commander_ruling
+from app.agents.tools.llm_client import (
+    build_sample_references,
+    commander_ruling,
+    enforce_temporal_consistency,
+)
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.services.audit_log import record_audit_event
 from app.services.consultation_workflow import build_timeline_event, filter_human_consultation_messages
+
+
+def _enforce_deterministic_verdict_section(
+    report: str, verdict_cn: str, *, strip_preamble: bool = False
+) -> str:
+    """Keep narrative generation while making the hard-rule verdict authoritative."""
+    report = re.sub(r"(?<!\n)(### 最终裁决结论)", r"\n\1", str(report or ""), count=1)
+    heading = re.search(r"(?m)^### 最终裁决结论\s*$", report)
+    if strip_preamble and heading:
+        report = report[heading.start():]
+    replacement = f"### 最终裁决结论\n{verdict_cn}\n\n"
+    pattern = re.compile(r"(?ms)^### 最终裁决结论\s*\n.*?(?=^###\s)")
+    if pattern.search(report):
+        report = pattern.sub(replacement, report, count=1)
+    else:
+        report = replacement + report.lstrip()
+    explicit_claim = re.compile(
+        r"(最终(?:裁决|判定|结论)\s*(?:为|是|：|:)\s*(?:\*\*)?)"
+        r"(?:伪造|可疑|真实|无法判定)(?:\*\*)?"
+    )
+    return explicit_claim.sub(lambda match: f"{match.group(1)}{verdict_cn}", report)
+
+
+_CONFIDENCE_COMPONENT_LABELS = {
+    "forensics": "电子取证 Agent",
+    "osint": "情报溯源 Agent",
+    "challenger": "交叉质询 Agent",
+}
+
+
+def _enforce_deterministic_confidence_section(
+    report: str,
+    confidence_overall: float,
+    confidence_components: dict,
+) -> str:
+    """Replace model-written aggregate confidence with Commander's calculation."""
+    component_lines: list[str] = []
+    weighted_terms: list[str] = []
+    for agent in ("forensics", "osint", "challenger"):
+        component = confidence_components.get(agent) if isinstance(confidence_components, dict) else None
+        component = component if isinstance(component, dict) else {}
+        confidence = float(component.get("confidence") or 0.0)
+        weight = float(component.get("weight") or 0.0)
+        weighted = float(component.get("weighted") or 0.0)
+        weighted_text = f"{weighted:.1%}"
+        component_lines.append(
+            f"- {_CONFIDENCE_COMPONENT_LABELS[agent]}："
+            f"{confidence:.1%} × {weight:.1%} = {weighted_text}"
+        )
+        weighted_terms.append(weighted_text)
+
+    deterministic_intro = "\n".join([
+        f"**研判指挥 Agent 综合置信度：{confidence_overall:.1%}**",
+        "",
+        "计算过程（由研判指挥 Agent 汇总）：",
+        *component_lines,
+        f"- 合计：{' + '.join(weighted_terms)} = {confidence_overall:.1%}",
+    ])
+
+    section_pattern = re.compile(
+        r"(?ms)(^### 置信度与证据链\s*\n)(.*?)(?=^###\s)"
+    )
+    match = section_pattern.search(report or "")
+    if not match:
+        return str(report or "")
+
+    model_formula_line = re.compile(
+        r"^\s*(?:[-*]\s*)?(?:"
+        r"计算过程(?:（[^）]*）)?\s*[:：]?|"
+        r"(?:电子取证|情报溯源|交叉质询)\s*Agent\s*[:：].*(?:×|\*)\s*[^=]+=[^=]+|"
+        r"合计\s*[:：].*=.*"
+        r")\s*$"
+    )
+    retained_lines = [
+        line
+        for line in match.group(2).splitlines()
+        if "综合置信度" not in line
+        and "final_verdict.confidence_overall" not in line
+        and "forensics_score" not in line
+        and not model_formula_line.match(line)
+    ]
+    retained_body = "\n".join(retained_lines).strip()
+    body = deterministic_intro
+    if retained_body:
+        body += "\n\n" + retained_body
+    replacement = f"{match.group(1)}{body}\n\n"
+    return report[:match.start()] + replacement + report[match.end():]
+
+
+def _enforce_domain_tool_recommendation_boundaries(report: str, osint: dict) -> str:
+    """Do not present an already completed WHOIS lookup as pending work."""
+    completed_domains: set[str] = set()
+    for item in osint.get("domain_provenance_summary") or []:
+        if not isinstance(item, dict) or not item.get("whois"):
+            continue
+        if item.get("status") not in {"success", "partial"}:
+            continue
+        domain = str(item.get("domain") or "").strip().lower()
+        if domain:
+            completed_domains.add(domain)
+    if not completed_domains:
+        return str(report or "")
+
+    action_pattern = re.compile(r"(?:执行|进行|补充|补做|查询).{0,12}WHOIS|WHOIS\s*查询", re.IGNORECASE)
+    corrected: list[str] = []
+    for line in str(report or "").splitlines():
+        domain = next((value for value in completed_domains if value in line.lower()), None)
+        if domain is None or not action_pattern.search(line):
+            corrected.append(line)
+            continue
+        prefix = "- " if line.lstrip().startswith(("-", "*", "+")) else ""
+        history_match = re.search(
+            r"(?:历史\s*IP\s*追踪|DNS\s*History|历史\s*DNS\s*查询)(?P<tail>.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if history_match:
+            tail = history_match.group("tail").strip(" 、,，;；。")
+            suffix = "；历史 IP 追踪未在默认查询范围内，如确有需要，应另行启用并授权 DNS History 后复核。"
+            if tail:
+                suffix += f" 其他复核动作仍保留：{tail}。"
+        else:
+            whois_tail = line[action_pattern.search(line).end():].strip(" 、,，;；。")
+            suffix = "。" + (f" 其他复核动作仍保留：{whois_tail}。" if whois_tail else "")
+        corrected.append(f"{prefix}OSINT 工具状态：{domain} 的 WHOIS 已完成，无需重复查询{suffix}")
+    return "\n".join(corrected)
 
 
 async def commander_node(state: TruthSeekerState) -> dict:
@@ -179,22 +310,46 @@ async def commander_node(state: TruthSeekerState) -> dict:
             sample_refs,
             confidence_context=confidence_context,
             skill_context=skill_load.prompt_context,
+            expected_verdict_cn=verdict_cn,
             llm_status=llm_status,
         )
         if llm_status.get("status") != "success":
             log("action", "LLM 裁决不可用，使用规则推断")
-        else:
-            log("finding", f"LLM 裁决报告生成完成，{len(llm_ruling)} 字")
     except Exception as e:
         llm_status.update({"status": "degraded", "mode": "node_exception", "reason": f"Commander LLM 裁决异常：{type(e).__name__}"})
         llm_ruling = f"[LLM降级] 裁决推理异常: {e}"
         log("action", f"LLM 裁决异常: {e}")
 
+    llm_ruling = _enforce_deterministic_verdict_section(
+        llm_ruling,
+        verdict_cn,
+        strip_preamble=llm_status.get("status") == "success",
+    )
+    llm_ruling = _enforce_deterministic_confidence_section(
+        llm_ruling,
+        overall_confidence,
+        confidence_components,
+    )
+    temporal_payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "text_samples": [
+            *list(forensics.get("text_samples") or []),
+            *list(osint.get("text_samples") or []),
+        ],
+    }
+    llm_ruling = enforce_temporal_consistency(llm_ruling, temporal_payload)
+    llm_ruling = _enforce_domain_tool_recommendation_boundaries(llm_ruling, osint)
+    if llm_status.get("status") == "success":
+        log("finding", f"LLM 裁决报告生成完成，{len(llm_ruling)} 字")
+
     skill_execution = finalize_skill_execution(
         skill_load,
         llm_ruling,
         llm_status=llm_status,
-        contract_context={"expected_verdict_cn": verdict_cn},
+        contract_context={
+            "expected_verdict_cn": verdict_cn,
+            "expected_confidence_overall": overall_confidence,
+        },
     )
     skill_status = str(skill_execution.get("execution_status") or "skipped")
     if skill_status == "applied":

@@ -238,6 +238,27 @@ def test_structured_workflow_contract_rejects_incomplete_items(workflow, output)
     assert execution["execution_status"] == "check_failed"
 
 
+def test_skill_failure_limitations_explain_the_actual_contract_field():
+    from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
+
+    loaded = load_agent_skill("commander", "experience_distillation")
+    execution = finalize_skill_execution(
+        loaded,
+        {"drafts": [{
+            "title": "标题",
+            "target_agents": ["osint"],
+            "problem_pattern": "模式",
+            "recommended_method": "方法",
+            "evidence_to_check": [],
+            "limitations": "限制",
+        }]},
+        llm_status={"status": "success", "mode": "text"},
+    )
+
+    assert execution["execution_status"] == "check_failed"
+    assert any("when_to_escalate" in item for item in execution["limitations"])
+
+
 def test_commander_final_contract_rejects_multiple_verdict_categories():
     from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 
@@ -274,6 +295,58 @@ def test_commander_final_contract_rejects_verdict_that_conflicts_with_python():
     )
 
     assert execution["execution_status"] == "check_failed"
+
+
+def test_commander_final_contract_rejects_confidence_that_conflicts_with_python():
+    from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
+
+    loaded = load_agent_skill("commander", "final_adjudication")
+    execution = finalize_skill_execution(
+        loaded,
+        "### 最终裁决结论\n可疑\n"
+        "### 置信度与证据链\n研判指挥 Agent 综合置信度：95.0%\n"
+        "### Agent 结论与关键分歧\n内容\n"
+        "### 后续建议与风险\n内容",
+        llm_status={"status": "success", "mode": "text"},
+        contract_context={
+            "expected_verdict_cn": "可疑",
+            "expected_confidence_overall": 0.784,
+        },
+    )
+
+    assert execution["execution_status"] == "check_failed"
+    assert any(
+        item["name"] == "commander_confidence_consistency" and item["status"] == "failed"
+        for item in execution["check_results"]
+    )
+
+
+def test_commander_final_contract_rejects_a_second_overall_confidence_claim():
+    from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
+
+    loaded = load_agent_skill("commander", "final_adjudication")
+    execution = finalize_skill_execution(
+        loaded,
+        "### 最终裁决结论\n可疑\n"
+        "### 置信度与证据链\n"
+        "研判指挥 Agent 综合置信度：78.4%\n"
+        "模型综合置信度：95.0%\n"
+        "### Agent 结论与关键分歧\n内容\n"
+        "### 后续建议与风险\n内容",
+        llm_status={"status": "success", "mode": "text"},
+        contract_context={
+            "expected_verdict_cn": "可疑",
+            "expected_confidence_overall": 0.784,
+        },
+    )
+
+    confidence_check = next(
+        item for item in execution["check_results"]
+        if item["name"] == "commander_confidence_consistency"
+    )
+    assert execution["execution_status"] == "check_failed"
+    assert confidence_check["status"] == "failed"
+    assert any("只能出现一次" in detail for detail in confidence_check["details"])
 
 
 def test_llm_fallback_output_cannot_be_reported_as_skill_applied():

@@ -7,9 +7,58 @@ import {
   getExperienceList,
   normalizeExperienceEntry,
   normalizeExperienceList,
+  readExperienceDraftStatusFromSession,
+  remainingExperienceDraftsAfterConfirm,
 } from "./experiences"
 
 describe("personal experience library mapping", () => {
+  const drafts = [{
+    title: "成功经验",
+    target_agents: ["osint"],
+    problem_pattern: "模式一",
+    recommended_method: "方法一",
+    evidence_to_check: [],
+    when_to_escalate: "",
+    limitations: "",
+  }, {
+    title: "失败经验",
+    target_agents: ["challenger"],
+    problem_pattern: "模式二",
+    recommended_method: "方法二",
+    evidence_to_check: [],
+    when_to_escalate: "",
+    limitations: "",
+  }]
+
+  it("retains only failed drafts after a partial confirmation", () => {
+    expect(remainingExperienceDraftsAfterConfirm(drafts, {
+      status: "partial",
+      inserted: 1,
+      indexed_chunks: 1,
+      failed: [{ title: "失败经验", error: "数据库写入失败" }],
+    })).toEqual([drafts[1]])
+  })
+
+  it("retains all drafts when confirmation fails without per-item details", () => {
+    expect(remainingExperienceDraftsAfterConfirm(drafts, {
+      status: "failed",
+      inserted: 0,
+      indexed_chunks: 0,
+    })).toEqual(drafts)
+  })
+
+  it("reports contract failures and malformed non-empty snapshots accurately", () => {
+    expect(readExperienceDraftStatusFromSession({
+      summary_payload: {
+        experience_drafts: [],
+        experience_skill_execution: { execution_status: "check_failed" },
+      },
+    })).toMatch(/未通过输出检查/)
+    expect(readExperienceDraftStatusFromSession({
+      summary_payload: { experience_drafts: [{ title: "字段不完整" }] },
+    })).toMatch(/格式无效/)
+  })
+
   it("normalizes backend list payloads", () => {
     const result = normalizeExperienceList({
       items: [

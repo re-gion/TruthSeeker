@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from "motion/react"
 import { Smartphone, Download, AlertTriangle, ArrowRight, X } from "lucide-react"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 
 export function AdversarialToolkit({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
     const steps = [
@@ -51,7 +52,7 @@ export function AdversarialToolkit({ isOpen, onClose }: { isOpen: boolean, onClo
                                         实时对抗演示指南
                                     </h2>
                                     <p className="text-[#C0C0C0] text-sm mt-2">
-                                        TruthSeeker 系统专为<span className="text-[#D4FF12] font-semibold">实时对抗环境</span>设计，检测流程高度优化，常规视频通常在 <span className="text-white font-mono bg-white/10 px-1 py-0.5 rounded">90秒</span> 内输出研判结果。
+                                        <BrandWordmark /> 系统专为<span className="text-[#D4FF12] font-semibold">实时对抗环境</span>设计，检测流程高度优化，常规视频通常在 <span className="text-white font-mono bg-white/10 px-1 py-0.5 rounded">90秒</span> 内输出研判结果。
                                     </p>
                                 </div>
                                 <button

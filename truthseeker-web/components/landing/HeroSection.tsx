@@ -300,13 +300,13 @@ export function HeroSection() {
                             className="absolute -inset-4 bg-gradient-to-r from-primary/0 via-primary/10 to-transparent blur-2xl z-0"
                         />
                         <motion.h1
-                            className="text-6xl md:text-8xl lg:text-[110px] font-bold tracking-tighter mb-4 leading-none flex justify-center flex-wrap relative z-10 font-display drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
+                            className="brand-wordmark text-6xl md:text-8xl lg:text-[88px] xl:text-[92px] mb-4 leading-none flex justify-center flex-wrap relative z-10 drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
                         >
                             <GradientText
                                 colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}
                                 animationSpeed={16}
                                 showBorder={false}
-                                className=""
+                                className="brand-wordmark"
                             >
                                 {titleText}
                             </GradientText>

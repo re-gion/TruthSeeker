@@ -6,6 +6,7 @@ import { signUp } from "@/lib/supabase/auth-actions"
 import Link from "next/link"
 import Image from "next/image"
 import { BrandLogo } from "@/components/logo/BrandLogo"
+import { BrandWordmark } from "@/components/logo/BrandWordmark"
 import { ThemeToggle } from "@/components/landing/ThemeToggle"
 
 export default function SignupPage() {
@@ -72,7 +73,7 @@ export default function SignupPage() {
                         <BrandLogo className="h-9 w-9" imageClassName="drop-shadow-lg" size={36} priority />
                     </div>
                     <motion.span
-                        className="text-2xl font-bold bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"
+                        className="brand-wordmark text-2xl bg-gradient-to-r from-[#C8E640] via-[#D4B896] to-[#C084FC] bg-clip-text text-transparent bg-[length:200%_auto]"
                         animate={{ backgroundPosition: ["0% center", "100% center", "0% center"] }}
                         transition={{ duration: 6, ease: "linear", repeat: Infinity }}
                     >
@@ -123,7 +124,7 @@ export default function SignupPage() {
                                         创建账户
                                     </h1>
                                     <p className="text-sm text-foreground/70 mt-1.5 tracking-wide">
-                                        加入 TruthSeeker，开始鉴伪之旅
+                                        加入 <BrandWordmark />，开始鉴伪之旅
                                     </p>
                                 </div>
 

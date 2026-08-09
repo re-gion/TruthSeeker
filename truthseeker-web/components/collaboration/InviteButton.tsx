@@ -22,6 +22,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
     const [copied, setCopied] = useState(false)
     const [isInviting, setIsInviting] = useState(false)
     const [failed, setFailed] = useState(false)
+    const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const invitingRef = useRef(false)
 
     const handleInvite = async () => {
@@ -29,6 +30,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
         invitingRef.current = true
         setIsInviting(true)
         setFailed(false)
+        setErrorMessage(null)
         try {
             const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
             const authToken = await getAuthToken()
@@ -39,7 +41,16 @@ export function InviteButton({ taskId }: { taskId: string }) {
                 headers,
             })
             if (!response.ok) {
-                throw new Error("invite creation failed")
+                // 透出后端真实原因（如“令牌已过期”“未提供认证令牌”），
+                // 避免用户只看到笼统的“创建失败”
+                let detail = "邀请创建失败"
+                try {
+                    const body = await response.json()
+                    if (body?.detail) detail = String(body.detail)
+                } catch {
+                    // 非 JSON 响应时保留默认提示
+                }
+                throw new Error(detail)
             }
             const { invite_url: inviteUrl } = await response.json()
             const absoluteUrl = new URL(inviteUrl, window.location.origin)
@@ -61,6 +72,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
             window.setTimeout(() => setCopied(false), 2000)
         } catch (error) {
             console.error("Failed to copy invite link:", error)
+            setErrorMessage(error instanceof Error ? error.message : "网络请求失败")
             setFailed(true)
         } finally {
             invitingRef.current = false
@@ -73,6 +85,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
             onClick={handleInvite}
             disabled={isInviting}
             aria-busy={isInviting}
+            title={errorMessage ?? undefined}
             className="px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-[0_0_10px_rgba(99,102,241,0.15)] relative overflow-hidden"
         >
             <AnimatePresence mode="wait">
@@ -111,7 +124,7 @@ export function InviteButton({ taskId }: { taskId: string }) {
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                         </svg>
-                        {failed ? "重试邀请会诊" : "邀请专家会诊"}
+                        {failed ? "邀请失败·重试" : "邀请专家会诊"}
                     </motion.div>
                 )}
             </AnimatePresence>

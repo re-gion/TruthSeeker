@@ -1,3 +1,13 @@
+/* Self-hosted Unbounded variable font, Latin subset; see public/fonts/unbounded/OFL.txt. */
+@font-face {
+	font-family: 'Unbounded';
+	font-style: normal;
+	font-weight: 200 900;
+	font-display: swap;
+	src: url("/fonts/unbounded/Unbounded-Latin.woff2") format("woff2-variations");
+	unicode-range: U+0000-00FF;
+}
+
 /* Self-hosted IBM Plex split WOFF2. Generated from @ibm/plex-sans-sc@1.1.0 and @ibm/plex-mono@2.5.0; see public/fonts/ibm-plex/LICENSE.txt. */
 
 /* Subset: 000 */

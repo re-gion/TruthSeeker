@@ -110,7 +110,11 @@ WORKFLOW_CONTRACTS: dict[tuple[str, str], dict[str, Any]] = {
         ),
     },
     ("commander", "final_adjudication"): {
-        "checks": ("required_report_sections", "commander_verdict_category"),
+        "checks": (
+            "required_report_sections",
+            "commander_verdict_category",
+            "commander_confidence_consistency",
+        ),
         "headings": (
             "### 最终裁决结论",
             "### 置信度与证据链",
@@ -285,6 +289,45 @@ def finalize_skill_execution(
                 "status": "failed" if details else "passed",
                 "details": details,
             })
+        elif check_name == "commander_confidence_consistency":
+            expected_value = (contract_context or {}).get("expected_confidence_overall")
+            details: list[str] = []
+            if expected_value is not None:
+                expected_text = f"{float(expected_value):.1%}"
+                confidence_body = _markdown_section_body(
+                    str(output_text or ""), "### 置信度与证据链"
+                )
+                declarations = re.findall(
+                    r"综合置信度\s*[：:]\s*(?:\*\*)?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?)(%)?",
+                    confidence_body,
+                )
+                canonical = re.findall(
+                    r"研判指挥 Agent 综合置信度\s*[：:]\s*(?:\*\*)?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?%)",
+                    confidence_body,
+                )
+                if len(declarations) != 1:
+                    details.append("置信度章节中的综合置信度数值必须且只能出现一次")
+                else:
+                    number, percent_mark = declarations[0]
+                    actual_value = float(number) / 100 if percent_mark else float(number)
+                    if abs(actual_value - float(expected_value)) > 0.0005:
+                        actual_text = f"{actual_value:.1%}"
+                        details.append(
+                            f"报告综合置信度 {actual_text} 与确定性计算 {expected_text} 不一致"
+                        )
+                if len(canonical) != 1:
+                    details.append("必须记录唯一的研判指挥 Agent 综合置信度")
+                elif canonical[0] != expected_text:
+                    details.append(
+                        f"规范综合置信度 {canonical[0]} 与确定性计算 {expected_text} 不一致"
+                    )
+            results.append({
+                "name": check_name,
+                "status": "failed" if details else "passed",
+                "details": details,
+            })
         elif check_name == "human_collaboration_contract":
             details = _human_collaboration_contract_details(output_text)
             results.append({
@@ -310,9 +353,18 @@ def finalize_skill_execution(
     failed = [item for item in results if item.get("status") != "passed"]
     if failed:
         execution["execution_status"] = "check_failed"
-        execution["limitations"] = list(execution.get("limitations") or []) + [
-            "Skill 输出检查未通过：" + "、".join(str(item.get("name")) for item in failed)
-        ]
+        failure_summary = "Skill 输出检查未通过：" + "、".join(
+            str(item.get("name")) for item in failed
+        )
+        failure_details = [
+            str(detail)
+            for item in failed
+            for detail in (item.get("details") or [])[:3]
+            if str(detail).strip()
+        ][:6]
+        if failure_details:
+            failure_summary += "；" + "；".join(failure_details)
+        execution["limitations"] = list(execution.get("limitations") or []) + [failure_summary]
     else:
         execution["execution_status"] = "applied"
     return execution

@@ -6,13 +6,16 @@ This file applies to `truthseeker-api/`.
 
 ## Runtime And Commands
 
-Use Python 3.11+ from this directory. In this Windows workspace, prefer `venv_new\Scripts\python.exe` when it exists.
+Use Python 3.11+ from this directory. In this Windows workspace, always use `venv_new\Scripts\python.exe` for both tests and the dev server. The system `python` (e.g. `C:\Python313`) has a different langchain-openai/openai major version installed in its user-level site-packages and must not run the API, or LLM behavior diverges from the test environment.
 
 ```powershell
 cd truthseeker-api
-python -m pip install -r requirements.txt
-python -m pytest tests
-python -m uvicorn app.main:app --reload
+# 后端统一用项目虚拟环境启动（也可直接运行 start-backend.ps1）
+venv_new\Scripts\python.exe -m uvicorn app.main:app --reload
+# 测试
+venv_new\Scripts\python.exe -m pytest tests
+# 安装依赖
+venv_new\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 The API defaults to `http://localhost:8000`. Use `.env.example` as the template for local `.env`; do not expose real API keys.

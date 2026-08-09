@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +13,7 @@ from app.services.case_rag import embed_text, merge_hybrid_results
 from app.agents.tools.llm_client import commander_extract_experience_drafts
 from app.utils.supabase_client import supabase
 
+logger = logging.getLogger(__name__)
 
 VALID_EXPERIENCE_AGENTS = {"forensics", "osint", "challenger"}
 EXPERIENCE_SIMILARITY_THRESHOLD = 0.58
@@ -169,6 +171,15 @@ async def build_experience_drafts(
     return drafts
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    text = str(exc)
+    return "23505" in text or "duplicate key" in text.lower() or "unique" in text.lower() and "violat" in text.lower()
+
+
+def _short_error(exc: Exception) -> str:
+    return str(exc)[:300]
+
+
 async def _index_entry(client: Any, entry: dict[str, Any]) -> int:
     text = experience_text(entry)
     embed = await embed_text(text)
@@ -207,6 +218,7 @@ async def confirm_experience_drafts(
     inserted = 0
     indexed_chunks = 0
     entries: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
     for raw in drafts:
         draft = normalize_experience_draft(raw)
@@ -228,12 +240,37 @@ async def confirm_experience_drafts(
             "created_at": _now(),
             "updated_at": _now(),
         }
-        resp = client.table("experience_library_entries").insert(entry).execute()
-        saved = dict((resp.data or [entry])[0])
+        try:
+            resp = client.table("experience_library_entries").insert(entry).execute()
+            saved = dict((resp.data or [entry])[0])
+        except Exception as exc:
+            if _is_unique_violation(exc):
+                # 并发重复确认时唯一索引冲突，视为该条已存在，不中断整批
+                logger.info("Experience draft %s already exists (unique), skipped", draft.get("title"))
+                continue
+            logger.warning("Experience draft insert failed for %s: %s", draft.get("title"), exc)
+            failures.append({"title": draft.get("title", ""), "error": _short_error(exc)})
+            continue
         entries.append(saved)
         inserted += 1
-        indexed_chunks += await _index_entry(client, saved)
-    return {"status": "ok", "inserted": inserted, "indexed_chunks": indexed_chunks, "entries": entries}
+        try:
+            indexed_chunks += await _index_entry(client, saved)
+        except Exception as exc:
+            # 主表已入库，向量索引失败不阻塞入库结果，单独记录供重索引
+            logger.warning("Experience chunk index failed for %s: %s", saved.get("id"), exc)
+            failures.append({
+                "title": draft.get("title", ""),
+                "error": f"向量索引失败: {_short_error(exc)}",
+                "indexing_failed": True,
+            })
+    status = "ok" if not failures else ("partial" if inserted else "failed")
+    return {
+        "status": status,
+        "inserted": inserted,
+        "indexed_chunks": indexed_chunks,
+        "entries": entries,
+        "failed": failures,
+    }
 
 
 def delete_experience(client: Any = None, *, entry_id: str, user_id: str) -> None:

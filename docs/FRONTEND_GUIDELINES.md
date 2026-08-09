@@ -207,9 +207,14 @@ import { motion } from "framer-motion" //已废弃！
 
 /* 日志、代码、哈希、ID、时间戳：自托管 IBM Plex Mono；中文回退界面字体 */
 --font-telemetry: 'IBM Plex Mono', 'IBM Plex Sans SC', ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+
+/* 仅用于前端可见的 TruthSeeker 品牌字标；研判报告不使用 */
+--font-brand: 'Unbounded', 'IBM Plex Sans SC', system-ui, sans-serif;
 ```
 
 字体文件位于 `truthseeker-web/public/fonts/ibm-plex/`，使用 IBM 官方 split WOFF2 与 OFL 许可证；运行时不得请求第三方字体服务。字体资产只提供 400、500、600 三个字重：新增代码应使用 normal/medium/semibold；历史 `font-bold`/`font-black` 会由浏览器匹配到最接近的 600，不应继续扩散。不再使用正楷、系统默认衬线字体或未随项目加载的等宽字体名称。
+
+TruthSeeker 英文字标使用自托管 `Unbounded` 600（SemiBold），字体与 OFL 许可证位于 `truthseeker-web/public/fonts/unbounded/`。前端统一通过 `BrandWordmark` 或 `.brand-wordmark` 使用；不要把 Unbounded 扩展到中文正文、普通英文正文或 `app/report/` 研判报告页面。
 
 ### 字号层级
 

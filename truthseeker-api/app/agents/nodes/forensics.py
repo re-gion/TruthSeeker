@@ -11,7 +11,7 @@ from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.tools.deepfake_api import analyze_media
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text
-from app.agents.tools.llm_client import build_sample_references, forensics_interpret
+from app.agents.tools.llm_client import build_sample_references, forensics_interpret, summarize_previous_analysis
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
 from app.config import resolve_kimi_runtime, settings
 from app.services.audit_log import record_audit_event
@@ -83,7 +83,7 @@ def _build_reinforcement_context(state: TruthSeekerState, agent: str, previous_a
         "collaboration_summary_payload": consultation_summary if summary_relevant else None,
         "consultation_summary_payload": consultation_summary if summary_relevant else None,
         "previous_analysis": previous_analysis_text,
-        "previous_analysis_payload": previous_analysis,
+        "previous_analysis_payload": summarize_previous_analysis(previous_analysis),
         "instruction": "本轮只针对逻辑质询 Agent 打回点和人机协同摘要补强，不重复上一轮完整报告。",
     }
 

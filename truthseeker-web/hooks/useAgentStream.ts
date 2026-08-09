@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { getAuthToken } from "@/lib/auth"
+import { readExperienceDraftsFromSession, type ExperienceDraft } from "@/lib/experiences"
+
+export type { ExperienceDraft } from "@/lib/experiences"
 
 export type AgentEvent =
     | { type: "start"; task_id: string; max_rounds?: number }
@@ -89,16 +92,6 @@ export interface ConsultationContext {
         question: string
         expectedOutput?: string
     }>
-}
-
-export interface ExperienceDraft {
-    title: string
-    target_agents: string[]
-    problem_pattern: string
-    recommended_method: string
-    evidence_to_check: string[]
-    when_to_escalate: string
-    limitations: string
 }
 
 export interface ConsultationState {
@@ -460,31 +453,6 @@ function readConsultationSummary(event: ConsultationEvent, payload: Record<strin
         sessionSummary?.confirmed_summary,
         sessionSummary?.generated_summary,
     )
-}
-
-function readExperienceDraftsFromSession(session: Record<string, unknown> | null | undefined): ExperienceDraft[] {
-    const summaryPayload = readRecord(session?.summary_payload)
-    const source = summaryPayload?.experience_drafts
-    if (!Array.isArray(source)) return []
-    return source.flatMap((item): ExperienceDraft[] => {
-        if (!isObject(item)) return []
-        const title = readString(item.title)
-        const problem = readString(item.problem_pattern)
-        const method = readString(item.recommended_method)
-        const agents = Array.isArray(item.target_agents)
-            ? item.target_agents.map(String).filter(Boolean)
-            : []
-        if (!title || !problem || !method || agents.length === 0) return []
-        return [{
-            title,
-            target_agents: agents,
-            problem_pattern: problem,
-            recommended_method: method,
-            evidence_to_check: pickStringArray(item.evidence_to_check),
-            when_to_escalate: readString(item.when_to_escalate) ?? "",
-            limitations: readString(item.limitations) ?? "",
-        }]
-    })
 }
 
 export function normalizeConsultationEvent(event: ConsultationEvent, current: ConsultationState = INITIAL_CONSULTATION_STATE): ConsultationState {

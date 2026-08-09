@@ -1,11 +1,11 @@
 import Header from "@/components/layout/Header"
 import { DashboardClient } from "@/components/dashboard/DashboardClient"
 import { getDashboardViewModel } from "@/lib/dashboard"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, getSessionSafe } from "@/lib/supabase/server"
 
 export default async function Dashboard() {
     const supabase = await createClient()
-    const { data: { session } } = await supabase.auth.getSession()
+    const session = await getSessionSafe(supabase)
     const viewModel = await getDashboardViewModel(fetch, session?.access_token)
 
     return (
