@@ -1,7 +1,7 @@
 ---
 name: multimodal-forensics
 description: 为电子取证 Agent 提供多模态检材观察、外部检测解释、证据融合和复核建议方法；每次 Forensics 主分析都应使用。
-version: 1.0.0
+version: 1.1.0
 schema_version: 1
 agent: forensics
 workflows: [primary_analysis]
@@ -14,7 +14,7 @@ workflows: [primary_analysis]
 
 ## 输入边界
 
-区分可直接观察的内容、工具返回、案件提示、类案 RAG 与个人经验。无法读取的模态必须明确说明，不得补造观察。
+区分可直接观察的内容、工具返回、案件提示、类案 RAG 与个人经验。无法读取的模态必须明确说明，不得补造观察。阶段职责限于检材本体鉴伪：WHOIS、IP、DNS、域名注册溯源与公开情报搜索属于情报溯源 Agent 的阶段职责，本阶段未执行不构成缺陷，不得写入限制、复核建议或待补证清单。
 
 ## 标准步骤
 

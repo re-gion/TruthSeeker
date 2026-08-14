@@ -58,12 +58,12 @@ flowchart TD
 
 - 工具先行、LLM 最后融合：四个 Agent 都先按角色执行工具/硬规则（工具结果 all-settled 进入证据板），再基于可配置的原生多模态 Agent LLM（默认 Kimi 2.6，调用 Kimi K2.6 时禁用 thinking，也可通过 `AGENT_LLM_PROVIDER=mimo` 切到小米 MiMo Token Plan 的 `mimo-v2.5`）读取可访问样本、文本内容、全局检测目标和证据板后输出阶段结论。Kimi K2.6 支持 `text,image,video` 输入、上下文 262144 tokens；MiMo `mimo-v2.5` 支持 `text,image` 输入、上下文 1048576 tokens，`MIMO_THINKING=enabled|disabled` 可显式控制思考模式。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 限制单次模型输出。LLM 的输入 prompt 本身包含工具结果，不存在"LLM 先行"阶段。
 - `forensics` 不再是“只看视听”的专家，而是电子取证 Agent。它基于 Agent LLM 多模态上下文读取所有样本，图片默认调用 Sightengine `genai` 做 AIGC 图片检测，音视频保留 Reality Defender 合成/篡改检测，文本检材调用内部 `ai_text_detector` 做多信号文本 AIGC 概率分析，文件哈希和 IOC 调用 VirusTotal。系统主字段统一使用 `aigc_probability`、`is_aigc` 和 `aigc_score`，旧 `deepfake_*` 只用于读取历史快照的兼容 fallback。
-- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。`text_claim_extract` 是纯本地规则执行（不调用 Agent LLM）：LLM 不可用时不会挂起超时，关键声明（品牌主体、链接、时间压力、诱导特征）由本地规则提取。
-- `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。
+- `osint` 回归情报溯源，读取取证证据、全局输入和脱敏搜索线索，调用 Exa API、VirusTotal、WhoisXML，并复用内部文本 AIGC 检测结果；`text_claim_extract` 只负责社工风险 claim、诱导话术、URL 和异常线索抽取，不输出文本 AIGC 概率，避免和 `ai_text_detector` 混淆。`text_claim_extract` 是纯本地规则执行（不调用 Agent LLM）：LLM 不可用时不会挂起超时，关键声明（品牌主体、链接、时间压力、诱导特征）由本地规则提取。Exa 查询由域名信誉查询与 LLM 实体抽取生成的品牌/机构/产品实体查询组成（总数仍受 `MAX_EXA_QUERIES=3` 约束，实体抽取超时或失败时回退既有查询源）；实体存在性判断必须以实际执行的实体独立检索为准。搜索正常执行完成但零命中属于有效负结果，置信度保底到放行线 `0.8`（仅搜索不可用/失败保持低置信），避免零命中案件被硬门槛锁死在打回循环；上一轮零命中的空结果在重跑轮次不复用、重新搜索，已有命中的结果继续复用。OSINT 必须引用取证阶段经质询核验的“上游已核验结论”（图像与文本 AIGC 概率、is_aigc、取证置信度等，由代码注入 LLM 上下文）讨论检材真伪，不得独立重建分歧的低置信判断，复用取证工具结果时必须标注上游来源；报告开头由代码确定性注入“上游已核验结论引用”小节，保证引用必然存在。其自身置信度仍只衡量情报溯源工作质量。
+- `challenger` 只审查取证报告和溯源图谱。它会读全局证据板和原始样本上下文，先做自身逻辑质询，再结合硬门槛决定是否打回对应阶段。阶段分工是硬边界：取证 Agent 只负责检材本体鉴伪，WHOIS、IP、DNS、域名溯源与公开情报搜索是 OSINT 的职责；Challenger 不得把其他阶段职责事项作为当前阶段的质询点，代码侧对越界质询做确定性过滤。交叉验证指取证视角（是否伪造）与溯源视角（是否虚假/恶意）的跨 Agent 互证；同阶段缺少多工具复测只是未做可选补强，不构成质询理由。若 OSINT 报告已含系统确定性注入的“上游已核验结论引用”小节且正文未与上游数值冲突，不得再把叙事措辞归属或引用粒度作为阻断性质询点。经验/类案 RAG 要求的验证动作若超出当前已配置工具能力（如要求社交媒体、应用商店、工商信息核验而实际只配置了搜索引擎），不得作为质询点、打回理由或降低置信度的依据；搜索正常执行后零命中且报告已说明搜索覆盖的，属于有效负结果，不得以“未检出”为由要求补充不存在的验证渠道或反复打回。
 - `commander` 生成最终鉴伪与溯源报告。它综合样本、证据板、Challenger 反馈和各 Agent 结论进行自主裁决；裁决完成后直接结束检测，不再进入 Challenger，避免最终报告阶段重复前序质询。
 - 每阶段最多 5 轮。Challenger 的阶段放行条件是置信度不低于 `0.8` 且不存在阻断问题；前 4 轮不满足条件时打回目标 Agent，第 5 轮达到上限后继续推进并写入残留风险。`0.08` 变化阈值用于识别连续低置信停滞并触发人机协同，不直接决定阶段放行。
 - 逻辑质询门槛：每个目标 Agent 前 4 轮只要 Challenger 置信度 `< 0.8`，必须打回目标 Agent 并给出补强要求；第 5 轮达到 `max_rounds=5` 时必须放行，但写入 `max_rounds_release=true` 和残留风险。
-- 人机协同触发采用统一门槛：同一目标 Agent 最近 3 轮 Challenger 置信度均 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`，不再要求三轮都是 high 质询。首次触发自动暂停为 `waiting_collaboration`；同一目标 Agent 后续再次触发进入 `waiting_collaboration_approval`，由用户决定“再次协同”或“跳过本次”。协同后只有当用户/专家意见明确说明目标 Agent 已触及工具或证据能力上限、或建议带残留风险放行时，Challenger 才能在 `<0.8` 下自主放行；否则继续打回补强。
+- 人机协同触发采用统一门槛：同一目标 Agent 最近 3 轮 Challenger 置信度均 `< 0.8`，且最近三轮相邻置信度变化均 `< 0.08`，不再要求三轮都是 high 质询。每个阶段每次检测最多触发 1 次协同（`CONSULTATION_MAX_SESSIONS_PER_PHASE=1`），达到上限后带残留风险放行，不再打扰用户；重复触发审批路径保留为配置兜底。单次协同最多向用户/专家提出 3 个问题（`CONSULTATION_MAX_QUESTIONS=3`）。首次触发自动暂停为 `waiting_collaboration`；同一目标 Agent 后续再次触发进入 `waiting_collaboration_approval`，由用户决定“再次协同”或“跳过本次”。协同后只有当用户/专家意见明确说明目标 Agent 已触及工具或证据能力上限、或建议带残留风险放行时，Challenger 才能在 `<0.8` 下自主放行；否则继续打回补强。
 
 ## 4. 人机协同
 
@@ -108,7 +108,7 @@ flowchart TD
 
 - 首轮全量调用：图片进 Sightengine `genai`，音视频进 Reality Defender，文本检材进内部 `ai_text_detector`，社工风险 claim 与 URL/异常线索进 `text_claim_extract`；所有媒体哈希、文本 IOC 和 OSINT 新发现 IOC 进 VirusTotal，URL/域名线索进 WhoisXML 查询 WHOIS、DNS Lookup 当前解析和 IP Geolocation 归属。工具层可以保留 provider 原始标签（如 `AI_GENERATED`），但报告、SSE 和持久化裁决不得把图片 AIGC 概率混写成 Deepfake 概率。
 - 后续智能重跑：只重跑失败、降级、被 Challenger 命中或新 IOC 对应的工具。
-- Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。
+- Exa 搜索只发送脱敏线索：URL、域名、哈希、公开实体名、短关键声明，不发送完整原文或完整媒体描述。查询由 `build_deidentified_queries` 构造：URL/域名优先生成信誉查询，再由一次轻量 LLM 实体抽取（超时/失败自动回退）补充品牌、机构、产品等实体独立检索查询，总数上限 `MAX_EXA_QUERIES=3`，每条取 `numResults=5`。
 - VirusTotal URL 检测必须等待 URL analysis `completed` 后才采信新扫描统计；如果提交后的 analysis 仍是 `queued`，会回查 VT 已有 URL 报告的 `last_analysis_stats` 作为补救。同一任务内相同 URL 复用同一个 completed 或历史报告结果，避免 Forensics/OSINT 对同一 URL 得到互相矛盾的“8 家 vs 0 家”统计。
 - 样本日期与分析时间的先后关系由 Python 按北京时间生成并在 Forensics、OSINT 和 Commander 输出后再次校正；LLM 即使忽略提示词，也不得把早于分析时间的日期保留为“将来时/未来日期”。
 - 公开案例 RAG 由 Forensics 和 OSINT 作为内部工具调用。语料来自用户授权公开的真实案例和 4 个内置案例 Markdown，使用 pgvector + 全文检索混合召回；命中结果只作为类案参考和复核方向，不直接改变当前裁决分数。

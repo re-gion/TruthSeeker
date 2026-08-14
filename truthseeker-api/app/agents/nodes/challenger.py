@@ -167,6 +167,80 @@ def _current_phase_issues(issues: list[dict[str, Any]], phase: str) -> tuple[lis
     return current, cross_phase
 
 
+# 阶段分工边界：下列事项不属于当前阶段 Agent 职责，
+# 不得作为质询点/打回理由（提示词之外的确定性兜底）。
+_FORENSICS_OUT_OF_SCOPE_MARKERS = (
+    "whois",
+    "dns",
+    "ip归属",
+    "ip 归属",
+    "ip关联",
+    "ip 关联",
+    "历史ip",
+    "历史 ip",
+    "域名注册",
+    "域名年龄",
+    "域名溯源",
+    "网页快照",
+    "历史解析",
+    "公开情报",
+    "开源情报",
+    "情报搜索",
+    "情报溯源",
+    "基础设施调查",
+    "基础设施溯源",
+    "exa搜索",
+    "exa 搜索",
+    "exa检索",
+    "exa 检索",
+)
+
+_OSINT_OUT_OF_SCOPE_MARKERS = (
+    "像素级篡改",
+    "像素级分析",
+    "像素级比对",
+    "字体渲染",
+    "ocr比对",
+    "ocr 比对",
+    "ocr字体",
+    "ocr 字体",
+    "声纹比对",
+    "音视频鉴伪",
+    "音频鉴伪",
+    "视频鉴伪",
+    "频域分析",
+    "频谱分析",
+    "sightengine",
+    "reality defender",
+)
+
+
+def _out_of_scope_markers(phase: str) -> tuple[str, ...]:
+    if phase == "forensics":
+        return _FORENSICS_OUT_OF_SCOPE_MARKERS
+    if phase == "osint":
+        return _OSINT_OUT_OF_SCOPE_MARKERS
+    return ()
+
+
+def _filter_out_of_scope_issues(
+    issues: list[dict[str, Any]], phase: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """剔除要求当前阶段 Agent 执行其他阶段职责的越界质询点。"""
+    markers = _out_of_scope_markers(phase)
+    if not markers:
+        return issues, []
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for issue in issues:
+        text = str(issue.get("description") or issue.get("summary") or issue.get("type") or "").lower()
+        if any(marker in text for marker in markers):
+            dropped.append(issue)
+            continue
+        kept.append(issue)
+    return kept, dropped
+
+
 def _fetch_consultation_sessions(task_id: str) -> list[dict[str, Any]]:
     for table_name in ("collaboration_sessions", "consultation_sessions"):
         try:
@@ -606,6 +680,24 @@ async def challenger_node(state: TruthSeekerState) -> dict:
         model_requires_more_evidence = False
         model_target_agent = phase
         log("thinking", f"忽略 {len(cross_phase_issues)} 个跨阶段质询点，当前仅审查 {phase} 阶段")
+    issues_found, out_of_scope_issues = _filter_out_of_scope_issues(issues_found, phase)
+    if out_of_scope_issues:
+        if not issues_found:
+            model_requires_more_evidence = False
+        log("thinking", f"过滤 {len(out_of_scope_issues)} 个越界质询点（要求 {phase} 阶段做其他阶段职责的工作）")
+        record_audit_event(
+            action="challenger.out_of_scope_filtered",
+            task_id=task_id,
+            agent="challenger",
+            metadata={
+                "phase": phase,
+                "filtered_count": len(out_of_scope_issues),
+                "descriptions": [
+                    str(item.get("description") or item.get("type") or "")[:160]
+                    for item in out_of_scope_issues
+                ],
+            },
+        )
     high = [issue for issue in issues_found if issue.get("severity") == "high"]
     medium = [issue for issue in issues_found if issue.get("severity") == "medium"]
     # The LLM confidence is already a review score. Deterministic issues cap it,

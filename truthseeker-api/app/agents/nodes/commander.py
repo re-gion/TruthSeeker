@@ -102,6 +102,87 @@ def _enforce_deterministic_confidence_section(
     return report[:match.start()] + replacement + report[match.end():]
 
 
+def _conclusion_table_cell(text: str) -> str:
+    return str(text).replace("|", "／").replace("\n", " ").strip() or "—"
+
+
+def _enforce_agent_conclusion_table(
+    report: str,
+    forensics: dict,
+    osint: dict,
+    challenger: dict,
+) -> str:
+    """在“Agent 结论与关键分歧”小节确定性注入结论对照表。
+
+    表格来自各 Agent 的结构化结论，保证分享报告第一部分稳定呈现表格；
+    模型若自行写了表格行会被移除以避免重复，其余叙述保留在表格之后。
+    """
+    section_pattern = re.compile(
+        r"(?ms)(^### Agent 结论与关键分歧\s*\n)(.*?)(?=^###\s|\Z)"
+    )
+    match = section_pattern.search(str(report or ""))
+    if not match:
+        return str(report or "")
+
+    aigc_probability = float(
+        forensics.get("aigc_probability", forensics.get("deepfake_probability", 0.0)) or 0.0
+    )
+    forensics_is_aigc = bool(forensics.get("is_aigc", forensics.get("is_deepfake", False)))
+    forensics_conf = float(forensics.get("confidence", 0.0) or 0.0)
+    forensics_conclusion = (
+        f"AIGC 概率 {aigc_probability:.1%}，判定为{'AI 生成' if forensics_is_aigc else '非 AI 生成'}内容"
+        if forensics
+        else "未取得取证结论"
+    )
+    forensics_status = "外部工具降级" if forensics.get("degraded") else "正常"
+
+    threat_score = float(osint.get("threat_score", 0.0) or 0.0)
+    osint_conf = float(osint.get("confidence", 0.0) or 0.0)
+    if osint.get("is_malicious"):
+        osint_conclusion = f"威胁评分 {threat_score:.1%}，判定为恶意/虚假内容"
+    elif osint.get("is_suspicious"):
+        osint_conclusion = f"威胁评分 {threat_score:.1%}，判定为可疑内容"
+    elif osint:
+        osint_conclusion = f"威胁评分 {threat_score:.1%}，未发现明确威胁线索"
+    else:
+        osint_conclusion = "未取得情报溯源结论"
+    osint_status = "外部情报降级" if osint.get("degraded") else "正常"
+
+    issue_count = int(challenger.get("issue_count", 0) or 0)
+    high_count = int(challenger.get("high_severity_count", 0) or 0)
+    challenger_conf = float(challenger.get("confidence", challenger.get("quality_score", 0.0)) or 0.0)
+    challenger_conclusion = (
+        f"质询 {issue_count} 个问题（高严重度 {high_count} 个），"
+        f"{'存在未解决分歧' if high_count else '无阻断性分歧'}"
+    )
+    if challenger.get("collaboration_required", challenger.get("consultation_required")):
+        challenger_status = "已触发人机协同"
+    elif challenger.get("max_rounds_release"):
+        challenger_status = "轮次上限放行"
+    else:
+        challenger_status = "正常收敛"
+
+    table_lines = [
+        "| Agent | 核心结论 | 置信度 | 状态说明 |",
+        "|---|---|---|---|",
+        f"| 电子取证 Agent | {_conclusion_table_cell(forensics_conclusion)} | {forensics_conf:.1%} | {forensics_status} |",
+        f"| 情报溯源 Agent | {_conclusion_table_cell(osint_conclusion)} | {osint_conf:.1%} | {osint_status} |",
+        f"| 逻辑质询 Agent | {_conclusion_table_cell(challenger_conclusion)} | {challenger_conf:.1%} | {challenger_status} |",
+    ]
+
+    retained_lines = [
+        line
+        for line in match.group(2).splitlines()
+        if not line.lstrip().startswith("|")
+    ]
+    retained_body = "\n".join(retained_lines).strip()
+    body = "\n".join(table_lines)
+    if retained_body:
+        body += "\n\n" + retained_body
+    replacement = f"{match.group(1)}\n{body}\n\n"
+    return report[: match.start()] + replacement + report[match.end():]
+
+
 def _enforce_domain_tool_recommendation_boundaries(report: str, osint: dict) -> str:
     """Do not present an already completed WHOIS lookup as pending work."""
     completed_domains: set[str] = set()
@@ -330,6 +411,7 @@ async def commander_node(state: TruthSeekerState) -> dict:
         overall_confidence,
         confidence_components,
     )
+    llm_ruling = _enforce_agent_conclusion_table(llm_ruling, forensics, osint, challenger)
     temporal_payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "text_samples": [
@@ -500,9 +582,9 @@ def _generate_recommendations(
             recs.append("音频轨道存在异常，建议单独进行声纹比对分析")
     elif verdict == "suspicious":
         recs.append("建议进行人工复核，结合上下文进一步验证")
-        recs.append("建议使用不同检测工具交叉验证")
+        recs.append("电子取证与情报溯源结论已完成跨 Agent 交叉验证，建议结合传播渠道、发布账号等上下文进一步核实")
         if challenger.get("issue_count", 0) > 0:
-            recs.append("质询官发现证据不足之处，建议补充更多检测维度")
+            recs.append("逻辑质询发现证据不足之处，建议人工补充相关背景信息")
     elif verdict == "authentic":
         recs.append("媒体内容经多维度检测判定为真实，可正常使用")
         recs.append("建议定期复检以应对新型伪造技术")

@@ -9,11 +9,11 @@ import { AgentCard } from "./AgentCard"
 
 describe("AgentCard core Skill binding", () => {
   it.each([
-    ["forensics", "多模态电子取证", "multimodal-forensics"],
-    ["osint", "情报溯源与证据图谱", "osint-provenance"],
-    ["challenger", "证据质询与收敛控制", "evidence-challenge"],
-    ["commander", "研判指挥与协同编排", "command-collaboration"],
-  ])("shows %s as a fixed binding without claiming runtime application", (agentKey, label, skillName) => {
+    ["forensics", "多模态电子取证", "multimodal-forensics", "1.1.0"],
+    ["osint", "情报溯源与证据图谱", "osint-provenance", "1.2.0"],
+    ["challenger", "证据质询与收敛控制", "evidence-challenge", "1.2.0"],
+    ["commander", "研判指挥与协同编排", "command-collaboration", "1.1.0"],
+  ])("shows %s as a fixed binding without claiming runtime application", (agentKey, label, skillName, version) => {
     render(
       <AgentCard
         name="测试 Agent"
@@ -24,9 +24,9 @@ describe("AgentCard core Skill binding", () => {
     )
 
     expect(screen.getByText(label)).toBeInTheDocument()
-    expect(screen.getByText("v1.0.0")).toBeInTheDocument()
+    expect(screen.getByText(`v${version}`)).toBeInTheDocument()
     expect(screen.getByText("固定绑定")).toBeInTheDocument()
-    expect(screen.getByTitle(`${skillName} v1.0.0`)).toBeInTheDocument()
+    expect(screen.getByTitle(`${skillName} v${version}`)).toBeInTheDocument()
     expect(screen.queryByText("本轮已采用")).not.toBeInTheDocument()
   })
 })

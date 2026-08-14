@@ -83,7 +83,7 @@ truthseeker-api/
 - `phase_rounds`: 每个阶段当前轮次，默认每阶段从 1 开始。
 - `phase_quality_history`: 每阶段质量评分历史，用于记录变化趋势和协同停滞判断；不直接决定 Challenger 阶段放行。
 - `collaboration_sessions`: 已知人机协同 session 列表，包含首次自动触发、重复触发审批、跳过本次、摘要待确认和摘要确认状态。
-- `collaboration_trigger_history`: Challenger 对同一目标 Agent 的质询历史，用于判断 3 轮低置信、置信度 `< 0.8`、相邻变化 `< 0.08`。
+- `collaboration_trigger_history`: Challenger 对同一目标 Agent 的质询历史，用于判断 3 轮低置信、置信度 `< 0.8`、相邻变化 `< 0.08`；每阶段协同次数上限由 `CONSULTATION_MAX_SESSIONS_PER_PHASE` 控制（默认 1）。
 - `active_collaboration_session` / `pending_collaboration_approval` / `confirmed_collaboration_summary`: 当前协同、待用户审批协同和已确认摘要。
 - `consultation_*`: 历史兼容字段，读取旧任务时兜底；新流程主写 `collaboration_*`。
 - `tool_results`: 电子取证和 OSINT 工具 all-settled 结果。
@@ -211,8 +211,8 @@ Exa：
 协同恢复：
 
 - 前 4 轮 Challenger 置信度 `< 0.8` 必须打回目标 Agent；第 5 轮达到阶段最大轮次时直接放行，并把低置信或未解决问题写入残留风险。
-- 首次满足“同一目标最近 3 轮置信度均 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `collaboration_required` 并写入 active session。
-- 同一目标 Agent 再次满足门槛时，后端发送 `collaboration_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。
+- 首次满足“同一目标最近 3 轮置信度均 `< 0.8`、相邻置信度变化均 `< 0.08`”时，后端发送 `collaboration_required` 并写入 active session。每阶段每次检测最多协同 1 次（`CONSULTATION_MAX_SESSIONS_PER_PHASE` 默认 1），超过上限直接带残留风险放行；单次协同最多提出 3 个问题（`CONSULTATION_MAX_QUESTIONS` 默认 3），且属于其他阶段职责的越界质询点在触发前已被确定性过滤。
+- 同一目标 Agent 再次满足门槛时，后端发送 `collaboration_approval_required` 并写入 `waiting_user_approval` session；用户可批准或跳过本次。当前每阶段 1 次的协同上限下该路径通常不会命中，保留为配置兜底。
 - 用户结束协同后，Commander 调用大模型阅读 `context_payload.help_needed`、专家任务和协同消息，生成 `summary_pending` 摘要；摘要生成与个人经验草稿提炼并发运行，总耗时取两次调用中的较慢者。协同路由不再额外设置 12 秒短超时，稍慢但有效的模型结果仍会被采纳；底层 LLM 客户端继续负责网络超时、瞬时错误重试和真实失败降级。LLM 不可用或输出契约无效时，本地兜底按编号意见提炼结论、确认态与回注建议，不得直接拼接或按字符截断聊天原文。用户确认/编辑摘要后，session 进入 `summary_confirmed`。
 - 用户结束协同后，Commander 同步抽取个人经验草稿；`evidence_to_check` 等可编辑非关键清单的字符串/常见对象漂移会先安全归一化为数组，必填标题、适用 Agent、问题模式和方法仍保持严格合同。草稿生成或合同检查失败时返回空草稿及可见降级原因。摘要确认不会自动入库；前端直接消费 close/confirm 接口返回的 session 展示草稿，不依赖发送端收到自己的 Realtime 广播；历史空快照也显示缺失原因。确认摘要接口会保留 `summary_payload.experience_drafts`，避免草稿在摘要确认时丢失。
 - `resume=true` 时读取 `collaboration_messages`、`collaboration_sessions` 和已确认摘要回注状态；checkpoint 丢失时，从 `analysis_states` 重建 Commander 可裁决状态。旧 `consultation_*` 数据作为历史兜底读取。

@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
-from app.agents.tools.llm_client import build_sample_references, osint_interpret, summarize_previous_analysis
+from app.agents.tools.llm_client import (
+    build_sample_references,
+    extract_osint_search_entities,
+    osint_interpret,
+    summarize_previous_analysis,
+)
 from app.agents.tools.domain_provenance import analyze_domain_provenance
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text, text_fingerprint
 from app.agents.tools.osint_search import (
@@ -34,6 +40,8 @@ TEXT_MAX_CHARS = 10000
 EXA_BATCH_TIMEOUT_SECONDS = (
     EXA_TIMEOUT_SECONDS * MAX_EXA_QUERIES * EXA_CONNECT_MAX_ATTEMPTS + 10.0
 )
+# 实体抽取是一次小型 LLM 调用：超时即回退既有查询源，不得拖慢 OSINT 主流程
+ENTITY_EXTRACT_TIMEOUT_SECONDS = 30.0
 
 
 def _now() -> str:
@@ -270,6 +278,106 @@ def _reuse_forensics_text_aigc(state: TruthSeekerState, text: str) -> dict[str, 
     return None
 
 
+def _upstream_verified_conclusions(state: TruthSeekerState) -> dict[str, Any] | None:
+    """汇总取证阶段经逻辑质询核验的鉴伪结论，供 OSINT 阶段直接引用。
+
+    阶段推进到 OSINT 即代表取证结论已通过 Challenger 放行门槛，
+    属于可信上游结论；OSINT 讨论检材真伪时必须引用，不得独立重建
+    分歧的低置信判断（跨阶段证据复用）。
+    """
+    forensics = state.get("forensics_result") or {}
+    if not isinstance(forensics, dict) or not forensics:
+        return None
+    aigc_probability = float(
+        forensics.get("aigc_probability", forensics.get("deepfake_probability", 0.0)) or 0.0
+    )
+    is_aigc = bool(forensics.get("is_aigc", forensics.get("is_deepfake", False)))
+    media_summaries: list[str] = []
+    text_summaries: list[str] = []
+    for item in forensics.get("tool_results") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "success":
+            continue
+        summary = str(item.get("summary") or "").strip()
+        if not summary:
+            continue
+        # 文本 AIGC 检测同样是取证阶段的鉴伪结论：只纳入上游引用，
+        # 避免 OSINT 复用后当作自己的独立推断复述（跨阶段证据复用）。
+        if item.get("tool") in {"aigc_image_detector", "reality_defender"}:
+            media_summaries.append(summary[:200])
+        elif item.get("tool") == "ai_text_detector":
+            text_summaries.append(summary[:200])
+    return {
+        "verified_by": "电子取证阶段结论，已通过逻辑质询 Agent 阶段审查",
+        "aigc_probability": aigc_probability,
+        "is_aigc": is_aigc,
+        "forensics_confidence": float(forensics.get("confidence", 0.0) or 0.0),
+        "forensics_degraded": bool(forensics.get("degraded", False)),
+        "model_used": forensics.get("model_used"),
+        "media_detection_summaries": media_summaries[:4],
+        "text_detection_summaries": text_summaries[:4],
+        "citation_rule": "涉及检材真伪、伪造性或是否 AI 生成的判断必须直接引用本结论，不得独立重建分歧的低置信判断。",
+    }
+
+
+def _find_reusable_exa_hit(previous_successes: dict[tuple[str, str], dict[str, Any]], phase_round: int) -> dict[str, Any] | None:
+    """返回上一轮已有命中的 Exa 成功结果；零命中的有效负结果不复用。
+
+    零命中结果若被复用，重跑轮次不会真实重搜，置信度精确停滞（Δ=0），
+    案件会被硬门槛锁死在打回-协同循环里。
+    """
+    if phase_round <= 1:
+        return None
+    for (tool_name, _target), item in previous_successes.items():
+        if tool_name == "exa_search" and ((item.get("result") or {}).get("results")):
+            return {**item, "reused": True}
+    return None
+
+
+def _osint_search_confidence(exa_status: str, search_result_count: int, *, has_virustotal: bool) -> float:
+    """按搜索覆盖而非仅命中数评估 OSINT 置信度。
+
+    - Exa 失败且无 VT 佐证：低置信 0.25；
+    - Exa 正常执行完成（success）：零命中也是完整覆盖（有效负结果），
+      保底放行线 0.8，命中再加分；
+    - 其他（degraded/partial 等）：沿用 0.62 基础分。
+    """
+    if exa_status == "failed" and not has_virustotal:
+        return 0.25
+    if exa_status == "success":
+        return min(0.92, 0.80 + search_result_count * 0.03)
+    return min(0.92, 0.62 + search_result_count * 0.04)
+
+
+def _upstream_citation_markdown(task_id: str, conclusions: dict[str, Any]) -> str:
+    """生成确定性注入 OSINT 报告开头的上游已核验结论引用块。
+
+    引用块由代码而非模型生成：只要取证结论通过质询放行，报告中就必然
+    出现带来源归因的引用，杜绝“叙事归属缺陷→反复打回→协同”的死锁。
+    """
+    is_aigc = bool(conclusions.get("is_aigc"))
+    aigc_probability = float(conclusions.get("aigc_probability", 0.0) or 0.0)
+    forensics_confidence = float(conclusions.get("forensics_confidence", 0.0) or 0.0)
+    lines = [
+        "### 上游已核验结论引用",
+        "",
+        f"- 来源：{conclusions.get('verified_by', '电子取证阶段结论')}（任务 {task_id}）",
+        f"- 综合判定：{'检出 AIGC 特征' if is_aigc else '未检出 AIGC 特征'}"
+        f"（AIGC 概率 {aigc_probability:.1%}，取证置信度 {forensics_confidence:.1%}）",
+    ]
+    for summary in conclusions.get("media_detection_summaries") or []:
+        lines.append(f"- 图像/音视频检测：{summary}")
+    for summary in conclusions.get("text_detection_summaries") or []:
+        lines.append(f"- 文本检测：{summary}")
+    lines.extend([
+        "",
+        "> 本小节由系统确定性注入。本报告涉及检材真伪、伪造性或是否 AI 生成的判断均以本小节为准；"
+        "正文如与上述数值不一致，以上游已核验结论为准。",
+    ])
+    return "\n".join(lines)
+
+
 async def osint_node(state: TruthSeekerState) -> dict:
     """
     情报溯源图谱 Agent：
@@ -386,6 +494,12 @@ async def osint_node(state: TruthSeekerState) -> dict:
                     coro=detect_ai_generated_text(combined, target="uploaded_text"),
                     timeout=45.0,
                 )
+            else:
+                # 复用的就是取证阶段已核验结论：摘要显式标注来源，
+                # 避免 LLM 把上游数字包装成 OSINT 独立推断（跨阶段证据复用）。
+                base_summary = str(text_aigc_tool.get("summary") or "")
+                if not base_summary.startswith("引用电子取证阶段已核验结论"):
+                    text_aigc_tool["summary"] = f"引用电子取证阶段已核验结论（复用）: {base_summary}"
             tool_results.append(text_aigc_tool)
 
     urls_to_check = list(dict.fromkeys(urls_to_check))
@@ -450,17 +564,41 @@ async def osint_node(state: TruthSeekerState) -> dict:
             provider = text_aigc_detection.get("provider") or "外部工具"
             threat_indicators.append(f"{provider} 文本 AI 生成概率高 ({external_text_prob:.1%})")
 
-    queries = build_deidentified_queries(
-        case_prompt=case_prompt,
-        threat_indicators=threat_indicators,
-        urls=urls_to_check,
-        file_names=file_names,
-    )
-    log("action", f"生成 {len(queries)} 条脱敏 OSINT 查询，调用 Exa 搜索")
-    exa_target = "; ".join(queries)[:180] or "no_query"
-    if maybe_reuse("exa_search", exa_target):
-        exa_tool = tool_results[-1]
+    # 上一轮已有命中的搜索结果继续复用（节省配额）；
+    # 零命中的有效负结果不复用——重跑轮次要带着可能更新的查询真实重搜，
+    # 否则置信度停滞会把它锁死在打回循环里。
+    previous_exa_hit = _find_reusable_exa_hit(previous_successes, phase_round)
+
+    queries: list[str] = []
+    if previous_exa_hit is not None:
+        exa_tool = previous_exa_hit
+        tool_results.append(exa_tool)
+        reused_result = exa_tool.get("result") or {}
+        queries = [str(q) for q in reused_result.get("queries") or []]
+        log("action", f"复用上一轮已有命中的 Exa 搜索结果（命中 {len(reused_result.get('results') or [])} 条公开来源）")
     else:
+        entities: list[str] = []
+        if case_prompt or text_contents:
+            try:
+                entities = await asyncio.wait_for(
+                    extract_osint_search_entities(case_prompt, text_contents),
+                    timeout=ENTITY_EXTRACT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                log("action", "搜索实体抽取超时，回退既有查询源")
+            except Exception as exc:
+                log("action", f"搜索实体抽取失败（{type(exc).__name__}），回退既有查询源")
+        if entities:
+            log("action", f"抽取到 {len(entities)} 个可检索实体：{'、'.join(entities)}")
+        queries = build_deidentified_queries(
+            case_prompt=case_prompt,
+            threat_indicators=threat_indicators,
+            urls=urls_to_check,
+            file_names=file_names,
+            entities=entities,
+        )
+        log("action", f"生成 {len(queries)} 条脱敏 OSINT 查询，调用 Exa 搜索")
+        exa_target = "; ".join(queries)[:180] or "no_query"
         exa_tool = await _settle_tool(
             tool="exa_search",
             target=exa_target,
@@ -536,7 +674,11 @@ async def osint_node(state: TruthSeekerState) -> dict:
             metadata={"failed": failed_count, "degraded": degraded_count, "partial": partial_count, "total": len(tool_results)},
         )
 
-    osint_confidence = 0.25 if exa_tool.get("status") == "failed" and not virustotal_summaries else min(0.92, 0.62 + len(search_results) * 0.04)
+    osint_confidence = _osint_search_confidence(
+        str(exa_tool.get("status") or ""),
+        len(search_results),
+        has_virustotal=bool(virustotal_summaries),
+    )
     model_claims = _model_claims_from_text(text_analysis_result, threat_indicators)
 
     success_count = sum(1 for item in tool_results if item.get("status") == "success")
@@ -583,6 +725,15 @@ async def osint_node(state: TruthSeekerState) -> dict:
         "timestamp": _now(),
         "skill_execution": skill_initial,
     }
+    upstream_conclusions = _upstream_verified_conclusions(state)
+    if upstream_conclusions:
+        partial_result["upstream_verified_conclusions"] = upstream_conclusions
+        log(
+            "thinking",
+            f"纳入上游取证已核验结论：AIGC 概率 {upstream_conclusions['aigc_probability']:.1%}，"
+            f"取证置信度 {upstream_conclusions['forensics_confidence']:.1%}，检材真伪讨论将直接引用",
+        )
+
     reinforcement_context = _build_reinforcement_context(state, "osint", state.get("osint_result") or {})
     if reinforcement_context:
         partial_result["reinforcement_context"] = reinforcement_context
@@ -596,8 +747,21 @@ async def osint_node(state: TruthSeekerState) -> dict:
         case_prompt,
         sample_refs,
         skill_context=skill_load.prompt_context,
+        upstream_conclusions=upstream_conclusions,
         llm_status=llm_status,
     )
+    if upstream_conclusions:
+        # 确定性注入：无论模型输出什么，报告开头必然出现带上游归因的引用块，
+        # 质询 Agent 不再因叙事措辞归属反复打回。若模型自行写了同名小节，
+        # 先移除再以系统版本为准，避免重复标题。
+        stripped_analysis = re.sub(
+            r"###\s*上游已核验结论引用.*?(?=\n###\s|\Z)",
+            "",
+            llm_analysis,
+            flags=re.DOTALL,
+        ).strip()
+        llm_analysis = _upstream_citation_markdown(task_id, upstream_conclusions) + "\n\n" + stripped_analysis
+        log("finding", "已确定性注入上游已核验结论引用块，检材真伪讨论以上游结论为准")
     partial_result["llm_analysis"] = llm_analysis
     skill_execution = finalize_skill_execution(skill_load, llm_analysis, llm_status=llm_status)
     partial_result["skill_execution"] = skill_execution

@@ -17,6 +17,13 @@ EXPECTED_BINDINGS = {
     ),
 }
 
+EXPECTED_SKILL_VERSIONS = {
+    "forensics": "1.1.0",
+    "osint": "1.2.0",
+    "challenger": "1.2.0",
+    "commander": "1.1.0",
+}
+
 
 def test_all_agents_have_fixed_versioned_skill_bindings():
     from app.agents.skills.loader import AGENT_SKILL_BINDINGS, load_agent_skill
@@ -34,7 +41,7 @@ def test_all_agents_have_fixed_versioned_skill_bindings():
             assert execution["load_status"] == "loaded"
             assert execution["execution_status"] == "pending"
             assert execution["skill_name"] == EXPECTED_BINDINGS[agent][0]
-            assert execution["skill_version"] == "1.0.0"
+            assert execution["skill_version"] == EXPECTED_SKILL_VERSIONS[agent]
             assert execution["workflow"] == workflow
             assert execution["content_digest"].startswith("sha256:")
             assert execution["contract_checks"]
@@ -601,7 +608,7 @@ async def test_forensics_pilot_records_loaded_skill_in_prompt_logs_audit_and_res
     assert captured["raw_forensics"]["skill_execution"]["load_status"] == "loaded"
     assert captured["raw_forensics"]["skill_execution"]["execution_status"] == "pending"
     assert result["degradation_status"]["skill.forensics"] == "applied"
-    assert any("核心 Skill multimodal-forensics v1.0.0 已加载" in log["content"] for log in result["logs"])
+    assert any("核心 Skill multimodal-forensics v1.1.0 已加载" in log["content"] for log in result["logs"])
     assert any(event["action"] == "skill.loaded" for event in captured["audit"])
 
 

@@ -346,7 +346,7 @@ def evaluate_consultation_trigger(
 
     target_agent = str(current.get("target_agent") or current.get("phase") or "unknown")
     completed_sessions = _completed_session_count(existing_sessions, target_agent)
-    max_consultations = max(0, max_rounds - stuck_rounds)
+    max_consultations = max(0, int(settings.CONSULTATION_MAX_SESSIONS_PER_PHASE))
     if completed_sessions >= max_consultations:
         return {"should_pause": False, "reason": "当前阶段协同次数已达上限，直接放行并保留残留风险"}
 
@@ -398,8 +398,9 @@ def build_consultation_context(
 
     high_issues = _dedupe_high_issues(trigger.get("recent_challenges") or [])
     review_issues = high_issues or _dedupe_recent_issues(trigger.get("recent_challenges") or [])
+    max_questions = max(1, int(settings.CONSULTATION_MAX_QUESTIONS))
     expert_tasks = []
-    for index, issue in enumerate(review_issues[:5], start=1):
+    for index, issue in enumerate(review_issues[:max_questions], start=1):
         target_agent = issue.get("agent") or issue.get("target_agent") or trigger.get("target_agent")
         severity = str(issue.get("severity") or "medium")
         description = str(issue.get("description") or "质询问题").strip()
@@ -426,7 +427,7 @@ def build_consultation_context(
             "challenger_confidence": (challenger_feedback or {}).get("confidence"),
         },
         "current_blocker": trigger.get("reason"),
-        "help_needed": [issue["description"] for issue in review_issues[:5] if issue.get("description")],
+        "help_needed": [issue["description"] for issue in review_issues[:max_questions] if issue.get("description")],
         "expert_tasks": expert_tasks,
         "trigger": trigger,
         "created_at": utc_now_iso(),

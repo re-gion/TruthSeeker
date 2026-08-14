@@ -1,7 +1,7 @@
 ---
 name: command-collaboration
 description: 为研判指挥 Agent 提供最终裁决、人机协同主持和脱敏经验提炼三个显式工作流；相关 Commander 调用必须选择其中一个工作流。
-version: 1.0.0
+version: 1.1.0
 schema_version: 1
 agent: commander
 workflows: [final_adjudication, human_collaboration, experience_distillation]
@@ -24,11 +24,11 @@ workflows: [final_adjudication, human_collaboration, experience_distillation]
 
 ### final_adjudication
 
-解释最终四分类裁决，核对结构化综合置信度、Agent 权重、证据链完整性、关键分歧、残留风险和后续建议。不得让 LLM 自行改写 `final_verdict`。
+解释最终四分类裁决，核对结构化综合置信度、Agent 权重、证据链完整性、关键分歧、残留风险和后续建议。不得让 LLM 自行改写 `final_verdict`。证据链质量评估与 Agent 结论对照必须写成 Markdown 表格。交叉验证指取证视角（是否伪造）与溯源视角（是否虚假/恶意）的跨 Agent 互证；同阶段缺少多工具复测只是未做可选补强，不得写成证据链质量缺陷。
 
 ### human_collaboration
 
-合并语义重复的求助点，保留不同根因与目标 Agent；把问题整理成专家可执行任务。协同结束时只总结真实用户与专家回复、依据、未解决项和回注建议。
+合并语义重复的求助点，保留不同根因与目标 Agent；把问题整理成专家可执行任务。只保留当前阶段 Agent 职责范围内的求助点：凡属于其他阶段职责的事项（如要求电子取证完成 WHOIS/IP/DNS/情报溯源）不得作为协同问题。协同结束时只总结真实用户与专家回复、依据、未解决项和回注建议。
 
 ### experience_distillation
 

@@ -178,6 +178,7 @@ def build_deidentified_queries(
     threat_indicators: list[str] | None = None,
     urls: list[str] | None = None,
     file_names: list[str] | None = None,
+    entities: list[str] | None = None,
 ) -> list[str]:
     """Build compact, de-identified search queries for public OSINT."""
     candidates: list[str] = []
@@ -185,6 +186,14 @@ def build_deidentified_queries(
         host = _normalize_hostname(str(url))
         if host:
             candidates.append(f'"{host}" phishing OR scam OR reputation')
+    # 品牌/机构/产品等实体独立检索：域名信誉查询之外的品牌存在性验证，
+    # 避免“文本里的品牌从未被搜索却得出品牌未检出结论”的无效推断。
+    # 注意不能用 _normalize_hostname 判重：中文品牌名可被 IDNA 编码，会被误判成域名。
+    for entity in entities or []:
+        name = re.sub(r"\s+", " ", str(entity or "").strip().strip('"'))
+        if len(name) < 2 or _DOMAIN_PATTERN.fullmatch(name):
+            continue
+        candidates.append(f'"{name}" 诈骗 OR 投诉 OR 官方 OR scam')
 
     # A concrete URL/domain is the strongest public-search anchor. Mixing in
     # generic risk labels or upstream tool summaries creates unrelated searches

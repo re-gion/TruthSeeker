@@ -35,6 +35,49 @@ def test_case_url_query_uses_parsed_hostname_not_userinfo():
     assert queries == ['"evil.example" phishing OR scam OR reputation']
 
 
+def test_entity_queries_cover_brand_names_next_to_domain_queries():
+    queries = osint_search.build_deidentified_queries(
+        case_prompt="",
+        urls=["https://bal-rewards.xyz/x"],
+        entities=["星购生活", "某某 App"],
+    )
+
+    assert queries == [
+        '"bal-rewards.xyz" phishing OR scam OR reputation',
+        '"星购生活" 诈骗 OR 投诉 OR 官方 OR scam',
+        '"某某 App" 诈骗 OR 投诉 OR 官方 OR scam',
+    ]
+
+
+def test_chinese_entity_not_misclassified_as_domain():
+    # 回归：中文品牌名可被 IDNA 编码成 punycode（星购生活 -> xn--kiv31ne3g02z），
+    # 若用 hostname 解析判断“是否域名”会把中文实体全部丢弃
+    queries = osint_search.build_deidentified_queries(
+        case_prompt="",
+        urls=[],
+        entities=["星购生活"],
+    )
+
+    assert queries == ['"星购生活" 诈骗 OR 投诉 OR 官方 OR scam']
+
+
+def test_domain_like_entities_are_dropped_and_total_capped():
+    queries = osint_search.build_deidentified_queries(
+        case_prompt="",
+        urls=["https://bal-rewards.xyz/x"],
+        entities=["bal-rewards.xyz", "品牌甲", "品牌乙", "品牌丙"],
+        threat_indicators=["不应出现的干扰项"],
+    )
+
+    # 域名实体去重 + 总数上限 MAX_EXA_QUERIES=3
+    assert queries == [
+        '"bal-rewards.xyz" phishing OR scam OR reputation',
+        '"品牌甲" 诈骗 OR 投诉 OR 官方 OR scam',
+        '"品牌乙" 诈骗 OR 投诉 OR 官方 OR scam',
+    ]
+    assert "不应出现的干扰项" not in queries
+
+
 def test_exa_node_timeout_covers_all_queries_and_connection_retries():
     assert osint_node_module.EXA_BATCH_TIMEOUT_SECONDS >= (
         osint_search.EXA_TIMEOUT_SECONDS

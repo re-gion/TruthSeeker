@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     CONSULTATION_STUCK_ROUNDS: int = 3
     CONSULTATION_CONFIDENCE_THRESHOLD: float = 0.8
     CONSULTATION_DELTA_THRESHOLD: float = 0.08
+    # 每阶段每次检测最多触发的人机协同次数；超过后带残留风险放行，不再打扰用户
+    CONSULTATION_MAX_SESSIONS_PER_PHASE: int = 1
+    # 单次人机协同向用户/专家提出的问题上限
+    CONSULTATION_MAX_QUESTIONS: int = 3
     TEXT_AIGC_DETECTOR_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("TEXT_AIGC_DETECTOR_ENABLED", "Text_AIGC_Detector_Enabled"))
     TEXT_AIGC_AI_THRESHOLD: float = Field(default=0.6, validation_alias=AliasChoices("TEXT_AIGC_AI_THRESHOLD", "Text_AIGC_AI_Threshold"))
     REALITY_DEFENDER_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
