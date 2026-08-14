@@ -192,9 +192,24 @@ import { motion } from "framer-motion" //已废弃！
 - `EvidenceTimeline`（`components/detect/EvidenceTimeline.tsx`）— 垂直证据时间轴，Agent 颜色编码 + 动画
 - `ProvenanceGraphView`（`components/detect/ProvenanceGraphView.tsx`）— 溯源图谱，@xyflow/react 画布（拖拽/缩放/节点详情/引用面板）
 - `AgentCard`（`components/agents/AgentCard.tsx`）— Agent 状态卡片（idle | analyzing | complete | error）
+- `ReportToc`（`components/report/ReportToc.tsx`）— 分享报告左侧目录，可折叠 + 滚动跟随高亮
 - 数据大屏图表（ECharts：趋势/玫瑰图/裁决柱/雷达/Sankey，见 `DashboardClient.tsx`）
 
 置信度等单值指标直接由卡片内数字 + 颜色呈现，不依赖独立仪表盘组件。
+
+### 分享报告目录
+
+`/report/[token]` 的报告正文很长（实测 1600+ 行 Markdown、30+ 章节），左侧提供目录导航：
+
+- 目录收录两级：页面级区块（裁决结论、最终裁决报告、详细分析报告）与 Markdown 的 `##` 主章节同深度，`###` 小节缩进一级；`#` 与 `####` 及更深层级不收录。
+- 锚点 id 由 `lib/report-toc.ts` 统一生成，中文标题保留汉字（不退化成空 slug），同名标题按出现顺序追加 `-2`、`-3`。
+- 只有顶层标题发 id。质询时间线里被缩进引用的上一轮分析含同名 `###` 标题，它们不属于报告结构，既不进目录也不发 id，避免抢占锚点。
+- 布局仅在 `≥1280px`（Tailwind `xl`）启用双栏，容器扩到 `1320px`，正文宽度保持 `1024px` 不变；窄屏完全隐藏目录，与改动前布局一致。
+- 目录默认展开、不持久化偏好；折叠后左栏保留竖排"目录"按钮可再次展开，栏位宽度不变以避免正文横向跳动。
+- 点击目录用原生 `scrollIntoView({ behavior: 'smooth', block: 'start' })` 定位，吸顶偏移由锚点的 `scroll-margin-top` 提供；不要在 JS 里自算绝对像素，长报告滚动途中字体分片加载会改变文档总高导致落点漂移。
+- 滚动跟随高亮由 `hooks/useActiveHeading.ts` 提供：scroll 事件 + rAF 节流并带 150ms setTimeout 兜底（长文档里 rAF 会被节流导致丢最后一帧），选取最后一个越过吸顶线（80px，含 2px 亚像素容差）的标题；滚到文档底部时强制高亮末章节，因为末尾几节距底不足一屏永远越不过吸顶线。
+- 点击目录会锁定（pin）该条高亮，直到目标抵达吸顶线或用户自己滚动（wheel/touchstart/keydown/mousedown）才交回测量。没有这道锁定，平滑滚动落定前的每一帧目标都还没越线，目录会一直显示上一节。
+
 
 ---
 

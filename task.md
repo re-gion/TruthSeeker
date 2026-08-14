@@ -43,6 +43,19 @@
 - [x] 删除经验《品牌虚构性最低成本验证路径》（含 RAG 分块），其核心提升为系统规则；保留 8 条方法论经验。
 - [x] SKILL 契约升版：osint-provenance、evidence-challenge 升至 v1.2.0，前端徽章与测试同步。
 
+## 2026-08-14 分享报告左侧目录
+
+- [x] 目录数据层：新增 `truthseeker-web/lib/report-toc.ts`，扫描报告 Markdown 生成两级目录（页面级区块 + `##` 同深度、`###` 缩进一级），跳过围栏代码块与缩进引用的标题；中文标题保留汉字 slug，同名标题追加序号后缀。
+- [x] 锚点注入：新增 `components/report/reportMarkdownComponents.tsx`，按 Markdown 源码行号给 `h2`/`h3` 注入与目录一致的 id；质询时间线里被缩进引用的同名 `###` 标题不发 id，避免重复 DOM id 与跳错位置。
+- [x] 目录组件：新增 `components/report/ReportToc.tsx`，可折叠（默认展开、不持久化偏好）、列表可滚动、高亮项自动滚回可视区；折叠后保留竖排"目录"按钮，栏位宽度不变。
+- [x] 滚动跟随高亮：新增 `hooks/useActiveHeading.ts`（scroll + rAF 节流 + 150ms setTimeout 兜底，吸顶偏移 80px、2px 亚像素容差）；到达文档底部时强制高亮末章节，修复末尾几节永远越不过吸顶线的高亮卡顿。
+- [x] 布局：仅 `≥1280px` 启用「220px 目录 + 1024px 正文」双栏，容器扩至 `1320px`，header 同步对齐；窄屏完全隐藏目录，布局与改动前一致。
+- [x] 点击高亮锁定：点击目录立即锁定该条高亮，直到目标抵达吸顶线或用户自己滚动才交回测量——修复"点击后目录差一个标题"（35 条实测 33 条显示上一节）。锚点定位改用原生 `scrollIntoView`，修复大跨度跳转落点偏移 350px+（滚动途中字体分片加载改变文档总高）。
+- [x] 顺手清理：删除 `globals.css` 中已无引用的 `.report-summary` 样式块（55 行）；`.pytest_tmp/` 加入 `.gitignore`。
+- [x] 测试：新增 33 项前端单测（`lib/report-toc.test.ts`、`hooks/useActiveHeading*.test.*`、`components/report/*.test.tsx`）；前端 lint 0 错、typecheck 干净、142 项单测通过、生产构建通过；后端 146 项 pytest 未受影响仍全过；真实分享链接（1667 行报告、35 条目录）在 1440×900 浏览器实测：35 条目录逐一点击全部命中（落点误差 ≤3px、高亮一致）、无重复 DOM id、纯滚动跟随 7 个位置全部正确、折叠/展开正文不跳动、1100px 窄屏目录隐藏。
+
+
+
 ---
 
 ## 里程碑总览

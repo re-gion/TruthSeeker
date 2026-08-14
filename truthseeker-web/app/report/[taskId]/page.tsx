@@ -1,14 +1,21 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { motion } from "motion/react"
 import { BrandLogo } from "@/components/logo/BrandLogo"
+import { ReportToc } from "@/components/report/ReportToc"
+import { createReportHeadingComponents } from "@/components/report/reportMarkdownComponents"
 import StarBackground from "@/components/ui/StarBackground"
+import { useActiveHeading } from "@/hooks/useActiveHeading"
 import { displayInputType } from "@/lib/input-types"
+import { REPORT_SECTION_IDS, buildReportToc } from "@/lib/report-toc"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+
+/** 吸顶导航 56px + 呼吸空间，锚点定位与高亮共用同一偏移 */
+const SCROLL_OFFSET = 80
 
 interface ReportData {
     report: {
@@ -41,6 +48,7 @@ export default function SharedReportPage() {
     const [data, setData] = useState<ReportData | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [tocOpen, setTocOpen] = useState(true)
 
     useEffect(() => {
         if (!token) return
@@ -53,6 +61,22 @@ export default function SharedReportPage() {
             .catch(err => setError(err.message))
             .finally(() => setLoading(false))
     }, [token])
+
+    const markdown = data?.markdown ?? ""
+    const hasSummary = Boolean(data?.report.summary)
+
+    const tocEntries = useMemo(
+        () => (data ? buildReportToc({ markdown, hasSummary }) : []),
+        [data, markdown, hasSummary],
+    )
+
+    const markdownComponents = useMemo(
+        () => createReportHeadingComponents(markdown, SCROLL_OFFSET),
+        [markdown],
+    )
+
+    const tocIds = useMemo(() => tocEntries.map(entry => entry.id), [tocEntries])
+    const { activeId, pinActiveId } = useActiveHeading(tocIds, SCROLL_OFFSET)
 
     if (loading) {
         return (
@@ -96,7 +120,7 @@ export default function SharedReportPage() {
 
             {/* Header */}
             <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0A0A0F]/80 backdrop-blur-md">
-                <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+                <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 xl:max-w-[1320px] xl:px-6">
                     <Link href="/" className="flex items-center gap-2">
                         <BrandLogo className="h-7 w-7" size={28} priority />
                         <span className="text-sm font-bold text-[#C0C0C0]">TruthSeeker</span>
@@ -105,13 +129,27 @@ export default function SharedReportPage() {
                 </div>
             </header>
 
-            <main className="max-w-4xl mx-auto px-4 py-8">
+            {/* 宽屏才拓成「目录 + 内容」双栏；窄屏保持原单栏居中布局 */}
+            <div className="mx-auto flex max-w-5xl gap-6 px-4 py-8 xl:max-w-[1320px] xl:px-6">
+                {/* 折叠时仍占住 220px 栏位，避免正文左右跳动 */}
+                <aside className="hidden w-[220px] shrink-0 xl:block">
+                    <ReportToc
+                        entries={tocEntries}
+                        activeId={activeId}
+                        open={tocOpen}
+                        onOpenChange={setTocOpen}
+                        onNavigate={pinActiveId}
+                    />
+                </aside>
+
+                <main className="min-w-0 flex-1">
                 {/* Verdict Card */}
                 <motion.div
+                    id={REPORT_SECTION_IDS.verdict}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="rounded-xl p-6 border mb-6 glass-card"
-                    style={{ backgroundColor: vc.bg, borderColor: vc.border }}
+                    style={{ backgroundColor: vc.bg, borderColor: vc.border, scrollMarginTop: SCROLL_OFFSET }}
                 >
                     <div className="flex items-start gap-4">
                         <div className="text-4xl">{vc.emoji}</div>
@@ -122,13 +160,6 @@ export default function SharedReportPage() {
                             {data.report.confidence_overall != null && (
                                 <div className="mt-1 font-mono text-sm" style={{ color: vc.color }}>
                                     综合置信度 {(data.report.confidence_overall * 100).toFixed(1)}%
-                                </div>
-                            )}
-                            {data.report.summary && (
-                                <div className="mt-3 text-sm text-[#C0C0C0] leading-relaxed report-summary">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                        {data.report.summary}
-                                    </ReactMarkdown>
                                 </div>
                             )}
                         </div>
@@ -147,16 +178,37 @@ export default function SharedReportPage() {
                     </div>
                 </motion.div>
 
+                {/* Final Ruling Report */}
+                {data.report.summary && (
+                    <motion.div
+                        id={REPORT_SECTION_IDS.summary}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.05 }}
+                        className="glass-card rounded-xl p-6 border border-white/5 mb-6"
+                        style={{ scrollMarginTop: SCROLL_OFFSET }}
+                    >
+                        <h2 className="text-lg font-bold text-[#C0C0C0] mb-4">最终裁决报告</h2>
+                        <div className="report-markdown">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {data.report.summary}
+                            </ReactMarkdown>
+                        </div>
+                    </motion.div>
+                )}
+
                 {/* Markdown Report */}
                 <motion.div
+                    id={REPORT_SECTION_IDS.detail}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
                     className="glass-card rounded-xl p-6 border border-white/5"
+                    style={{ scrollMarginTop: SCROLL_OFFSET }}
                 >
                     <h2 className="text-lg font-bold text-[#C0C0C0] mb-4">详细分析报告</h2>
                     <div className="report-markdown">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                             {data.markdown}
                         </ReactMarkdown>
                     </div>
@@ -179,7 +231,8 @@ export default function SharedReportPage() {
                         开始鉴伪
                     </Link>
                 </motion.div>
-            </main>
+                </main>
+            </div>
         </div>
     )
 }

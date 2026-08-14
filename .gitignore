@@ -91,6 +91,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 .pytest_basetemp_*/
+.pytest_tmp/
 
 # Translations
 *.mo

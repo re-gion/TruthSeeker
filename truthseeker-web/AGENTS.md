@@ -30,6 +30,7 @@ The frontend defaults to `http://localhost:3000` and expects the backend at `NEX
 - `components/collaboration/` - expert consultation and presence UI.
 - `components/cases/` - public case library list/detail UI.
 - `components/experiences/` - personal experience library list/detail UI.
+- `components/report/` - shared report page pieces (left-side toc, markdown heading anchors).
 - `hooks/` - client interaction, realtime, and animation hooks.
 - `lib/` - shared mapping, Supabase clients, reports, and utilities.
 - `public/` - icons, images, and local fonts.
@@ -48,6 +49,7 @@ The frontend defaults to `http://localhost:3000` and expects the backend at `NEX
 - For 3D work, keep `@react-three/fiber` and `@react-three/drei` versions compatible with React 19; verify visually if a dev server can run.
 - Do not place secrets in client code. Only `NEXT_PUBLIC_*` variables may be read by browser code.
 - Public pages currently include `/report/*` and `/cases/*`; authenticated pages include detection, dashboard, upload, and personal experience library.
+- The shared report page keeps its left-side toc anchors in `lib/report-toc.ts`. Only top-level `##`/`###` headings get ids; headings quoted inside list items must stay id-less so they cannot steal anchors.
 - Prefer canonical `/api/v1/collaboration` wording and events in new UI. Keep legacy consultation event handling only for old task history.
 - Personal feature naming is “个人经验库”; do not revert to “历史经验库”.
 
