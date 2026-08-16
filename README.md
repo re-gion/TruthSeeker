@@ -8,8 +8,8 @@ TruthSeeker 是一个跨模态恶意 AIGC 鉴伪、情报溯源与人机协同�
 
 - **跨模态输入**：一次任务最多上传 5 个文件，支持文本、图片、音频、视频及组合模态；文本框作为案件背景 `case_prompt`，不作为直接检测文本。
 - **阶段式四 Agent 研判**：电子取证 Agent、情报溯源 Agent、逻辑质询 Agent、研判指挥 Agent 通过 LangGraph 编排。
-- **专业工具 all-settled 调用**：Reality Defender、VirusTotal、Exa、WhoisXML、内部文本 AIGC 检测器均以结构化成功/降级/失败结果进入证据板。
-- **逻辑质询与收敛门槛**：Challenger 对取证和溯源阶段执行硬门槛审查；前 4 轮低于 0.8 必须打回，第 5 轮放行并写入残留风险。
+- **专业工具 all-settled 调用**：Reality Defender、Groq ASR、视频观察、VirusTotal、Exa、WhoisXML、内部文本 AIGC 检测器均以结构化成功/降级/失败结果进入证据板。
+- **逻辑质询与收敛门槛**：Challenger 对取证和溯源阶段执行硬门槛审查；每阶段轮次独立，前 4 轮低于 0.8 必须打回，第 5 轮放行并写入残留风险。
 - **人机协同**：低置信停滞时自动暂停，用户可邀请专家，Commander 汇总协同摘要，用户确认后恢复研判。
 - **可审计报告**：输出 Markdown/PDF 报告、审计日志、稳定 `report_hash` 和 provenance graph。
 - **公开案例库与 RAG**：用户授权公开且完成报告的任务可脱敏入库，并索引为类案参考。
@@ -129,7 +129,7 @@ Invoke-RestMethod http://localhost:8000/health
 
 - Supabase：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_ANON_KEY`、`SUPABASE_JWT_SECRET`
 - Agent LLM：`AGENT_LLM_PROVIDER`、`KIMI_*`、`MIMO_*`
-- 媒体/情报工具：`REALITY_DEFENDER_API_KEY`、`VIRUSTOTAL_API_KEY`、`EXA_API_KEY`、`WHOISXML_API_KEY`
+- 媒体/情报工具：`REALITY_DEFENDER_API_KEY`、`GROQ_API_KEY`、`FFMPEG_BINARY`、`FFPROBE_BINARY`、`VIRUSTOTAL_API_KEY`、`EXA_API_KEY`、`WHOISXML_API_KEY`
 - RAG/Embedding：`CASE_RAG_ENABLED`、`EMBEDDING_*`
 - App：`APP_ENV`、`FRONTEND_URL`、`MAX_ROUNDS=5`、`CONVERGENCE_THRESHOLD=0.08`
 
@@ -183,7 +183,7 @@ python -m uvicorn app.main:app --reload
 - `GET /dashboard/overview`
 - `GET /cases`、`GET /cases/{case_id}`、`POST /cases/{case_id}/preview-url`、`GET /cases/{case_id}/files/{file_id}/text`、`DELETE /cases/{case_id}`
 - `GET /experiences`、`GET /experiences/{entry_id}`、`POST /experiences/confirm`、`DELETE /experiences/{entry_id}`
-- `POST/GET /collaboration/...`
+- `POST/GET /collaboration/...`（兼容 `/consultation/...` 旧别名）
 
 `/api/v1/consultation` 仍作为旧兼容别名保留，新功能应优先使用 `/api/v1/collaboration`。canonical 专家公开路径的认证白名单已纳入双前缀匹配，并有回归测试（`truthseeker-api/tests/test_collaboration_invite_access.py`）。
 

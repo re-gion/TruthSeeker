@@ -1,6 +1,6 @@
 # TruthSeeker 四 Agent 阶段式研判 + 人机协同 拓扑详解
 
-> 更新日期：2026-06-06
+> 更新日期：2026-08-16
 > 对应代码：`truthseeker-api/app/agents/graph.py`、`nodes/*.py`、`edges/conditions.py`、`services/consultation_workflow.py`
 > 文档状态：深度运行时说明。若本文件与源码、`docs/APP_FLOW.md` 或 `docs/BACKEND_STRUCTURE.md` 冲突，以源码和 durable docs 为准，并同步修正本文件。
 
@@ -67,7 +67,7 @@ START
 
 | Agent | 角色 | 核心任务 | 可调用工具 |
 |-------|------|---------|-----------|
-| **Forensics** | 电子取证专家 | 对所有检材做技术检测，输出结构化取证报告 | Sightengine AIGC 图片检测、Reality Defender（音视频深伪）、VirusTotal（文件哈希 + 文本 URL）、内部文本 AIGC 检测、案例 RAG、个人经验 RAG、Kimi/MiMo LLM 多模态推理 |
+| **Forensics** | 电子取证专家 | 对所有检材做技术检测，输出结构化取证报告 | Sightengine AIGC 图片检测、Reality Defender（音视频深伪）、Groq ASR（音频/视频语义转写）、视频观察、VirusTotal（文件哈希 + 文本 URL）、内部文本 AIGC 检测、案例 RAG、个人经验 RAG、Kimi/MiMo LLM 多模态推理 |
 | **OSINT** | 情报溯源分析师 | 追踪来源、构建溯源图谱、评估威胁 | 文本声明抽取 + 社工风险评分、VirusTotal URL、WhoisXML 域名溯源、Exa 搜索、案例 RAG、个人经验 RAG、溯源图谱构建器、内部文本 AIGC 检测、Kimi/MiMo LLM |
 | **Challenger** | 逻辑质询官 | 交叉验证、质询、决定是否放行 | Kimi/MiMo LLM（结构化 JSON 审查）、确定性代码检查器（硬规则）、个人经验 RAG |
 | **Commander** | 研判指挥官 | 综合所有证据做出最终裁决 | Kimi/MiMo LLM（最终裁决报告）、溯源图谱构建器、加权置信度计算器 |

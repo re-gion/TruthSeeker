@@ -92,13 +92,13 @@ Commander 以主持人身份整理争议点、证据缺口和待确认问题
 |模块 |功能描述 |优先级 |
 |------|----------|--------|
 | **LangGraph引擎** |四 Agent 状态机编排、Challenger 硬门槛路由和最大轮数限制；动态权重仅在 Commander 最终裁决时计算 | P0 |
-| **电子取证Agent** |保留 `forensics` 协议 key，接收全模态输入，图片默认 Sightengine，音视频 Reality Defender，文本内部 AIGC 检测，文件哈希和 IOC 进入 VirusTotal，生成取证报告 | P0 |
-| **情报溯源Agent** |基于 Exa、VirusTotal、WhoisXML、公开案例 RAG、个人经验 RAG、样本线索和取证输出生成 OSINT 溯源图谱 | P0 |
+| **电子取证Agent** | 保留 `forensics` 协议 key，接收全模态输入，图片默认 Sightengine，音视频 Reality Defender，音频/视频语义转写使用 Groq ASR，视频观察使用原生视频内联或关键帧，文本内部 AIGC 检测，文件哈希和 IOC 进入 VirusTotal，生成取证报告 | P0 |
+| **情报溯源Agent** | 基于 Exa、VirusTotal、WhoisXML、公开案例 RAG、个人经验 RAG、样本线索和取证输出生成 OSINT 溯源图谱；会复用取证阶段经核验的音频转写摘要与其他上游结论 | P0 |
 | **逻辑质询Agent** |分阶段审查取证报告和溯源图谱，控制收敛、打回和人机协同触发 | P0 |
 | **研判指挥Agent** |综合全局证据板、辩论过程和图谱生成最终鉴伪与溯源报告 | P0 |
 | **实时事件服务** |检测 State 变化以 SSE 为主；Supabase Realtime 用于前端订阅协作消息和相关数据库事件 | P0 |
 | **报告生成器** | Markdown/PDF导出、SHA-256完整性哈希 | P1 |
-| **智能降级控制器** | API故障检测、自动切换备用策略、优雅降级 | P1 |
+| **智能降级控制器** | API故障检测、外部能力不可达时结构化降级与备用策略切换 | P1 |
 
 ###3.3外部能力层（Tools）
 
@@ -197,6 +197,6 @@ Commander 以主持人身份整理争议点、证据缺口和待确认问题
 
 ---
 
-*文档版本：v1.3*
-*最后更新：2026-06-06*
+*文档版本：v1.4*
+*最后更新：2026-08-16*
 *作者：TruthSeeker架构组*

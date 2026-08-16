@@ -1,7 +1,7 @@
 # TruthSeeker 开发任务清单
 
 > **使用说明**: 按顺序自上而下执行任务，每完成一项在 `[ ]` 中打勾 `[x]`。遇到阻塞问题立即记录到 `lessons.md`。
-> **最后审查日期**: 2026-06-06（文档一致性、GitHub README 与代理指引同步）
+> **最后审查日期**: 2026-08-16（文档一致性、GitHub README 与代理指引同步）
 
 ---
 
@@ -108,7 +108,7 @@
 - [x] 文本框改为全局检测提示词，不再允许仅凭提示词创建检测任务。
 - [x] 重建后端为阶段式流程：电子取证 Agent -> Challenger -> OSINT 图谱 Agent -> Challenger -> Commander -> END。
 - [x] `forensics` 对外协议 key 保留，但用户可见语义改为电子取证 Agent。
-- [x] 可配置全模态 Agent LLM 作为四 Agent 共享多模态推理基座；默认 Kimi 2.5，工具结果 all-settled 后再进入 Agent 推理。
+- [x] 可配置全模态 Agent LLM 作为四 Agent 共享多模态推理基座；默认 Kimi 2.6，工具结果 all-settled 后再进入 Agent 推理。
 - [x] 新增 Exa 后端搜索工具和 provenance graph，并在检测台新增图谱视图。
 - [x] 安装 `@xyflow/react` ^12.10.2 并将图谱视图替换为 React Flow 交互渲染（支持拖拽、缩放、节点详情面板）。
 - [x] 任务创建保存 `case_prompt`、文件清单、模态和 storage path。
