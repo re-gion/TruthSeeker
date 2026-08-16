@@ -27,6 +27,7 @@ from app.agents.tools.osint_search import (
 from app.agents.tools.provenance_graph import build_provenance_graph
 from app.agents.tools.text_detection import analyze_text, extract_urls_from_text
 from app.agents.tools.threat_intel import analyze_urls
+from app.config import resolve_kimi_runtime
 from app.services.audit_log import record_audit_event
 from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
@@ -294,6 +295,7 @@ def _upstream_verified_conclusions(state: TruthSeekerState) -> dict[str, Any] | 
     is_aigc = bool(forensics.get("is_aigc", forensics.get("is_deepfake", False)))
     media_summaries: list[str] = []
     text_summaries: list[str] = []
+    audio_transcript_summaries: list[str] = []
     for item in forensics.get("tool_results") or []:
         if not isinstance(item, dict):
             continue
@@ -308,6 +310,10 @@ def _upstream_verified_conclusions(state: TruthSeekerState) -> dict[str, Any] | 
             media_summaries.append(summary[:200])
         elif item.get("tool") == "ai_text_detector":
             text_summaries.append(summary[:200])
+        elif item.get("tool") == "audio_transcription":
+            # ASR 转写属于证据内容而非鉴伪结论，供 OSINT 做音频语义与
+            # 文本主题/外部情报的一致性分析时引用。
+            audio_transcript_summaries.append(summary[:200])
     return {
         "verified_by": "电子取证阶段结论，已通过逻辑质询 Agent 阶段审查",
         "aigc_probability": aigc_probability,
@@ -317,6 +323,7 @@ def _upstream_verified_conclusions(state: TruthSeekerState) -> dict[str, Any] | 
         "model_used": forensics.get("model_used"),
         "media_detection_summaries": media_summaries[:4],
         "text_detection_summaries": text_summaries[:4],
+        "audio_transcript_summaries": audio_transcript_summaries[:4],
         "citation_rule": "涉及检材真伪、伪造性或是否 AI 生成的判断必须直接引用本结论，不得独立重建分歧的低置信判断。",
     }
 
@@ -370,6 +377,8 @@ def _upstream_citation_markdown(task_id: str, conclusions: dict[str, Any]) -> st
         lines.append(f"- 图像/音视频检测：{summary}")
     for summary in conclusions.get("text_detection_summaries") or []:
         lines.append(f"- 文本检测：{summary}")
+    for summary in conclusions.get("audio_transcript_summaries") or []:
+        lines.append(f"- 音频语义转写（ASR）：{summary}")
     lines.extend([
         "",
         "> 本小节由系统确定性注入。本报告涉及检材真伪、伪造性或是否 AI 生成的判断均以本小节为准；"
@@ -739,7 +748,15 @@ async def osint_node(state: TruthSeekerState) -> dict:
         partial_result["reinforcement_context"] = reinforcement_context
         log("thinking", "读取 Challenger/会诊反馈，按打回点补强情报溯源分析")
 
-    log("action", "正在调用 Kimi 进行情报归纳与溯源图谱解释")
+    runtime = resolve_kimi_runtime()
+    provider_label = {
+        "minimax": "MiniMax",
+        "mimo": "MiMo",
+        "official": "Kimi",
+        "coding": "Kimi",
+        "siliconflow": "Kimi",
+    }.get(runtime.get("provider", ""), "多模态模型")
+    log("action", f"正在调用 {provider_label} 进行情报归纳与溯源图谱解释")
     llm_status: dict[str, Any] = {}
     llm_analysis = await osint_interpret(
         partial_result,

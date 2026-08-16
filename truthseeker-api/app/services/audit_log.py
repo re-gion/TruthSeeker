@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.text_validation import strip_null_bytes
+
 logger = logging.getLogger(__name__)
 
 REDACT_KEYS = {
@@ -47,7 +49,8 @@ def build_audit_log_row(
         "user_id": user_id,
         "actor_role": actor_role,
         "agent": agent,
-        "metadata": _redact(metadata or {}),
+        # metadata 可能携带检材/工具文本，Postgres 不接受 U+0000（22P05）
+        "metadata": strip_null_bytes(_redact(metadata or {})),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -9,11 +9,16 @@ from typing import Any, Awaitable
 
 from app.agents.state import AgentLog, EvidenceItem, TruthSeekerState
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
-from app.agents.tools.deepfake_api import analyze_media
+from app.agents.tools.audio_transcription import transcribe_audio_evidence
+from app.agents.tools.deepfake_api import (
+    analyze_media,
+    analyze_video_audio_track,
+    analyze_video_keyframes,
+)
 from app.agents.tools.internal_text_aigc import detect_ai_generated_text
 from app.agents.tools.llm_client import build_sample_references, forensics_interpret, summarize_previous_analysis
 from app.agents.tools.threat_intel import analyze_urls, scan_file_hash
-from app.config import resolve_kimi_runtime, settings
+from app.config import resolve_asr_runtime, resolve_kimi_runtime, settings
 from app.services.audit_log import record_audit_event
 from app.services.case_rag import build_rag_query, case_rag_search
 from app.services.consultation_workflow import build_timeline_event
@@ -168,11 +173,22 @@ def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
             f"confidence={result.get('confidence', 0):.2f}"
         )
     if tool == "reality_defender":
+        if result.get("has_audio_track") is False:
+            return result.get("note") or "视频检材未检测到音轨，无需 RD 音频检测"
         if result.get("degraded") or not result.get("analysis_available", True):
             reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
             return f"Reality Defender 未取得真实检测结论，降级原因={reason}"
         return (
             f"aigc_probability={_read_aigc_probability(result):.2f}, "
+            f"confidence={result.get('confidence', 0):.2f}"
+        )
+    if tool == "video_keyframe_aigc":
+        if result.get("degraded") or not result.get("analysis_available", True):
+            reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
+            return f"视频关键帧 AIGC 检测未取得真实结论，降级原因={reason}"
+        return (
+            f"关键帧 {result.get('frames_analyzed', 0)}/{result.get('frames_total', 0)} 帧, "
+            f"帧间最大 ai_generated_probability={_read_aigc_probability(result):.2f}, "
             f"confidence={result.get('confidence', 0):.2f}"
         )
     if tool == "virustotal_file_hash":
@@ -187,6 +203,17 @@ def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
     if tool == "ai_text_detector":
         provider = result.get("provider") or "external"
         return result.get("summary") or f"{provider} AI probability={result.get('ai_probability', 0):.2f}"
+    if tool == "audio_transcription":
+        if result.get("degraded") or not result.get("analysis_available", True):
+            reason = result.get("fallback_reason", "unavailable")
+            return f"ASR 音频转写未取得结果，降级原因={reason}"
+        if result.get("has_audio_track") is False:
+            return "视频检材未检测到音轨，无需 ASR 转写"
+        preview = str(result.get("preview") or "").strip().replace("\n", " ")
+        return (
+            f"ASR 转写 {result.get('char_count', 0)} 字，"
+            f"语言={result.get('language') or 'unknown'}：{preview[:80]}"
+        )
     return "工具完成"
 
 
@@ -312,17 +339,52 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             return True
         return False
 
+    asr_runtime = resolve_asr_runtime()
+    if media_files and asr_runtime["enabled"]:
+        log(
+            "thinking",
+            "ASR 音频语义转写已启用" + ("" if asr_runtime["api_key"] else "（GROQ_API_KEY 未配置，预计降级）"),
+        )
+
     for media in media_files:
         target = str(media.get("name") or media.get("file_url") or media.get("storage_path") or "media")
         url = str(media.get("file_url") or media.get("storage_path") or "")
         modality = str(media.get("modality") or input_type)
-        tool_name = "aigc_image_detector" if modality == "image" else "reality_defender"
-        if url and not maybe_reuse(tool_name, target):
-            tool_tasks.append(_settle_tool(
-                tool=tool_name,
-                target=target,
-                coro=analyze_media(url, modality),
-            ))
+        if modality == "video":
+            # RD 免费套餐拒绝视频整段上传（403 free-tier-restriction），视频按能力边界分解：
+            # 画面 → ffmpeg 关键帧逐帧送 Sightengine genai；音轨 → ffmpeg 抽取后送 RD 音频检测。
+            if url and not maybe_reuse("video_keyframe_aigc", target):
+                tool_tasks.append(_settle_tool(
+                    tool="video_keyframe_aigc",
+                    target=target,
+                    coro=analyze_video_keyframes(url, target),
+                    timeout=240.0,
+                ))
+            if url and not maybe_reuse("reality_defender", target):
+                tool_tasks.append(_settle_tool(
+                    tool="reality_defender",
+                    target=target,
+                    coro=analyze_video_audio_track(url, target),
+                    timeout=240.0,
+                ))
+        else:
+            tool_name = "aigc_image_detector" if modality == "image" else "reality_defender"
+            if url and not maybe_reuse(tool_name, target):
+                tool_tasks.append(_settle_tool(
+                    tool=tool_name,
+                    target=target,
+                    coro=analyze_media(url, modality),
+                ))
+        # ASR 语义转写：音频直传；视频先探测音轨，无音轨跳过上传（正常结论）。
+        # 与鉴伪工具并行执行，用于音频语义与文本主题的一致性校验。
+        if url and modality in {"audio", "video"} and asr_runtime["enabled"]:
+            if not maybe_reuse("audio_transcription", target):
+                tool_tasks.append(_settle_tool(
+                    tool="audio_transcription",
+                    target=target,
+                    coro=transcribe_audio_evidence(url, target, modality),
+                    timeout=settings.AUDIO_ASR_TOOL_TIMEOUT_SECONDS,
+                ))
 
     for item in files:
         target = str(item.get("name") or item.get("file_url") or item.get("storage_path") or "evidence")
@@ -388,7 +450,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
     rd_results = [
         item.get("result") or {}
         for item in settled_results
-        if item.get("tool") in {"reality_defender", "aigc_image_detector"}
+        if item.get("tool") in {"reality_defender", "aigc_image_detector", "video_keyframe_aigc"}
     ]
     rd_success_results = [
         item
@@ -431,6 +493,32 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             indicators.append(str(item["summary"]))
     if is_suspicious_ioc:
         indicators.append("VirusTotal/IOC 结果提示潜在威胁线索")
+
+    # ASR 转写全文：供取证 LLM 校验音频语义与文本主题一致性，并随结果持久化
+    audio_transcripts: list[dict[str, Any]] = []
+    for item in settled_results:
+        if item.get("tool") != "audio_transcription" or item.get("status") != "success":
+            continue
+        payload = item.get("result") or {}
+        if payload.get("has_audio_track") is False:
+            audio_transcripts.append({
+                "target": str(item.get("target") or ""),
+                "has_audio_track": False,
+                "text": "",
+                "note": payload.get("note") or "视频检材未检测到音轨",
+            })
+            continue
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            continue
+        audio_transcripts.append({
+            "target": str(item.get("target") or ""),
+            "has_audio_track": True,
+            "language": payload.get("language"),
+            "char_count": payload.get("char_count", len(text)),
+            "truncated": bool(payload.get("truncated")),
+            "text": text,
+        })
 
     rag_query = build_rag_query(
         agent="forensics",
@@ -512,6 +600,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "sample_refs": sample_refs,
         "degraded": degraded,
         "text_samples": text_contents,
+        "audio_transcripts": audio_transcripts,
         "case_rag": case_rag,
         "experience_rag": experience_rag,
         "skill_execution": skill_execution,
@@ -522,7 +611,15 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         raw_forensics["reinforcement_context"] = reinforcement_context
         log("thinking", "读取 Challenger/会诊反馈，按打回点补强电子取证分析")
 
-    log("action", "工具结果已全部返回，开始 Kimi 多模态取证推理")
+    runtime = resolve_kimi_runtime()
+    provider_label = {
+        "minimax": "MiniMax",
+        "mimo": "MiMo",
+        "official": "Kimi",
+        "coding": "Kimi",
+        "siliconflow": "Kimi",
+    }.get(runtime.get("provider", ""), "多模态模型")
+    log("action", f"工具结果已全部返回，开始 {provider_label} 多模态取证推理")
     llm_status: dict[str, Any] = {}
     llm_analysis = await forensics_interpret(
         raw_forensics,
@@ -595,6 +692,7 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "audio_score": next((item.get("audio_score") for item in rd_success_results if item.get("audio_score") is not None), None),
         "indicators": indicators[:8],
         "tool_results": settled_results,
+        "audio_transcripts": audio_transcripts,
         "text_aigc_detection": text_aigc_detection,
         "tool_summary": {
             "total": len(settled_results),
@@ -669,8 +767,10 @@ async def forensics_node(state: TruthSeekerState) -> dict:
         "timeline_events": timeline_events,
         "degradation_status": {
             "reality_defender": "degraded" if any(r.get("tool") == "reality_defender" and r.get("degraded") for r in settled_results) else "ok",
+            "video_keyframe_aigc": "degraded" if any(r.get("tool") == "video_keyframe_aigc" and r.get("degraded") for r in settled_results) else "ok",
             "virustotal": "degraded" if any(str(r.get("tool", "")).startswith("virustotal") and r.get("degraded") for r in settled_results) else "ok",
             "ai_text_detector": "degraded" if any(r.get("tool") == "ai_text_detector" and r.get("degraded") for r in settled_results) else "ok",
+            "audio_transcription": "degraded" if any(r.get("tool") == "audio_transcription" and r.get("degraded") for r in settled_results) else "ok",
             "skill.forensics": skill_execution.get("execution_status")
             if skill_execution.get("load_status") == "loaded"
             else skill_execution.get("load_status"),

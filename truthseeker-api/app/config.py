@@ -19,6 +19,7 @@ def _read_kimi_env() -> dict[str, str]:
         "KIMI_CODING_API_KEY", "KIMI_CODING_BASE_URL", "KIMI_CODING_MODEL",
         "KIMI_SILICONFLOW_API_KEY", "KIMI_SILICONFLOW_BASE_URL", "KIMI_SILICONFLOW_MODEL",
         "MIMO_API_KEY", "MIMO_BASE_URL", "MIMO_MODEL", "MIMO_THINKING",
+        "MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MODEL",
         "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
         "EMBEDDING_DIMENSIONS", "CASE_RAG_ENABLED", "CASE_RAG_TOP_K",
         "AIGC_IMAGE_PROVIDER", "AIGC_IMAGE_FALLBACK_PROVIDER",
@@ -115,6 +116,15 @@ class Settings(BaseSettings):
         default="enabled",
         validation_alias=AliasChoices("MIMO_THINKING", "MiMo_Thinking"),
     )
+    MINIMAX_API_KEY: str = Field(default="", validation_alias=AliasChoices("MINIMAX_API_KEY", "MiniMax_API_KEY"))
+    MINIMAX_BASE_URL: str = Field(
+        default="https://minnimax.chat/v1",
+        validation_alias=AliasChoices("MINIMAX_BASE_URL", "MiniMax_Base_URL"),
+    )
+    MINIMAX_MODEL: str = Field(
+        default="claude-3-5-sonnet-20241022",
+        validation_alias=AliasChoices("MINIMAX_MODEL", "MiniMax_Model"),
+    )
     # NOTE: 以下 API key 当前未被代码直接使用，保留用于未来 LLM 提供商切换或兼容
     OPENAI_API_KEY: str = ""
     QWEN_API_KEY: str = ""
@@ -130,6 +140,25 @@ class Settings(BaseSettings):
     WHOISXML_API_KEY: str = Field(default="", validation_alias=AliasChoices("WHOISXML_API_KEY", "WhoisXML_API_KEY"))
     DOMAIN_PROVENANCE_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("DOMAIN_PROVENANCE_ENABLED"))
     WHOISXML_TIMEOUT_SECONDS: float = Field(default=20.0, validation_alias=AliasChoices("WHOISXML_TIMEOUT_SECONDS"))
+
+    # 音频 ASR（Groq OpenAI 兼容 Whisper）— 取证阶段音频语义转写，
+    # 用于校验音频内容与文本主题的一致性
+    AUDIO_ASR_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("AUDIO_ASR_ENABLED", "Audio_ASR_Enabled"))
+    GROQ_API_KEY: str = Field(default="", validation_alias=AliasChoices("GROQ_API_KEY", "Groq_API_Key"))
+    GROQ_ASR_BASE_URL: str = Field(
+        default="https://api.groq.com/openai/v1",
+        validation_alias=AliasChoices("GROQ_ASR_BASE_URL", "Groq_ASR_Base_URL"),
+    )
+    GROQ_ASR_MODEL: str = Field(
+        default="whisper-large-v3-turbo",
+        validation_alias=AliasChoices("GROQ_ASR_MODEL", "Groq_ASR_Model"),
+    )
+    AUDIO_ASR_MAX_FILE_MB: float = Field(default=50.0, validation_alias=AliasChoices("AUDIO_ASR_MAX_FILE_MB", "Audio_ASR_Max_File_MB"))
+    AUDIO_ASR_TIMEOUT_SECONDS: float = Field(default=90.0, validation_alias=AliasChoices("AUDIO_ASR_TIMEOUT_SECONDS", "Audio_ASR_Timeout_Seconds"))
+    AUDIO_ASR_TOOL_TIMEOUT_SECONDS: float = Field(default=180.0, validation_alias=AliasChoices("AUDIO_ASR_TOOL_TIMEOUT_SECONDS", "Audio_ASR_Tool_Timeout_Seconds"))
+    # 留空时按 PATH 查找 ffmpeg/ffprobe，再回退到本机常见安装目录
+    FFMPEG_BINARY: str = Field(default="", validation_alias=AliasChoices("FFMPEG_BINARY", "FFmpeg_Binary"))
+    FFPROBE_BINARY: str = Field(default="", validation_alias=AliasChoices("FFPROBE_BINARY", "FFprobe_Binary"))
 
     # Public case RAG embeddings. Defaults target SiliconFlow's OpenAI-compatible embeddings API.
     EMBEDDING_BASE_URL: str = Field(
@@ -186,6 +215,8 @@ def _normalize_agent_llm_provider(provider: str) -> str:
     value = (provider or "kimi-k2.6").strip().lower().replace("-", "_")
     if value in {"mimo", "xiaomi_mimo", "mimo_v2.5", "mimo_v2_5", "mimo_token_plan", "xiaomi_token_plan"}:
         return "mimo"
+    if value in {"minimax", "mini_max", "minnimax"}:
+        return "minimax"
     return "kimi"
 
 
@@ -229,6 +260,25 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
     official_model = (env.get("KIMI_MODEL") or cfg.KIMI_MODEL or "kimi-k2.6").strip() or "kimi-k2.6"
     official_base = _normalize_kimi_base_url(env.get("KIMI_BASE_URL") or cfg.KIMI_BASE_URL, "official")
 
+    if agent_provider == "minimax":
+        minimax_key = env.get("MINIMAX_API_KEY") or cfg.MINIMAX_API_KEY
+        minimax_model = (env.get("MINIMAX_MODEL") or cfg.MINIMAX_MODEL or "claude-3-5-sonnet-20241022").strip()
+        minimax_base = (
+            env.get("MINIMAX_BASE_URL")
+            or cfg.MINIMAX_BASE_URL
+            or "https://minnimax.chat/v1"
+        ).strip().rstrip("/")
+        return {
+            "provider": "minimax",
+            "model": minimax_model,
+            "base_url": minimax_base,
+            "api_key": minimax_key,
+            "thinking": "disabled",
+            "max_output_tokens": str(_parse_positive_int(
+                env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
+                4096,
+            )),
+        }
     if agent_provider == "mimo":
         mimo_key = env.get("MIMO_API_KEY") or cfg.MIMO_API_KEY
         mimo_model = (env.get("MIMO_MODEL") or cfg.MIMO_MODEL or "mimo-v2.5").strip() or "mimo-v2.5"
@@ -288,6 +338,31 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
             env.get("AGENT_LLM_MAX_OUTPUT_TOKENS") or cfg.AGENT_LLM_MAX_OUTPUT_TOKENS,
             4096,
         )),
+    }
+
+
+def resolve_asr_runtime(config: Settings | None = None) -> dict:
+    """Resolve ASR (Groq Whisper) runtime config, hot-reloading key fields from .env.
+
+    与 resolve_kimi_runtime 同样每次从 .env 重新读取，避免配置 Key 后必须重启服务。
+    """
+    cfg = config or settings
+    raw = dotenv_values(str(_ENV_PATH))
+
+    def pick(key: str, default: str) -> str:
+        value = raw.get(key)
+        return value if value is not None else default
+
+    enabled_raw = (pick("AUDIO_ASR_ENABLED", str(cfg.AUDIO_ASR_ENABLED)) or "true").strip().lower()
+    return {
+        "enabled": enabled_raw not in {"false", "0", "no", "off", "disabled"},
+        "api_key": (pick("GROQ_API_KEY", cfg.GROQ_API_KEY) or "").strip(),
+        "base_url": (
+            pick("GROQ_ASR_BASE_URL", cfg.GROQ_ASR_BASE_URL) or "https://api.groq.com/openai/v1"
+        ).strip().rstrip("/"),
+        "model": (pick("GROQ_ASR_MODEL", cfg.GROQ_ASR_MODEL) or "whisper-large-v3-turbo").strip(),
+        "max_file_mb": cfg.AUDIO_ASR_MAX_FILE_MB,
+        "timeout_seconds": cfg.AUDIO_ASR_TIMEOUT_SECONDS,
     }
 
 

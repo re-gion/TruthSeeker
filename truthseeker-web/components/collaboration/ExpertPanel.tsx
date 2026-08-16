@@ -192,6 +192,8 @@ export function ExpertPanel({
     const [inputValue, setInputValue] = useState("")
     const [messageError, setMessageError] = useState<string | null>(null)
     const [contextExpanded, setContextExpanded] = useState(false)
+    const [textPreview, setTextPreview] = useState<{ label: string; text: string; url: string } | null>(null)
+    const [textPreviewLoading, setTextPreviewLoading] = useState<string | null>(null)
     const [editableSummary, setEditableSummary] = useState("")
     const [editableExperienceDrafts, setEditableExperienceDrafts] = useState<ExperienceDraft[]>([])
     const experienceSessionIdRef = useRef<string | undefined>(undefined)
@@ -451,6 +453,27 @@ export function ExpertPanel({
         return response.json() as Promise<{ session?: Record<string, unknown> }>
     }
 
+    const openTextPreview = useCallback(async (label: string, url: string) => {
+        // 文本检材在上传侧已统一重编码为 UTF-8，但 Supabase Storage 会丢弃
+        // content-type 的 charset 参数，浏览器直接打开会按本地编码（中文环境
+        // 多为 GBK）渲染成乱码，因此面板内抓取后显式按 UTF-8 解码预览。
+        setTextPreviewLoading(url)
+        try {
+            const response = await fetch(url)
+            if (!response.ok) throw new Error(`HTTP ${response.status}`)
+            const buffer = await response.arrayBuffer()
+            setTextPreview({ label, url, text: new TextDecoder("utf-8").decode(buffer) })
+        } catch {
+            setTextPreview({
+                label,
+                url,
+                text: "文本预览加载失败（签名链接可能已过期），可尝试用右侧“原始文件”在新标签页打开。",
+            })
+        } finally {
+            setTextPreviewLoading(null)
+        }
+    }, [])
+
     const updateExperienceDraft = (index: number, patch: Partial<ExperienceDraft>) => {
         experienceDraftsDirtyRef.current = true
         setEditableExperienceDrafts((current) => current.map((item, itemIndex) => (
@@ -676,15 +699,27 @@ export function ExpertPanel({
                             {(context?.sampleLinks.length ?? 0) > 0 && (
                                 <div className="flex flex-wrap gap-1.5">
                                     {context?.sampleLinks.map((link) => (
-                                        <a
-                                            key={`${link.label}-${link.url}`}
-                                            href={link.url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="rounded-full border border-[#06B6D4]/25 bg-[#06B6D4]/10 px-2 py-0.5 text-[10px] text-[#67E8F9] hover:bg-[#06B6D4]/20"
-                                        >
-                                            {link.label}
-                                        </a>
+                                        link.modality === "text" ? (
+                                            <button
+                                                key={`${link.label}-${link.url}`}
+                                                type="button"
+                                                disabled={textPreviewLoading === link.url}
+                                                onClick={() => void openTextPreview(link.label, link.url)}
+                                                className="rounded-full border border-[#06B6D4]/25 bg-[#06B6D4]/10 px-2 py-0.5 text-[10px] text-[#67E8F9] hover:bg-[#06B6D4]/20 disabled:opacity-60"
+                                            >
+                                                {textPreviewLoading === link.url ? "读取中…" : link.label}
+                                            </button>
+                                        ) : (
+                                            <a
+                                                key={`${link.label}-${link.url}`}
+                                                href={link.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="rounded-full border border-[#06B6D4]/25 bg-[#06B6D4]/10 px-2 py-0.5 text-[10px] text-[#67E8F9] hover:bg-[#06B6D4]/20"
+                                            >
+                                                {link.label}
+                                            </a>
+                                        )
                                     ))}
                                 </div>
                             )}
@@ -972,6 +1007,43 @@ export function ExpertPanel({
                     访客仅可查看协同记录
                 </div>
             )}
+
+            {/* 文本检材面板内预览：规避存储侧丢失 charset 导致的浏览器乱码 */}
+            <AnimatePresence>
+                {textPreview && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute inset-0 z-20 flex flex-col bg-black/90 backdrop-blur-sm"
+                    >
+                        <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                            <span className="truncate text-xs font-medium text-[#67E8F9]">{textPreview.label}</span>
+                            <div className="flex flex-shrink-0 items-center gap-2">
+                                <a
+                                    href={textPreview.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[10px] text-white/45 hover:text-white/80"
+                                >
+                                    原始文件
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => setTextPreview(null)}
+                                    className="rounded border border-white/15 px-2 py-0.5 text-[10px] text-white/70 hover:border-white/40"
+                                >
+                                    关闭
+                                </button>
+                            </div>
+                        </div>
+                        <pre className="flex-1 overflow-auto whitespace-pre-wrap break-words p-3 text-[11px] leading-relaxed text-gray-100">
+                            {textPreview.text}
+                        </pre>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     )
 }

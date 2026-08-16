@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.services.audit_log import record_audit_event
 from app.services.case_library import public_case_duplicate_metadata
 from app.services.evidence_files import derive_input_type, normalize_uploaded_files, require_evidence_files
+from app.services.text_validation import strip_null_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,8 @@ async def create_task(req: CreateTaskRequest, request: Request):
     
     try:
         # 插入到 Supabase 'tasks' 表
-        response = _get_supabase().table("tasks").insert(task_data).execute()
+        # title/description/case_prompt 均为用户输入，Postgres 不接受 U+0000（22P05）
+        response = _get_supabase().table("tasks").insert(strip_null_bytes(task_data)).execute()
         if not response.data:
             raise HTTPException(status_code=500, detail="Failed to create task in database")
         record_audit_event(

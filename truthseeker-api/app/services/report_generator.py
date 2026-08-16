@@ -91,6 +91,7 @@ def _sync_fetch_task_data(task_id: str) -> dict:
             supabase.table("analysis_states")
             .select("*")
             .eq("task_id", task_id)
+            .order("created_at", desc=False)
             .execute()
         )
     )
@@ -171,7 +172,7 @@ async def generate_markdown_report(task_id: str) -> str:
     data = await _fetch_task_data(task_id)
     task = data["task"]
     report = data["report"]
-    analysis_states = data["analysis_states"]
+    analysis_states = _sort_rows_by_time(data["analysis_states"])
     agent_logs = data["agent_logs"]
     audit_logs = data.get("audit_logs") or []
     consultation_sessions = data.get("consultation_sessions") or []
@@ -407,14 +408,14 @@ async def generate_audit_log_markdown(task_id: str) -> str:
     data = await data_or_coro if inspect.isawaitable(data_or_coro) else data_or_coro
     task = data["task"]
     audit_logs = data.get("audit_logs") or []
+    analysis_states = _sort_rows_by_time(data.get("analysis_states") or [])
     detection_run_id = _resolve_final_detection_run_id(
         task,
         data.get("report"),
-        data.get("analysis_states") or [],
+        analysis_states,
         data.get("agent_logs") or [],
         audit_logs,
     )
-    analysis_states = data.get("analysis_states") or []
     agent_logs = data.get("agent_logs") or []
     if detection_run_id:
         analysis_states = _filter_rows_by_detection_run_id(analysis_states, detection_run_id)
@@ -580,6 +581,20 @@ def _row_time(row: dict) -> datetime:
         or row.get("timestamp")
         or row.get("updated_at")
         or row.get("generated_at")
+    )
+
+
+def _sort_rows_by_time(rows: list) -> list:
+    """Return rows in stable ascending time order.
+
+    Supabase 不保证无 ORDER BY 查询的行顺序，而 analysis_states 的 round_number 是
+    “进度水位线”而非“本行所属轮次”（见 CONTEXT.md 阶段轮次），不能当排序键。
+    报告的多个消费方（reversed 取最新快照、审计合流、质询时间线）都假设升序，
+    因此在入口处统一排一次，避免各自重复防御。
+    """
+    return sorted(
+        (row for row in rows if isinstance(row, dict)),
+        key=_row_time,
     )
 
 
@@ -1203,6 +1218,9 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
         "osint": _agent_display_name("osint"),
         "commander": _agent_display_name("commander"),
     }
+    # 运行时拓扑固定为 forensics -> osint -> commander，时间线必须按此阶段序
+    # 再按阶段轮次升序呈现；round_number 是进度水位线不能用作排序键。
+    phase_sequence = {"forensics": 0, "osint": 1, "commander": 2}
     sections: list[str] = []
     seen: set[tuple[str, int, str]] = set()
 
@@ -1225,6 +1243,7 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
             return f"是（{event_type or 'collaboration_required'}）"
         return "否"
 
+    collected: list[tuple[tuple[int, int, datetime], dict, str, str, int]] = []
     for state in analysis_states:
         snapshot = state.get("result_snapshot") or {}
         feedback = snapshot.get("challenger")
@@ -1232,11 +1251,20 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
             continue
         phase = str(feedback.get("phase") or "unknown")
         phase_round = int(feedback.get("phase_round") or state.get("round_number") or 1)
-        timestamp = _fmt_time(feedback.get("timestamp") or state.get("created_at"))
+        raw_time = feedback.get("timestamp") or state.get("created_at")
+        timestamp = _fmt_time(raw_time)
         key = (phase, phase_round, timestamp)
         if key in seen:
             continue
         seen.add(key)
+        sort_key = (
+            phase_sequence.get(phase, len(phase_sequence)),
+            phase_round,
+            _parse_timeline_time(raw_time),
+        )
+        collected.append((sort_key, feedback, timestamp, phase, phase_round))
+
+    for _sort_key, feedback, timestamp, phase, phase_round in sorted(collected, key=lambda item: item[0]):
         label = phase_names.get(phase, phase)
         action_label = _action_label(feedback)
         action_reason = (
@@ -1272,18 +1300,31 @@ def _build_challenger_timeline_sections(analysis_states: list, agent_logs: list)
         return sections
 
     # Backward-compatible fallback for old rows that only have agent_logs.
+    fallback: list[tuple[tuple[int, int, datetime], str, int, dict]] = []
     for log in agent_logs:
         content = str(log.get("content", ""))
         match = re.search(r"phase=(\w+), phase_round=(\d+)", content)
         if not match:
             continue
         phase, phase_round = match.group(1), int(match.group(2))
+        fallback.append((
+            (
+                phase_sequence.get(phase, len(phase_sequence)),
+                phase_round,
+                _row_time(log),
+            ),
+            phase,
+            phase_round,
+            log,
+        ))
+
+    for _sort_key, phase, phase_round, log in sorted(fallback, key=lambda item: item[0]):
         label = phase_names.get(phase, phase)
         sections.append(f"### 逻辑质询Agent ↔ {label} 第 {phase_round} 轮")
         sections.append("")
         sections.append(f"- 时间: {_fmt_time(log.get('timestamp', log.get('created_at')))}")
         sections.append(f"- 质询对象: {label}")
-        sections.append(f"- 质询结论: {_truncate_text(content, 260)}")
+        sections.append(f"- 质询结论: {_truncate_text(str(log.get('content', '')), 260)}")
         sections.append("")
     return sections
 

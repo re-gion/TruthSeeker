@@ -58,7 +58,8 @@
       "Bash(ls .venv/)",
       "Bash(ls pyproject.toml requirements.txt)",
       "Bash(./venv_new/Scripts/pip.exe install *)",
-      "Bash(venv_new/Scripts/python.exe -c ' *)"
+      "Bash(venv_new/Scripts/python.exe -c ' *)",
+      "Read(//tmp/**)"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -80,6 +80,9 @@ export type CaseImportStatus = "idle" | "importing" | "created" | "duplicate" | 
 export interface ConsultationLink {
     label: string
     url: string
+    /** 检材模态（text/image/audio/video）；text 检材需在面板内按 UTF-8 预览，
+     *  直接打开存储原始会因服务端丢失 charset 参数而按本地编码（GBK）渲染成乱码。 */
+    modality?: string
 }
 
 export interface ConsultationContext {
@@ -256,9 +259,11 @@ function readConsultationLinks(value: unknown): ConsultationLink[] {
             if (!isObject(item)) return null
             const url = pickString(item.url, item.href, item.link, item.file_url, item.signed_url, item.signedUrl)
             if (!url) return null
+            const mimePrefix = typeof item.mime_type === "string" ? item.mime_type.split("/")[0] : undefined
             return {
                 label: pickString(item.title, item.label, item.name) ?? `样本 ${index + 1}`,
                 url,
+                modality: pickString(item.modality, mimePrefix),
             }
         })
         .filter((item): item is ConsultationLink => item !== null)

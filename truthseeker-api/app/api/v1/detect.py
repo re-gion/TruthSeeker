@@ -24,6 +24,7 @@ from app.services.audit_log import record_audit_event
 from app.services.case_library import ensure_case_library_entry, wants_public_case
 from app.services.case_rag import index_case_record
 from app.services.consultation_workflow import latest_human_consultation_messages
+from app.services.text_validation import strip_null_bytes
 from app.services.evidence_files import (
     UploadedEvidenceFile,
     build_input_files,
@@ -526,7 +527,8 @@ def _create_consultation_session(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        resp = supabase.table(SESSION_TABLE).insert(record).execute()
+        # context_payload 来自 Challenger 中断载荷，可能含检材文本；Postgres 不接受 U+0000
+        resp = supabase.table(SESSION_TABLE).insert(strip_null_bytes(record)).execute()
         return resp.data[0] if resp.data else record
     except Exception as exc:
         logger.warning("Failed to create consultation session for %s: %s", task_id, exc)
@@ -928,11 +930,11 @@ async def sse_event_generator(request: DetectRequest, user_id: str) -> AsyncGene
                         persistence.mark_task_waiting_collaboration(task_id, reason=reason, metadata=metadata)
                     else:
                         persistence.mark_task_waiting_collaboration(task_id, reason=reason, metadata=metadata)
-                        supabase.table("tasks").update({
+                        supabase.table("tasks").update(strip_null_bytes({
                             "status": "waiting_collaboration_approval",
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                             "metadata": metadata,
-                        }).eq("id", task_id).execute()
+                        })).eq("id", task_id).execute()
                     record_audit_event(
                         action=event_type,
                         task_id=task_id,

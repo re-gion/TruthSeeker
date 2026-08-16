@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import settings
 from app.services.case_rag import embed_text, merge_hybrid_results
+from app.services.text_validation import strip_null_bytes
 from app.agents.tools.llm_client import commander_extract_experience_drafts
 from app.utils.supabase_client import supabase
 
@@ -201,7 +202,10 @@ async def _index_entry(client: Any, entry: dict[str, Any]) -> int:
             "content_hash": entry["content_hash"],
             "indexed_at": _now(),
         }
-        client.table("experience_library_rag_chunks").upsert(payload, on_conflict="chunk_id").execute()
+        # chunk_text 含 LLM 提炼文本，Postgres 不接受 U+0000（22P05）
+        client.table("experience_library_rag_chunks").upsert(
+            strip_null_bytes(payload), on_conflict="chunk_id"
+        ).execute()
         inserted += 1
     return inserted
 
@@ -241,7 +245,7 @@ async def confirm_experience_drafts(
             "updated_at": _now(),
         }
         try:
-            resp = client.table("experience_library_entries").insert(entry).execute()
+            resp = client.table("experience_library_entries").insert(strip_null_bytes(entry)).execute()
             saved = dict((resp.data or [entry])[0])
         except Exception as exc:
             if _is_unique_violation(exc):

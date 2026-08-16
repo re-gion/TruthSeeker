@@ -300,7 +300,7 @@ export function HeroSection() {
                             className="absolute -inset-4 bg-gradient-to-r from-primary/0 via-primary/10 to-transparent blur-2xl z-0"
                         />
                         <motion.h1
-                            className="brand-wordmark text-6xl md:text-8xl lg:text-[88px] xl:text-[92px] mb-4 leading-none flex justify-center flex-wrap relative z-10 drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
+                            className="brand-wordmark text-[3.25rem] md:text-[4.65rem] lg:text-[82px] xl:text-[86px] mb-3 leading-none flex justify-center flex-wrap relative z-10 drop-shadow-[0_0_40px_rgba(212,255,18,0.4)]"
                         >
                             <GradientText
                                 colors={["#D4FF12", "#c084fc", "#D4FF12", "#c084fc", "#D4FF12"]}
@@ -314,19 +314,19 @@ export function HeroSection() {
                     </div>
 
                     {/* Subtitle / Main Description */}
-                    <motion.div variants={itemVars} className="mt-8 mb-12 relative flex flex-col items-center">
-                        <h2 className="mx-auto inline-grid place-items-center gap-2 text-center font-semibold leading-[1.08] text-[#111827] dark:text-gray-100">
-                            <span className="inline-flex w-full justify-center text-[clamp(2rem,4.2vw,3.9rem)] tracking-[0.08em] whitespace-nowrap text-center">
+                    <motion.div variants={itemVars} className="mt-6 mb-10 relative flex flex-col items-center">
+                        <h2 className="mx-auto inline-grid place-items-center gap-1.5 text-center font-semibold leading-[1.08] text-[#111827] dark:text-gray-100">
+                            <span className="inline-flex w-full justify-center text-[clamp(2.15rem,4.35vw,3.8rem)] tracking-[0.07em] whitespace-nowrap text-center">
                                 基于多智能体协同的
                             </span>
                             <ShinyText
                                 text="跨模态恶意AIGC鉴伪与溯源系统"
-                                className="inline-flex w-full justify-center whitespace-nowrap text-center text-[clamp(1.66rem,3.3vw,3.08rem)] font-bold tracking-[0em] text-black dark:text-white drop-shadow-md"
+                                className="inline-flex w-full justify-center whitespace-nowrap text-center text-[clamp(1.82rem,3.45vw,3.05rem)] font-bold tracking-[0em] text-black dark:text-white drop-shadow-md"
                                 shineColor={isDark ? "#ffffff" : "#aaaaaa"}
                                 speed={3}
                             />
                         </h2>
-                        <p className="mt-8 text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed font-light">
+                        <p className="mt-6 text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed font-light">
                             一个具备专家团队思维的智能研判中枢：兼容 Fed-MBPR 运行时架构保障隐私扩展性，通过 LangGraph 编排实现视听、情报、质询、研判四阶闭环分析。
                         </p>
                     </motion.div>

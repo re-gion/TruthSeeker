@@ -13,6 +13,7 @@ import httpx
 from app.config import settings
 from app.services.builtin_cases import list_builtin_cases
 from app.services.case_library import redact_public_markdown
+from app.services.text_validation import strip_null_bytes
 from app.utils.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -328,7 +329,10 @@ async def index_case_record(client: Any, row: dict[str, Any], *, source_kind: st
             "indexed_at": _now(),
         }
         try:
-            client.table("case_library_rag_chunks").upsert(payload, on_conflict="chunk_id").execute()
+            # chunk_text 来自报告 Markdown 与案情，Postgres 不接受 U+0000（22P05）
+            client.table("case_library_rag_chunks").upsert(
+                strip_null_bytes(payload), on_conflict="chunk_id"
+            ).execute()
             indexed += 1
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {exc}")

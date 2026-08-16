@@ -264,6 +264,40 @@ def _build_multimodal_parts(text: str, sample_refs: list[dict] | None) -> list[d
         url = ref.get("signed_url")
         modality = ref.get("modality")
         name = ref.get("name") or ref.get("id") or "evidence"
+        # 视频观察（仅取证阶段开启）：原生视频内联或关键帧序列
+        video_inline = ref.get("video_inline_url")
+        if modality == "video" and isinstance(video_inline, str) and video_inline:
+            parts.append({
+                "type": "text",
+                "text": _case_context_block(f"视频样本: {name}（完整视频，按时间顺序观察画面内容）"),
+            })
+            parts.append({
+                "type": "video_url",
+                "video_url": {"url": video_inline},
+            })
+            continue
+        keyframes = ref.get("video_keyframes")
+        if modality == "video" and isinstance(keyframes, list) and keyframes:
+            parts.append({
+                "type": "text",
+                "text": _case_context_block(
+                    f"视频样本: {name}（无法整段传入，以下为按时间顺序均匀抽取的 {len(keyframes)} 帧关键帧，"
+                    "据此观察画面内容并注明未见完整动态过程）"
+                ),
+            })
+            for frame in keyframes:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": frame},
+                })
+            continue
+        if modality == "video":
+            # 观察通道未开启或内联/抽帧均失败：明确可见输入边界
+            parts.append({
+                "type": "text",
+                "text": _case_context_block(f"视频样本引用: {name}（视频画面内容未提供，无法直接观察，只能引用外部工具结论）"),
+            })
+            continue
         if not isinstance(url, str) or not url:
             if modality in ("image", "image_unavailable"):
                 parts.append({
@@ -523,7 +557,12 @@ def summarize_previous_analysis(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cap_prompt_text(human_text: str) -> str:
-    """防御性截断：提示词总长超限时保留前缀，避免整轮降级为本地占位。"""
+    """防御性截断：提示词总长超限时保留前缀，避免整轮降级为本地占位。
+
+    同时剥离 NUL：检材/工具结果混入的 \\x00 若进入请求体，部分模型网关会
+    拒绝，回流到持久化层还会触发 Postgres 22P05。
+    """
+    human_text = human_text.replace("\x00", "")
     if len(human_text) <= _MAX_PROMPT_TEXT_CHARS:
         return human_text
     logger.warning(
@@ -652,6 +691,177 @@ def _summarize_agent_evidence(payload: dict[str, Any], *, label: str) -> dict[st
     return summary
 
 
+MAX_COMMANDER_LLM_ANALYSIS_CHARS = 12_000
+MAX_COMMANDER_TRANSCRIPT_CHARS = 2_000
+MAX_COMMANDER_DOMAIN_DETAIL_CHARS = 400
+MAX_COMMANDER_SEARCH_RESULTS = 8
+MAX_COMMANDER_CROSS_VALIDATION_CHARS = 3_000
+MAX_COMMANDER_CHALLENGE_TEXT_CHARS = 600
+MAX_COMMANDER_EXPERT_MESSAGE_CHARS = 500
+MAX_COMMANDER_COLLABORATION_SUMMARY_CHARS = 1_500
+
+
+def _summarize_agent_for_commander(payload: dict[str, Any], *, label: str) -> dict[str, Any]:
+    """Commander 最终裁决用的 Agent 结果有界摘要。
+
+    Commander 的 prompt 曾把完整 forensics/osint 结果（含 tool_results 原始大对象、
+    RAG 匹配全文、provenance_graph 完整 JSON）序列化，实测一案达 56 万字符，
+    超出提示词上限后只能截断丢尾。这里复用 Challenger 的摘要骨架，
+    再保留裁决报告叙事所需的转写、域名溯源与检索结论等字段。
+    """
+    if not isinstance(payload, dict):
+        return _summarize_agent_evidence({}, label=label)
+    summary = _summarize_agent_evidence(payload, label=label)
+    # Commander 需要的叙事完整度高于质询，放宽 llm_analysis 上限
+    summary["llm_analysis"] = str(payload.get("llm_analysis") or "")[:MAX_COMMANDER_LLM_ANALYSIS_CHARS]
+    for key in (
+        "media_aigc_probability",
+        "text_aigc_probability",
+        "is_suspicious_ioc",
+        "is_malicious",
+        "is_suspicious",
+        "risk_score",
+        "social_engineering_score",
+    ):
+        if payload.get(key) is not None:
+            summary[key] = payload[key]
+    text_aigc = payload.get("text_aigc_detection")
+    if isinstance(text_aigc, dict):
+        summary["text_aigc_detection"] = {
+            key: text_aigc.get(key)
+            for key in ("provider", "ai_probability", "confidence", "status", "degraded")
+            if text_aigc.get(key) is not None
+        }
+    transcripts: list[dict[str, Any]] = []
+    for item in payload.get("audio_transcripts") or []:
+        if not isinstance(item, dict):
+            continue
+        entry: dict[str, Any] = {
+            "target": item.get("target"),
+            "has_audio_track": item.get("has_audio_track"),
+            "language": item.get("language"),
+            "char_count": item.get("char_count"),
+            "truncated": bool(item.get("truncated")),
+        }
+        if item.get("has_audio_track") is False:
+            entry["note"] = str(item.get("note") or "")[:200]
+        else:
+            entry["text"] = str(item.get("text") or "")[:MAX_COMMANDER_TRANSCRIPT_CHARS]
+        transcripts.append(entry)
+        if len(transcripts) >= 4:
+            break
+    if transcripts:
+        summary["audio_transcripts"] = transcripts
+    domain_summaries: list[dict[str, Any]] = []
+    for item in payload.get("domain_provenance_summary") or []:
+        if not isinstance(item, dict):
+            continue
+        details = {key: item.get(key) for key in ("whois", "dns", "geo") if item.get(key)}
+        domain_summaries.append({
+            "domain": item.get("domain"),
+            "status": item.get("status"),
+            "summary": str(item.get("summary") or "")[:300],
+            "detail": (
+                json.dumps(details, ensure_ascii=False, default=str)[:MAX_COMMANDER_DOMAIN_DETAIL_CHARS]
+                if details
+                else None
+            ),
+        })
+        if len(domain_summaries) >= 4:
+            break
+    if domain_summaries:
+        summary["domain_provenance_summary"] = domain_summaries
+    search_results = [
+        {
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "summary": str(item.get("summary") or "")[:280],
+        }
+        for item in (payload.get("search_results") or [])[:MAX_COMMANDER_SEARCH_RESULTS]
+        if isinstance(item, dict)
+    ]
+    if search_results:
+        summary["search_results"] = search_results
+    upstream = payload.get("upstream_verified_conclusions")
+    if upstream is not None:
+        summary["upstream_verified_conclusions"] = upstream
+    return summary
+
+
+def _summarize_challenger_for_commander(payload: dict[str, Any]) -> dict[str, Any]:
+    """Challenger 反馈的有界摘要：只保留裁决所需的质询结论与协同状态。
+
+    原始 feedback 携带完整协同会话、触发历史、RAG 匹配与 skill_execution，
+    Commander 裁决并不需要这些明细。
+    """
+    if not isinstance(payload, dict):
+        return {"summary": str(payload)[:2000]}
+    issues: list[dict[str, Any]] = []
+    for issue in payload.get("issues_found") or []:
+        if not isinstance(issue, dict):
+            continue
+        issues.append({
+            "type": issue.get("type"),
+            "severity": issue.get("severity"),
+            "agent": issue.get("agent"),
+            "description": str(issue.get("description") or "")[:MAX_COMMANDER_CHALLENGE_TEXT_CHARS],
+        })
+        if len(issues) >= 8:
+            break
+    expert_messages: list[Any] = []
+    for message in payload.get("expert_messages") or []:
+        if isinstance(message, dict):
+            entry = {
+                key: message.get(key)
+                for key in ("role", "expert_name", "message_type", "created_at")
+                if message.get(key) is not None
+            }
+            entry["message"] = str(message.get("message") or "")[:MAX_COMMANDER_EXPERT_MESSAGE_CHARS]
+            expert_messages.append(entry)
+        else:
+            expert_messages.append(str(message)[:MAX_COMMANDER_EXPERT_MESSAGE_CHARS])
+        if len(expert_messages) >= 10:
+            break
+    collaboration_summary = (
+        payload.get("confirmed_collaboration_summary")
+        or payload.get("confirmed_consultation_summary")
+    )
+    if isinstance(collaboration_summary, dict):
+        collaboration_summary = dict(collaboration_summary)
+        confirmed_text = collaboration_summary.get("confirmed_summary")
+        if isinstance(confirmed_text, str):
+            collaboration_summary["confirmed_summary"] = confirmed_text[:MAX_COMMANDER_COLLABORATION_SUMMARY_CHARS]
+    return {
+        "round": payload.get("round"),
+        "phase": payload.get("phase"),
+        "phase_round": payload.get("phase_round"),
+        "confidence": payload.get("confidence"),
+        "quality_score": payload.get("quality_score"),
+        "quality_delta": payload.get("quality_delta"),
+        "issue_count": payload.get("issue_count"),
+        "high_severity_count": payload.get("high_severity_count"),
+        "medium_severity_count": payload.get("medium_severity_count"),
+        "suppressed_issue_count": payload.get("suppressed_issue_count"),
+        "requires_more_evidence": payload.get("requires_more_evidence"),
+        "target_agent": payload.get("target_agent"),
+        "next_action": payload.get("next_action"),
+        "action_reason": str(payload.get("action_reason") or "")[:300],
+        "convergence_reason": payload.get("convergence_reason"),
+        "max_rounds_release": payload.get("max_rounds_release"),
+        "low_confidence": payload.get("low_confidence"),
+        "collaboration_required": payload.get("collaboration_required", payload.get("consultation_required")),
+        "collaboration_resumed": payload.get("collaboration_resumed", payload.get("consultation_resumed")),
+        "collaboration_release": payload.get("collaboration_release"),
+        "collaboration_release_reason": str(payload.get("collaboration_release_reason") or "")[:300] or None,
+        "issues_found": issues,
+        "llm_cross_validation": str(payload.get("llm_cross_validation") or "")[:MAX_COMMANDER_CROSS_VALIDATION_CHARS],
+        "residual_risks": [str(item)[:200] for item in (payload.get("residual_risks") or [])[:8]],
+        "expert_messages": expert_messages,
+        "confirmed_collaboration_summary": collaboration_summary,
+        "experience_guided": bool(payload.get("experience_guided")),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Shared LLM invocation helper
 # ---------------------------------------------------------------------------
@@ -730,6 +940,34 @@ async def _invoke_llm(
     return f"[降级模式: LLM不可用{hint}] {fallback_text}"
 
 
+async def _resolve_video_observation(ref: dict, provider: str | None) -> bool:
+    """为视频引用准备可直接观察的内容：原生视频内联或关键帧序列。
+
+    kimi-k2.6 在 Moonshot 官方平台原生支持 video_url，其他提供商（SiliconFlow
+    视频未确认、coding 端点无视觉能力）统一走 ffmpeg 关键帧。成功时向 ref 写入
+    video_inline_url 或 video_keyframes 并返回 True；失败保留原引用，由 parts
+    构造器落成文本边界说明。
+    """
+    from app.agents.tools import video_observation
+
+    reference = ref.get("signed_url") or ref.get("storage_path")
+    if not isinstance(reference, str) or not reference:
+        return False
+    downloaded = await video_observation.fetch_video_bytes(reference)
+    if not downloaded:
+        return False
+    video_bytes, downloaded_name = downloaded
+    hint = str(ref.get("name") or downloaded_name or "video.mp4")
+    if provider == "official" and len(video_bytes) <= video_observation.MAX_INLINE_VIDEO_BYTES:
+        ref["video_inline_url"] = video_observation.video_data_uri(video_bytes, hint)
+        return True
+    frames = await video_observation.extract_keyframes(video_bytes, hint)
+    if frames:
+        ref["video_keyframes"] = frames
+        return True
+    return False
+
+
 async def _invoke_multimodal_llm(
     system_prompt: str,
     human_text: str,
@@ -737,8 +975,13 @@ async def _invoke_multimodal_llm(
     fallback_text: str,
     *,
     status_sink: dict[str, Any] | None = None,
+    observe_video: bool = False,
 ) -> str:
-    """Invoke Kimi with multimodal content parts, then degrade to text-only prompt."""
+    """Invoke Kimi with multimodal content parts, then degrade to text-only prompt.
+
+    observe_video 仅取证阶段开启：把视频检材转为原生 video_url 或关键帧图片，
+    其他阶段保持文本引用，避免同一视频在多 Agent 间重复消耗视觉 token。
+    """
     human_text = _cap_prompt_text(human_text)
     if status_sink is not None:
         status_sink.clear()
@@ -748,6 +991,14 @@ async def _invoke_multimodal_llm(
     has_any_image = False
     has_any_base64 = False
     if sample_refs:
+        video_provider: str | None = None
+        if observe_video and any(
+            isinstance(item, dict) and item.get("modality") == "video" for item in sample_refs
+        ):
+            try:
+                video_provider = resolve_kimi_runtime().get("provider")
+            except Exception:
+                video_provider = None
         resolved_refs = []
         for ref in sample_refs:
             ref_copy = dict(ref)
@@ -759,6 +1010,9 @@ async def _invoke_multimodal_llm(
                     has_any_base64 = True
                 else:
                     ref_copy["modality"] = "image_unavailable"
+            elif observe_video and ref_copy.get("modality") == "video":
+                if await _resolve_video_observation(ref_copy, video_provider):
+                    has_any_base64 = True
             resolved_refs.append(ref_copy)
 
     system_prompt = (
@@ -903,11 +1157,13 @@ async def forensics_interpret(
     """Let the LLM interpret raw forensic detection results into professional analysis."""
     system_prompt = (
             "你是一位专攻恶意 AIGC 检测的取证分析专家。"
-            "你需要在同一上下文中综合样本引用、全局检测目标、Sightengine 图片 AIGC 检测、Reality Defender 音视频合成/篡改检测和 VirusTotal 等工具结果，"
+            "你需要在同一上下文中综合样本引用、全局检测目标、Sightengine 图片 AIGC 检测、Reality Defender 音视频合成/篡改检测、ASR 音频语义转写和 VirusTotal 等工具结果，"
             "撰写结构清晰、术语准确的中文电子取证 Markdown 报告。"
             "必须使用以下二级内小标题，且标题原样保留："
             "### 自主检材观察；### 外部检测结果解读；### 融合判断；### 限制与复核建议。"
-            "自主检材观察必须融合你对可访问图片、文本内容和样本摘要的直接观察；"
+            "自主检材观察必须融合你对可访问图片、视频（完整视频或按时间顺序的关键帧）、文本内容和样本摘要的直接观察；"
+            "对以视频形式提供的内容，必须直接描述可观察到的画面信息（人物、场景、屏幕文字、动作与异常痕迹），"
+            "关键帧序列只代表均匀抽帧所见，不得据此断言未呈现时段的动态过程；"
             "若视频、音频或文件本体无法直接读取，要明确说明可见输入边界，不能只复述外部 API。"
             "如果工具结果标记 degraded、analysis_available=false 或 method=local_fallback_no_external_verdict，"
             "只能写成外部工具未取得真实结论，不得把降级占位字段解释为真实检测通过、面部自然或无伪影。"
@@ -915,7 +1171,12 @@ async def forensics_interpret(
             "不得写成当前检材事实，也不得替代本轮样本、Sightengine、Reality Defender 或 VirusTotal 证据。"
             "如果传入 experience_rag_search 或 experience_rag 字段，个人经验只能作为用户私有的方法参考和检查清单，"
             "不得写成当前检材事实，不得直接改变取证分数或替代本轮证据。"
-            "你的职责限于检材本体鉴伪：图片/音视频 AIGC 检测、文本 AIGC 检测、文件哈希威胁查询与样本直接观察。"
+            "如果传入 audio_transcripts（音频 ASR 语义转写），它是音频检材的语义内容证据："
+            "必须将其与文本检材内容、全局检测目标逐一对照，在融合判断中明确写出音频语义与文本主题是否一致、"
+            "一致或背离分别支持还是削弱复合攻击链推断，并引用转写中的关键语句；"
+            "ASR 降级、未配置或未取得转写时，如实说明音频语义暂无法核验，不得虚构音频内容。"
+            "视频检材未检测到音轨属于正常结论，按无音频语义信息处理即可。"
+            "你的职责限于检材本体鉴伪：图片/音视频 AIGC 检测、音频语义转写比对、文本 AIGC 检测、文件哈希威胁查询与样本直接观察。"
             "WHOIS、IP、DNS、域名注册溯源与公开情报搜索是情报溯源 Agent 的阶段职责，"
             "本阶段未执行这些工作不构成缺陷，不要把溯源事项写进限制、复核建议或待补证清单。"
             "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和协同摘要，只补强被指出的缺口，不重复上一轮完整报告。"
@@ -955,6 +1216,7 @@ async def forensics_interpret(
         system_prompt=system_prompt,
         human_text=human_text,
         sample_refs=sample_refs,
+        observe_video=True,
         fallback_text=(
             "### 自主检材观察\n"
             f"- 降级模式下无法调用 Kimi 完成自主图像/文本复核；当前仅能读取样本类型 {input_type} 与工具摘要。\n\n"
@@ -1082,7 +1344,9 @@ async def osint_interpret(
             "不得写成当前案件事实，不得直接改变威胁分数或替代当前 URL、域名、样本与外部来源核验。"
             "如果传入 reinforcement_context，必须优先回应 Challenger 打回原因、残留风险和协同摘要，只补强被指出的缺口，不重复上一轮完整报告。"
             "如果传入 upstream_verified_conclusions，它是电子取证阶段已完成并经逻辑质询 Agent 核验的检材鉴伪结论"
-            "（如图片/音视频 AIGC 概率、文本 AIGC 概率与取证置信度）。"
+            "（如图片/音视频 AIGC 概率、文本 AIGC 概率与取证置信度），"
+            "其中 audio_transcript_summaries 是音频 ASR 语义转写摘要，属于证据内容而非鉴伪结论，"
+            "分析音频语义与文本主题、外部情报的一致性时以它为准，不得凭空推测音频内容。"
             "涉及检材真伪、伪造性、是否 AI 生成的讨论必须直接引用该上游已核验结论，"
             "表述时使用“根据上游已核验结论（电子取证阶段，已通过逻辑质询核验）”这类归因措辞，"
             "不得脱离它独立重建低置信判断，也不得因本阶段工具有限而稀释其确定性；"
@@ -1928,15 +2192,21 @@ async def commander_ruling(
             "“Agent 结论与关键分歧”章节开头会由代码确定性注入各 Agent 结论对照表，"
             "你只需在该小节撰写分歧与原因的叙述分析，不要自行输出重复的结论表格。"
             "如报告中需要提及时间，请统一使用北京时间（UTC+8），不要输出 UTC 时间。"
+            "案件上下文是系统对各 Agent 原始结果计算后的结构化摘要，"
+            "未列出的原始字段不代表相应工作未执行，不得把摘要未携带某字段写成证据缺口。"
             "请直接输出分析文本，不要用代码块包裹。"
     )
     system_prompt = _with_skill_priority(system_prompt, skill_context)
     human_text = _skill_case_human_text(skill_context, {
         "case_prompt": case_prompt or "用户未补充额外提示。",
         "sample_references": sample_refs or [],
-        "forensics": forensics,
-        "osint": osint,
-        "challenger_feedback": challenger_feedback,
+        # 有界摘要而非完整结果：完整 forensics/osint/challenger 序列化携带原始
+        # tool_results 大对象、RAG 全文、provenance_graph 完整 JSON 与协同会话历史，
+        # 实测一案达 56 万字符，超出提示词上限只能截断丢尾。
+        # 综合置信度、裁决四分类和结论对照表均由确定性代码注入，摘要只需支撑叙述。
+        "forensics": _summarize_agent_for_commander(forensics, label="forensics"),
+        "osint": _summarize_agent_for_commander(osint, label="osint"),
+        "challenger_feedback": _summarize_challenger_for_commander(challenger_feedback),
         "agent_weights": agent_weights,
         "confidence_context": confidence_context or {},
         "deterministic_verdict_cn": expected_verdict_cn or "无法判定",

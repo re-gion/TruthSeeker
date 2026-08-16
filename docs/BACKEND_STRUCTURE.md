@@ -44,6 +44,8 @@ truthseeker-api/
 │   │   ├── skills/            # Agent 核心 Skill 包（loader.py + 4 个固定绑定 SKILL.md 包）
 │   │   └── tools/
 │   │       ├── deepfake_api.py
+│   │       ├── audio_transcription.py  # Groq Whisper ASR 音频语义转写
+│   │       ├── video_observation.py    # 视频观察：原生视频内联 / ffmpeg 关键帧
 │   │       ├── domain_provenance.py
 │   │       ├── threat_intel.py
 │   │       ├── internal_text_aigc.py
@@ -132,15 +134,33 @@ Agent LLM：
 - Kimi K2.6：输入 `text,image,video`，上下文 262144 tokens，本系统固定 `thinking=disabled`。
 - MiMo `mimo-v2.5`：输入 `text,image`，官方上下文 1048576 tokens，官方输出上限 131072 tokens；`MIMO_THINKING=enabled|disabled` 可显式控制思考模式，本系统默认 enabled。MiMo 不作为视频/音频原生理解底座，视频/音频仍依赖工具结果、文本摘要或抽帧图片。
 - Agent LLM provider 只影响 Forensics/OSINT/Challenger/Commander 的模型推理和摘要生成，不替换 Sightengine、Reality Defender、VirusTotal、Exa、WhoisXML 或 embedding API。
-- 多模态输入通过短期 signed URL 引用或 base64 图片内联传递。
+- 多模态输入通过短期 signed URL 引用或 base64 图片内联传递；视频检材仅在取证阶段以 `video_url`（原生视频 base64）或关键帧图片进入模型上下文（见“视频检材观察”）。
 - 日志、报告和持久化不保存 signed URL 明文。
 
 Sightengine / Reality Defender：
 
 - 图片默认由 Sightengine `genai` 做 AIGC 图片检测。
-- 音频和视频保留 Reality Defender 合成/篡改检测，作为音视频工具链。
+- 音频由 Reality Defender 做合成/篡改检测。
+- 视频按 RD 免费套餐能力边界分解，不再整段上传（会被 403 `free-tier-restriction` 拒绝）：
+  - 画面 → `video_keyframe_aigc`：ffmpeg 均匀抽 3 帧关键帧，逐帧送 Sightengine `genai`，聚合帧间最大 AI 生成概率（任一帧 ≥0.5 判 `is_aigc`），参与 `media_aigc_probability` 评分；聚合结果只保留逐帧概率，不携带原始响应。
+  - 音轨 → `reality_defender`（工具名不变）：ffmpeg 抽取音轨为 mp3 后按音频送 RD；视频无音轨是正常结论（`success + analysis_available=false`），不计降级。
 - 返回成功、降级或失败结构。
 - 运行时主字段统一为 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_probability`、`is_deepfake`、`deepfake_score` 只允许作为历史 JSONB 快照读取兼容，不再作为新报告主字段。
+
+音频 ASR 语义转写（audio_transcription）：
+
+- Forensics 对音频/视频检材并行调用 Groq OpenAI 兼容 `/audio/transcriptions`（默认 `whisper-large-v3-turbo`），转写结果进入工具矩阵和 `forensics_result.audio_transcripts`，供取证 LLM 校验音频语义与文本主题一致性。
+- 视频检材先用 ffprobe 探测音轨：无音轨记录正常结论并跳过上传；有音轨用 ffmpeg 抽取 16kHz 单声道 mp3 再上传。ffmpeg/ffprobe 按 `FFMPEG_BINARY`/`FFPROBE_BINARY` → PATH → `C:\Users\user\ffmpeg\bin` 顺序解析；配置值必须指向真实存在的文件，无效配置（dotenv 不支持行内注释，`FFMPEG_BINARY=  # 说明` 会把注释读成路径）自动回退 PATH 查找。
+- 所有 ffmpeg/ffprobe 调用统一走 `audio_transcription._run_process`（视频观察共用）：线程池 + 同步 `subprocess.run`，不依赖事件循环类型。不要用 `asyncio.create_subprocess_exec`——Windows 下 uvicorn 以 `--reload` 或多 worker 启动时会把事件循环固定为 SelectorEventLoop（`uvicorn.loops.asyncio.asyncio_loop_factory`），该循环不实现子进程 transport，会抛空消息 `NotImplementedError`。超时由 subprocess 自行终止子进程并转成 `asyncio.TimeoutError`。
+- `AUDIO_ASR_ENABLED=false` 时完全不分发；未配置 `GROQ_API_KEY`、ffmpeg 缺失、文件超限或 Groq 失败时按结构化降级写入工具矩阵，不虚构转写内容。Groq 401/403 分别映射为 key 无效与 key 被拒/工作区模型权限限制的明确降级原因。
+- 转写摘要随 `audio_transcript_summaries` 注入 OSINT 的“上游已核验结论引用”块；该字段属于证据内容而非鉴伪结论。
+
+视频检材观察（video_observation）：
+
+- 该路径负责取证 LLM 对画面的自主观察；工具级视频 AIGC 检测由“Sightengine / Reality Defender”一节的分解路径承担，两者互补。
+- kimi-k2.6 在 Moonshot 官方平台原生支持视频理解，但仅 `KIMI_PROVIDER=official` 确认支持 `video_url`（SiliconFlow 视频输入未确认，coding 端点无视觉能力），因此视频观察只在取证阶段的多模态调用中启用（`observe_video`），其他 Agent 保持文本引用，不重复消耗视觉 token。
+- 观察优先级：official 渠道且视频 ≤ 40MB → base64 data URI 走 `video_url` 整段传入；其他渠道、视频过大或内联准备失败 → ffmpeg 按时长均匀抽取最多 6 帧关键帧（宽度压到 1280 以内）按图片传入；两条路都不可用 → 保留文本边界说明，模型如实写明可见输入边界。
+- 视频下载上限 300MB（与 ASR 一致）；signed URL 与 Supabase storage path 均可作为下载来源。
 
 VirusTotal：
 

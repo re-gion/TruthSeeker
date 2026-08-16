@@ -7,6 +7,7 @@ from typing import Any
 
 from app.services.audit_log import record_audit_event
 from app.services.report_integrity import build_report_hash
+from app.services.text_validation import strip_null_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ def normalize_final_verdict(final_verdict: dict[str, Any] | None) -> dict[str, A
         "total_evidence": len(key_evidence),
     }
     normalized.pop("deepfake_score", None)
-    return normalized
+    # Postgres text/jsonb 无法存储 U+0000（22P05），tasks.result 等载荷写入前统一剥离
+    return strip_null_bytes(normalized)
 
 
 def _as_record(value: Any) -> dict[str, Any]:
@@ -224,6 +226,8 @@ def build_report_row(
         "share_token": existing_share_token,
         "verdict_payload": verdict,
     }
+    # 先剥离 NUL 再计算 report_hash，保证哈希与实际入库内容一致
+    row = strip_null_bytes(row)
     row["report_hash"] = build_report_hash(row)
     return row
 
@@ -246,7 +250,7 @@ def build_agent_log_rows(task_id: str, node_name: str, updates: dict[str, Any]) 
                 "timestamp": log_entry.get("timestamp", utc_now_iso()),
             }
         )
-    return rows
+    return strip_null_bytes(rows)
 
 
 def build_analysis_state_row(
@@ -282,7 +286,7 @@ def build_analysis_state_row(
     osint_result = updates.get("osint_result") or {}
 
     timestamp = created_at or utc_now_iso()
-    return {
+    row = {
         "task_id": task_id,
         "round_number": updates.get("current_round", 1),
         "current_agent": node_name,
@@ -301,6 +305,7 @@ def build_analysis_state_row(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    return strip_null_bytes(row)
 
 
 class AnalysisPersistenceService:
@@ -400,9 +405,13 @@ class AnalysisPersistenceService:
         existing_token = existing_report.get("share_token") if existing_report else None
         report_row = build_report_row(task_id, final_verdict, existing_share_token=existing_token)
         if existing_report and existing_report.get("id"):
-            self._safe_update_by_id("reports", report_row, existing_report["id"])
+            written = self._safe_update_by_id("reports", report_row, existing_report["id"])
         else:
-            self._safe_insert("reports", report_row)
+            written = self._safe_insert("reports", report_row)
+        if not written:
+            # 写入失败时不得记录 report_generated，避免审计显示“已生成”而库中无报告
+            logger.error("Report write failed for task %s, skipping report_generated audit", task_id)
+            return
         record_audit_event(
             action="report_generated",
             task_id=task_id,
@@ -503,7 +512,7 @@ class AnalysisPersistenceService:
 
     def _safe_insert(self, table_name: str, payload: dict[str, Any]) -> bool:
         try:
-            self.client.table(table_name).insert(payload).execute()
+            self.client.table(table_name).insert(strip_null_bytes(payload)).execute()
             return True
         except Exception as exc:
             logger.error("Failed to insert into %s: %s (payload keys: %s)", table_name, exc, list(payload.keys()))
@@ -511,7 +520,7 @@ class AnalysisPersistenceService:
 
     def _safe_insert_many(self, table_name: str, payload: list[dict[str, Any]]) -> bool:
         try:
-            self.client.table(table_name).insert(payload).execute()
+            self.client.table(table_name).insert(strip_null_bytes(payload)).execute()
             return True
         except Exception as exc:
             logger.error("Failed to insert %d rows into %s: %s", len(payload), table_name, exc)
@@ -519,7 +528,7 @@ class AnalysisPersistenceService:
 
     def _safe_update(self, table_name: str, payload: dict[str, Any], task_id: str) -> bool:
         try:
-            self.client.table(table_name).update(payload).eq("id", task_id).execute()
+            self.client.table(table_name).update(strip_null_bytes(payload)).eq("id", task_id).execute()
             return True
         except Exception as exc:
             logger.error("Failed to update %s for task %s: %s (payload keys: %s)", table_name, task_id, exc, list(payload.keys()))
@@ -527,7 +536,7 @@ class AnalysisPersistenceService:
 
     def _safe_update_by_id(self, table_name: str, payload: dict[str, Any], row_id: str) -> bool:
         try:
-            self.client.table(table_name).update(payload).eq("id", row_id).execute()
+            self.client.table(table_name).update(strip_null_bytes(payload)).eq("id", row_id).execute()
             return True
         except Exception as exc:
             logger.error("Failed to update %s row %s: %s (payload keys: %s)", table_name, row_id, exc, list(payload.keys()))
@@ -535,7 +544,7 @@ class AnalysisPersistenceService:
 
     def _safe_upsert(self, table_name: str, payload: dict[str, Any], *, on_conflict: str) -> bool:
         try:
-            self.client.table(table_name).upsert(payload, on_conflict=on_conflict).execute()
+            self.client.table(table_name).upsert(strip_null_bytes(payload), on_conflict=on_conflict).execute()
             return True
         except Exception as exc:
             logger.error("Failed to upsert into %s (on_conflict=%s): %s", table_name, on_conflict, exc)

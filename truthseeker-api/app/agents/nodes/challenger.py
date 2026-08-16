@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from app.config import settings
+from app.config import resolve_kimi_runtime, settings
 from app.agents.state import AgentLog, TruthSeekerState
 from app.agents.skills.loader import finalize_skill_execution, load_agent_skill
 from app.agents.edges.conditions import evaluate_phase_convergence
@@ -589,7 +589,15 @@ async def challenger_node(state: TruthSeekerState) -> dict:
     human_context = _resume_consultation_context(expert_messages, confirmed_consultation_summary)
     if human_context:
         review_challenges.append(human_context)
-    log("action", "调用 Kimi 多模态上下文进行逻辑交叉审查")
+    runtime = resolve_kimi_runtime()
+    provider_label = {
+        "minimax": "MiniMax",
+        "mimo": "MiMo",
+        "official": "Kimi",
+        "coding": "Kimi",
+        "siliconflow": "Kimi",
+    }.get(runtime.get("provider", ""), "多模态模型")
+    log("action", f"调用 {provider_label} 多模态上下文进行逻辑交叉审查")
     llm_status: dict[str, Any] = {}
     try:
         model_review = await challenger_model_review(

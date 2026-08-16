@@ -21,6 +21,38 @@
 
 ---
 
+## 2026-08-16 修复 Windows 事件循环导致 ASR / 关键帧抽取失效
+
+- [x] 根因：`.env` 脏值修好后重跑案例10，ASR 音轨探测与视频关键帧抽取仍同时降级，堆栈指向 `asyncio/base_events._make_subprocess_transport` 抛空消息 `NotImplementedError`。定位为 uvicorn 在 Windows 上以 `--reload` 或多 worker 启动时（`Config.use_subprocess=True`）把事件循环固定为 SelectorEventLoop（`uvicorn.loops.asyncio.asyncio_loop_factory`），该循环不实现子进程 transport，`asyncio.create_subprocess_exec` 必然失败——这是本项目 `--reload` 标准开发启动方式下的必现问题。
+- [x] 修复：`audio_transcription._run_process`（`video_observation` 共用）改为 `asyncio.to_thread` 线程池内执行同步 `subprocess.run`，不依赖事件循环类型；超时由 subprocess 自行终止子进程并转抛 `asyncio.TimeoutError`，返回值契约不变。
+- [x] 验证：Proactor/Selector 双环境复现确认根因；强制 `_WindowsSelectorEventLoop` 下用案例10 真实视频实测 ffprobe 音轨探测、关键帧抽取（6 帧）、音轨抽取全部成功；新增 3 项 `_run_process` 回归（含 SelectorEventLoop 驱动、超时语义）；后端 pytest 225 项全过（5 项 Windows 临时目录权限 ERROR 与本改动无关，重定向 TMPDIR 后消失）。
+
+---
+
+## 2026-08-15 视频检材观察路径与三起工具降级根因修复
+
+- [x] 视频观察路径（协同问题一）：调研确认 kimi-k2.6 在 Moonshot 官方平台原生支持视频理解（`video_url`，仅认 base64/`ms://file_id`，不支持 http URL 直传；coding 端点无视觉能力，SiliconFlow 视频未确认）。此前代码只传图片、视频仅文本引用，取证 Agent "看不见"视频被连续打回。新增 `app/agents/tools/video_observation.py`：official 渠道且 ≤40MB 走 base64 整段视频，其余 ffmpeg 均匀抽 ≤6 帧关键帧（宽 ≤1280）按图片传入，均不可用保留文本边界说明；`_invoke_multimodal_llm` 新增 `observe_video` 通道，仅取证阶段开启。
+- [x] ASR NotImplementedError 降级（协同问题三）：根因是 `.env` 中 `FFMPEG_BINARY=` 行尾写了中文行内注释（dotenv 不支持），注释文本被当作 ffmpeg 可执行路径，视频音轨抽取的子进程调用必然失败。已清理 `.env` 脏值；`_resolve_binary` 加固为配置值必须指向真实文件否则回退 PATH；ASR 失败日志带完整堆栈；Groq 401/403 映射为明确降级原因。本地用案例10 真实视频端到端验证 ffprobe→抽取→上传链路已走通。
+- [x] Reality Defender 403（协同问题二）：实测 RD API 返回 `free-tier-restriction: Video and text uploads require a paid plan`——免费套餐不允许视频/文本上传，属账户套餐限制而非代码缺陷（音频/图片仍可检测，此前音频案例全部成功）。代码改进：4xx 降级原因解析响应体 `code/message`（如 `http_403(free-tier-restriction: ...)`），报告与质询可自解释。
+- [x] 视频分解检测（免费套餐策略）：视频不再整段送 RD，按能力边界分解——画面 → ffmpeg 均匀抽 3 帧关键帧逐帧送 Sightengine genai（聚合帧间最大概率，`video_keyframe_aigc` 工具，参与 media_aigc_probability 评分）；音轨 → ffmpeg 抽取 mp3 后按音频送 RD（无音轨为正常结论不计降级）。案例10 真实视频实测：关键帧 3/3 帧 AI 生成概率 0.99，音轨 RD 音频检测 0.08。`analyze_with_reality_defender`/`analyze_with_sightengine` 拆出字节级核心（`_rd_analyze_bytes`/`_sightengine_detect`）复用；新增 6 项回归测试（含 forensics 视频分发）。
+- [x] Groq 403：本地实测 Groq 应用层 403（含 `/models`），key 形态有效但被拒绝，判断为 key 失效或工作区模型权限限制（今天上午音频案例 ASR 全部成功，期间状态发生变化）；代码已把 403 映射为可自解释降级原因，需在 Groq Console 检查 key 与模型权限。
+- [x] 协同面板文本乱码：Supabase Storage 会丢弃上传 content-type 的 charset 参数，文本检材直开原始链接时浏览器按本地回退编码（GBK）渲染 UTF-8 字节成乱码。前端 `ConsultationLink` 携带 modality，text 检材改为面板内 fetch + 显式 UTF-8 解码预览，媒体检材保持新标签页打开。
+- [x] 验证：后端 222 项 pytest 全过（新增视频观察 11 项、ASR 加固 2 项、RD 403 1 项、视频分解 6 项）；前端 25 项相关单测与 typecheck 全过；案例10 真实视频冒烟：LLM 观察内联判定通过、关键帧抽取 6 帧正常，分解检测关键帧 3/3 帧与音轨 RD 均取得真实结论。
+
+---
+
+## 2026-08-15 修复 Postgres NUL（22P05）导致检测收尾整体丢失
+
+- [x] 根因：视频+文本检材检测中，外部工具结果/检材文本等不可信数据混入 NUL 空字符，收尾阶段 `analysis_states`/`reports`/`tasks` 三处写入全部被 Postgres 拒绝（22P05），整次检测在最后一步丢失，审计还误记 `report_generated`。
+- [x] 持久化侧：`text_validation.strip_null_bytes` 递归剥离 NUL；`build_report_row`（先剥离再算 report_hash）、`build_analysis_state_row`、`build_agent_log_rows`、`normalize_final_verdict` 与 `AnalysisPersistenceService` 全部 `_safe_*` 写入方法统一落地；`upsert_report` 写入失败时不再记录 `report_generated` 审计。
+- [x] 入口侧：`decode_text_bytes`、ASR 转写文本、`_cap_prompt_text`（LLM 提示词上限）同步剥离；`detect.py` 协同会话/审批写入与 `consultation.py` 专家消息写入同样覆盖。
+- [x] 测试：新增 `tests/test_null_byte_sanitization.py`（7 项，模拟 Postgres 22P05 拒写）；后端 223 项 pytest 全过（另有 5 项因 Windows 默认临时目录权限报错，换 TEMP 后全过，与本改动无关）。
+- [x] 外围写入面补齐：`tasks` 创建（用户标题/描述/提示词）、公开案例条目、案例 RAG chunks、经验条目与 chunks、专家消息统一剥离 NUL；新增 3 项外围写入回归测试（共 10 项）。
+- [x] Commander 提示词瘦身：`commander_ruling` 从序列化完整 Agent 结果（实测一案 56 万字符、被截断丢尾）改为有界摘要——`_summarize_agent_for_commander`（叙事 12k、工具状态摘要、ASR 转写、域名溯源结论、检索标题级结果、图谱统计）与 `_summarize_challenger_for_commander`（质询结论与协同状态，丢弃会话/历史/RAG/skill 明细）；确定性注入（四分类、综合置信度、结论对照表）不受影响；提示词声明“摘要缺字段不等于工作未执行”；新增 2 项回归测试断言 30 万+ 字符膨胀载荷下提示词 < 8 万且关键内容保留。
+- [x] 验证：后端 202 项 pytest 全过（含全部既有用例）。
+
+---
+
 ## 2026-08-14 Agent 分工协作、协同频率与报告可读性改善
 
 - [x] 阶段分工硬边界：Challenger/取证/溯源提示词与四份 SKILL.md（v1.1.0）写明职责归属；代码侧确定性过滤越界质询点（不得要求取证做 WHOIS/IP/DNS/情报溯源，也不得要求 OSINT 做像素级/音视频鉴伪）。
@@ -345,6 +377,15 @@
 - [x] 修复经验提炼合同轻微漂移导致的偶发未采用：首次失败自动纠正重试，重试仍失败才保留 `check_failed`
 - [x] 修复样本日期被 LLM 反向解释及已完成 WHOIS 被重复列为待办；输出层增加确定性时间和域名工具状态守卫
 - [ ] 在人工开启外部调用时运行真实 Kimi Skill on/off 对照评测；CI 继续只跑离线契约
+
+### 2026-08-15 音频 ASR 语义转写（Forensics）
+
+- [x] 新增 `audio_transcription` 工具：Groq OpenAI 兼容接口（默认 `whisper-large-v3-turbo`），音频直传、视频先 ffprobe 探测音轨（无音轨记录正常结论并跳过上传）再 ffmpeg 抽取音轨
+- [x] Forensics 对音频/视频检材并行分发 ASR，转写进入工具矩阵与 `forensics_result.audio_transcripts`，取证 LLM 提示词要求校验音频语义与文本主题一致性（补齐 Challenger 提出的跨模态语义缺口）
+- [x] 转写摘要以 `audio_transcript_summaries` 注入 OSINT「上游已核验结论引用」块（定位为证据内容而非鉴伪结论）
+- [x] 结构化降级：未配置 `GROQ_API_KEY`、ffmpeg 缺失、文件超限或 Groq 失败均不虚构转写；`tests/test_audio_transcription.py` 11 项回归通过
+- [x] 本机安装 ffmpeg 9.0.1（`C:\Users\user\ffmpeg\bin`，已入用户 PATH；代码另有回退路径解析）
+- [ ] 配置真实 `GROQ_API_KEY` 后跑一次音频检材端到端检测，确认真实转写进入取证报告
 
 ---
 

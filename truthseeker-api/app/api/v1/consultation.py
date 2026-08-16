@@ -19,6 +19,7 @@ from app.services.consultation_workflow import (
     utc_now_iso,
 )
 from app.services.experience_library import build_experience_drafts
+from app.services.text_validation import strip_null_bytes
 from app.agents.tools.llm_client import commander_summarize_consultation
 from app.utils.supabase_client import supabase
 
@@ -289,7 +290,8 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
             _fetch_session_or_404(task_id, session_id)
 
     # 写入 collaboration_messages 表
-    message_record = {
+    # 专家消息为用户输入文本，Postgres 不接受 U+0000（22P05），入库前剥离
+    message_record = strip_null_bytes({
         "task_id": task_id,
         "role": req.role,
         "message": req.message,
@@ -302,7 +304,7 @@ async def inject_expert_message(task_id: str, req: InjectMessageRequest, request
         "suggested_action": req.suggested_action,
         "metadata": req.metadata,
         "created_at": datetime.now(timezone.utc).isoformat(),
-    }
+    })
 
     try:
         resp = supabase.table(MESSAGE_TABLE).insert(message_record).execute()

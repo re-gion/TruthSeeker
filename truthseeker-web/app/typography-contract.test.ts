@@ -73,8 +73,8 @@ describe("typography contract", () => {
 
     expect(hero).not.toContain("font-serif")
     expect(hero).toContain("brand-wordmark")
-    expect(hero).toContain("lg:text-[88px]")
-    expect(hero).toContain("xl:text-[92px]")
+    expect(hero).toContain("lg:text-[82px]")
+    expect(hero).toContain("xl:text-[86px]")
     expect(hero).not.toContain("lg:text-[92px]")
     expect(hero).not.toContain("xl:text-[96px]")
     expect(detect).not.toContain("font-serif")

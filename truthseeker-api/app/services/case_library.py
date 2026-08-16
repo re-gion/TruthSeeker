@@ -10,6 +10,7 @@ from typing import Any
 
 from app.services.analysis_persistence import normalize_final_verdict
 from app.services.input_types import canonical_input_type
+from app.services.text_validation import strip_null_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -108,34 +109,37 @@ def wants_public_case(task: dict[str, Any] | None) -> bool:
     return bool(metadata.get("share_to_casebase"))
 
 
+def _category_from_modalities(modalities: set[str]) -> str:
+    """Map a modality set to a case category.
+
+    Priority for mixed media is video > audio > image; ``image_text_mixed`` is
+    reserved for image+text so that audio/video cases are never mislabeled as
+    image-text.
+    """
+    non_text = modalities - {"text"}
+    if not non_text:
+        return "text_generation"
+    if "video" in non_text:
+        return "video_forgery"
+    if "audio" in non_text:
+        return "audio_forgery"
+    if "text" in modalities:
+        return "image_text_mixed"
+    return "image_forgery"
+
+
 def _derive_media_category(files: list[dict[str, Any]], input_type: str | None = None) -> str:
     modalities = {
         str(item.get("modality") or "").lower()
         for item in files
         if isinstance(item, dict) and item.get("modality")
     }
-    if len(modalities) > 1:
-        if "text" in modalities and ("image" in modalities or "video" in modalities or "audio" in modalities):
-            return "image_text_mixed"
-        return "image_text_mixed"
-    if "audio" in modalities:
-        return "audio_forgery"
-    if "video" in modalities:
-        return "video_forgery"
-    if "image" in modalities:
-        return "image_forgery"
-    if "text" in modalities:
-        return "text_generation"
+    if modalities:
+        return _category_from_modalities(modalities)
     canonical = canonical_input_type(input_type)
-    if "_" in canonical:
-        return "image_text_mixed"
-    if canonical == "audio":
-        return "audio_forgery"
-    if canonical == "video":
-        return "video_forgery"
-    if canonical == "image":
-        return "image_forgery"
-    return "text_generation"
+    if not canonical:
+        return "text_generation"
+    return _category_from_modalities({token for token in canonical.split("_") if token})
 
 
 def _difficulty(confidence: Any) -> str:
@@ -165,6 +169,16 @@ CATEGORY_LABEL_MAP = {
     "video_forgery": "视频伪造",
 }
 
+# 类别名含"伪造"字样，用于"内容真实/无法判定"案例的兜底标题时需换成中性表述，
+# 否则会拼出"图像伪造内容真实案例"这类自相矛盾的文案。
+NEUTRAL_MEDIA_LABEL_MAP = {
+    "text_generation": "文本检材",
+    "image_forgery": "图像检材",
+    "image_text_mixed": "图文检材",
+    "audio_forgery": "音频检材",
+    "video_forgery": "视频检材",
+}
+
 
 def _fallback_title_and_summary(
     verdict: str,
@@ -173,21 +187,32 @@ def _fallback_title_and_summary(
     difficulty: str,
     case_prompt: str | None = None,
 ) -> tuple[str, str]:
+    """Deterministic title/summary.
+
+    Deliberately grounded only in the verdict, media category, and confidence.
+    We do NOT extract a "subject" from case_prompt (it is a detection request,
+    not case facts), because doing so produced fabricated entities in titles.
+    """
     verdict_label = VERDICT_LABEL_MAP.get(verdict, verdict)
     category_label = CATEGORY_LABEL_MAP.get(media_category, media_category)
-    prompt = case_prompt or ""
-    if any(keyword in prompt for keyword in ("客服", "通知", "账号", "验证码", "钓鱼")):
-        subject = "账号安全通知"
-    elif any(keyword in prompt for keyword in ("董事长", "领导", "转账")):
-        subject = "领导转账"
-    elif any(keyword in prompt for keyword in ("新闻", "媒体", "公告")):
-        subject = "媒体信息"
+
+    # 根据裁决结果和媒体类别决定标题。伪造/可疑用"类别+疑似"，真实/无法判定改用
+    # 中性检材词，避免拼出"图像伪造内容真实案例"这类自相矛盾或重复的文案。
+    if verdict in {"forged", "suspicious"}:
+        if media_category in {"audio_forgery", "video_forgery"}:
+            case_type = "疑似合成"
+        elif media_category == "image_text_mixed":
+            case_type = "疑似伪造"
+        else:
+            case_type = "疑似 AIGC"
+        title = f"{category_label}{case_type}案例"
     else:
-        subject = CATEGORY_LABEL_MAP.get(media_category, "AIGC")
-    case_type = "钓鱼诈骗" if verdict in {"forged", "suspicious"} and media_category == "image_text_mixed" else category_label
-    title = f"{subject}{case_type}案例"
+        neutral = NEUTRAL_MEDIA_LABEL_MAP.get(media_category, category_label)
+        title = f"{neutral}真实性核验案例" if verdict == "authentic" else f"{neutral}研判案例"
+
     conf_text = f"{confidence * 100:.1f}%" if confidence is not None else "未知"
-    summary = f"本案为{category_label}类型检材，研判结论为{verdict_label}，综合置信度 {conf_text}。"
+    summary = f"本案涉及{category_label}类型检材，研判结论为{verdict_label}，综合置信度 {conf_text}。"
+
     return title, summary
 
 
@@ -209,14 +234,83 @@ def _parse_llm_json(content: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+URL_RE = re.compile(r"https?://[^\s)）\]】，。；、\"']+", re.IGNORECASE)
+# 中文与字母数字之间不存在 \b 边界（Unicode 下汉字也是 \w），需用显式环视判定域名边界
+DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_-]+\.)+[a-zA-Z]{2,}(?![A-Za-z0-9_.-])")
+
+
+EMPTY_QUOTES_RE = re.compile(r'""|\'\'|“”|‘’|「」')
+
+
 def _clean_generated_public_text(value: Any, *, max_chars: int) -> str:
-    return redact_public_text(str(value or "")).strip()[:max_chars]
+    text = redact_public_text(str(value or ""))
+    # 公开案例标题/摘要中不允许出现任何网址或域名（包括钓鱼链接本身）
+    text = URL_RE.sub("", text)
+    text = DOMAIN_RE.sub("", text)
+    # 清理域名/URL 被移除后残留的空引号对
+    text = EMPTY_QUOTES_RE.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()[:max_chars]
+
+
+def _collect_evidence_context(client: Any, task_id: Any) -> dict[str, Any]:
+    """Best-effort extraction of grounded case facts from persisted agent snapshots.
+
+    The reports row alone only carries scores/labels; the actual case narrative
+    (text content, ASR transcripts, tool conclusions) lives in
+    ``analysis_states.result_snapshot``. Returns {} on any failure so callers can
+    degrade to the deterministic fallback path.
+    """
+    if not client or not task_id:
+        return {}
+    try:
+        resp = (
+            client.table("analysis_states")
+            .select("result_snapshot")
+            .eq("task_id", task_id)
+            .order("created_at", desc=False)
+            .limit(200)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("Failed to load analysis states for public case %s: %s", task_id, exc)
+        return {}
+
+    forensics: dict[str, Any] = {}
+    osint: dict[str, Any] = {}
+    for row in resp.data or []:
+        snapshot = row.get("result_snapshot") if isinstance(row, dict) else None
+        if not isinstance(snapshot, dict):
+            continue
+        if isinstance(snapshot.get("forensics"), dict):
+            forensics = snapshot["forensics"]
+        if isinstance(snapshot.get("osint"), dict):
+            osint = snapshot["osint"]
+
+    context: dict[str, Any] = {}
+    forensics_analysis = str(forensics.get("llm_analysis") or "").strip()
+    if forensics_analysis:
+        context["forensics_analysis"] = redact_public_text(forensics_analysis)[:1600]
+    transcripts = []
+    for item in forensics.get("audio_transcripts") or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            transcripts.append(redact_public_text(text)[:300])
+    if transcripts:
+        context["audio_transcripts"] = transcripts[:2]
+    osint_analysis = str(osint.get("llm_analysis") or "").strip()
+    if osint_analysis:
+        context["osint_analysis"] = redact_public_text(osint_analysis)[:800]
+    return context
 
 
 async def generate_case_title_and_summary(
     task: dict[str, Any],
     report: dict[str, Any],
     llm: Any | None,
+    *,
+    client: Any | None = None,
 ) -> tuple[str, str]:
     """Generate a public-facing title and summary, with deterministic fallback."""
     verdict_payload = normalize_final_verdict(report.get("verdict_payload") or {})
@@ -231,12 +325,11 @@ async def generate_case_title_and_summary(
     if llm is None:
         return fallback
 
-    key_evidence = report.get("key_evidence") or verdict_payload.get("key_evidence") or []
-    if not isinstance(key_evidence, list):
-        key_evidence = [key_evidence]
+    evidence_context = _collect_evidence_context(client, task.get("id"))
     file_descriptors = [
         {
             "id": f"file-{index}",
+            "name": redact_public_text(str(item.get("name") or ""))[:120],
             "modality": item.get("modality") or "unknown",
             "mime_type": item.get("mime_type"),
             "size_bytes": item.get("size_bytes"),
@@ -245,18 +338,27 @@ async def generate_case_title_and_summary(
     ]
     prompt_payload = {
         "verdict": verdict,
+        "verdict_label": VERDICT_LABEL_MAP.get(verdict, verdict),
         "confidence_overall": confidence,
         "media_category": media_category,
-        "difficulty": difficulty,
+        "media_category_label": CATEGORY_LABEL_MAP.get(media_category, media_category),
         "files": file_descriptors,
-        "case_prompt": redact_public_text(case_prompt)[:200],
-        "key_evidence": [redact_public_text(str(item))[:160] for item in key_evidence[:3]],
+        "case_request": redact_public_text(case_prompt)[:200],
+        "evidence_context": evidence_context,
     }
     prompt = (
         "你是 TruthSeeker 的公开案例编辑。请基于输入生成适合公开案例库展示的标题和摘要。\n"
-        "要求：标题 10-24 个中文字符，必须包含具体主体/实体和案例类型，例如“董事长语音诈骗”“账号安全通知钓鱼”，不得只写“图文混合身份冒充诈骗案例”；"
-        "摘要 50-120 个中文字符，面向公众解释案情、结论和置信度；"
-        "不得泄露邮箱、手机号、身份证号、存储路径或签名 URL。\n"
+        "严格要求：\n"
+        "1. 标题 10-24 个中文字符，摘要 50-120 个中文字符。\n"
+        "2. evidence_context 是取证与情报溯源 Agent 的案情分析，是唯一案情事实来源；"
+        "标题和摘要只能引用其中明确出现的主体、实体和情节。\n"
+        "3. case_request 只是用户提交的检测诉求，不是案情事实，不得作为标题/摘要的内容来源。\n"
+        "4. 禁止编造或脑补输入中不存在的主体与情节（如熟人、亲友、领导、转账等）；"
+        "如果 evidence_context 中没有明确主体，标题改用“检材类型+研判结论”的客观描述。\n"
+        "5. 摘要面向公众：说明检材类型、关键鉴定依据、研判结论和置信度，可附一句简短防范建议。\n"
+        "6. 不得输出邮箱、手机号、身份证号、存储路径或签名 URL；"
+        "不得引用任何网址或域名（包括涉案钓鱼域名本身，用“免费托管域名”等描述性说法代替），"
+        "确保移除链接后句子依然通顺。\n"
         "只输出 JSON，格式为 {\"title\":\"...\",\"summary\":\"...\"}。\n"
         f"输入：{json.dumps(prompt_payload, ensure_ascii=False)}"
     )
@@ -414,7 +516,7 @@ async def ensure_case_library_entry(
         return {"status": "duplicate", "entry": duplicate}
 
     markdown = report_markdown if report_markdown is not None else build_markdown_from_report_row(report)
-    title, summary = await generate_case_title_and_summary(task, report, llm)
+    title, summary = await generate_case_title_and_summary(task, report, llm, client=client)
     entry = build_case_library_entry(
         task,
         report,
@@ -423,7 +525,8 @@ async def ensure_case_library_entry(
         public_summary=summary,
     )
     try:
-        resp = client.table("case_library_entries").insert(entry).execute()
+        # 标题/摘要含 LLM 输出，案情含检材文本；Postgres 不接受 U+0000（22P05）
+        resp = client.table("case_library_entries").insert(strip_null_bytes(entry)).execute()
         created = resp.data[0] if resp.data else entry
         return {"status": "created", "entry": created}
     except Exception as exc:
