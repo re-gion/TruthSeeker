@@ -306,7 +306,10 @@ def _upstream_verified_conclusions(state: TruthSeekerState) -> dict[str, Any] | 
             continue
         # 文本 AIGC 检测同样是取证阶段的鉴伪结论：只纳入上游引用，
         # 避免 OSINT 复用后当作自己的独立推断复述（跨阶段证据复用）。
-        if item.get("tool") in {"aigc_image_detector", "reality_defender"}:
+        # video_keyframe_aigc 是视频画面维度的检测结论，必须与音轨结论
+        # 一并引用，否则下游只见 RD 音轨概率，会误判画面维度缺失或把
+        # 音轨概率当成画面伪造概率。
+        if item.get("tool") in {"aigc_image_detector", "reality_defender", "video_keyframe_aigc"}:
             media_summaries.append(summary[:200])
         elif item.get("tool") == "ai_text_detector":
             text_summaries.append(summary[:200])

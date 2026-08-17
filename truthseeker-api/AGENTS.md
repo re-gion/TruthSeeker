@@ -38,7 +38,7 @@ Current registered route groups are `detect`, `tasks`, `upload`, `report`, `coll
 
 - Keep public API paths under `/api/v1`.
 - Validate file uploads and untrusted inputs at route boundaries.
-- Preserve graceful degradation when external AI, Reality Defender, Groq ASR/video processing, VirusTotal, Kimi, OpenAI, or Supabase calls fail.
+- Preserve graceful degradation when external AI, Reality Defender, ASR (Groq Whisper or Baidu short-speech extreme)/video processing, VirusTotal, Kimi, OpenAI, or Supabase calls fail.
 - Treat `/api/v1/collaboration` as canonical. Keep `/api/v1/consultation` compatibility unless the user explicitly asks to remove the legacy alias.
 - Do not claim canonical expert links are production-ready until the collaboration auth regression tests pass (`tests/test_collaboration_invite_access.py`); other known gaps are tracked in the 当前已知缺口 section of root `task.md`.
 - Do not write new user-facing "deepfake probability" fields. Use `aigc_*`; keep `deepfake_*` only as old snapshot fallback.

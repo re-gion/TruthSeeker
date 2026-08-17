@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm"
 import { ArrowLeft, ExternalLink, FileText, Film, Image as ImageIcon, Loader2, Mic, Trash2 } from "lucide-react"
 import { deleteCase, formatCaseFileSize, getCaseDetail, requestCasePreviewUrl, type PublicCaseDetail } from "@/lib/cases"
 import { getAuthToken } from "@/lib/auth"
+import { balanceCodeFences } from "@/lib/report-markdown"
 
 function FileIcon({ modality }: { modality: string | null }) {
   if (modality === "audio") return <Mic className="h-5 w-5" />
@@ -228,7 +229,7 @@ export function CaseDetailClient({ caseId }: { caseId: string }) {
       <section className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
         <h2 className="mb-5 text-lg font-semibold text-white">研判报告</h2>
         <div className="report-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.reportMarkdown}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{balanceCodeFences(detail.reportMarkdown)}</ReactMarkdown>
         </div>
       </section>
     </div>

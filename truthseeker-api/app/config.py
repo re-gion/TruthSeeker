@@ -141,9 +141,12 @@ class Settings(BaseSettings):
     DOMAIN_PROVENANCE_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("DOMAIN_PROVENANCE_ENABLED"))
     WHOISXML_TIMEOUT_SECONDS: float = Field(default=20.0, validation_alias=AliasChoices("WHOISXML_TIMEOUT_SECONDS"))
 
-    # 音频 ASR（Groq OpenAI 兼容 Whisper）— 取证阶段音频语义转写，
-    # 用于校验音频内容与文本主题的一致性
+    # 音频 ASR — 取证阶段音频语义转写，用于校验音频内容与文本主题的一致性。
+    # 通过 AUDIO_ASR_PROVIDER 在两个服务商之间切换：
+    # - groq：Groq OpenAI 兼容 Whisper（海外）
+    # - baidu：百度智能云短语音识别极速版（国内，dev_pid=80001 普通话输入法模型）
     AUDIO_ASR_ENABLED: bool = Field(default=True, validation_alias=AliasChoices("AUDIO_ASR_ENABLED", "Audio_ASR_Enabled"))
+    AUDIO_ASR_PROVIDER: str = Field(default="groq", validation_alias=AliasChoices("AUDIO_ASR_PROVIDER", "Audio_ASR_Provider"))
     GROQ_API_KEY: str = Field(default="", validation_alias=AliasChoices("GROQ_API_KEY", "Groq_API_Key"))
     GROQ_ASR_BASE_URL: str = Field(
         default="https://api.groq.com/openai/v1",
@@ -153,6 +156,20 @@ class Settings(BaseSettings):
         default="whisper-large-v3-turbo",
         validation_alias=AliasChoices("GROQ_ASR_MODEL", "Groq_ASR_Model"),
     )
+    # 百度智能云短语音识别极速版：控制台创建应用并勾选开通“短语音识别极速版”后，
+    # 取得应用的 API Key（client_id）与 Secret Key（client_secret）
+    BAIDU_ASR_API_KEY: str = Field(default="", validation_alias=AliasChoices("BAIDU_ASR_API_KEY", "Baidu_ASR_API_Key"))
+    BAIDU_ASR_SECRET_KEY: str = Field(default="", validation_alias=AliasChoices("BAIDU_ASR_SECRET_KEY", "Baidu_ASR_Secret_Key"))
+    BAIDU_ASR_DEV_PID: int = Field(default=80001, validation_alias=AliasChoices("BAIDU_ASR_DEV_PID", "Baidu_ASR_Dev_Pid"))
+    BAIDU_ASR_BASE_URL: str = Field(
+        default="https://vop.baidu.com/pro_api",
+        validation_alias=AliasChoices("BAIDU_ASR_BASE_URL", "Baidu_ASR_Base_URL"),
+    )
+    BAIDU_ASR_TOKEN_URL: str = Field(
+        default="https://aip.baidubce.com/oauth/2.0/token",
+        validation_alias=AliasChoices("BAIDU_ASR_TOKEN_URL", "Baidu_ASR_Token_URL"),
+    )
+    BAIDU_ASR_CUID: str = Field(default="truthseeker-api", validation_alias=AliasChoices("BAIDU_ASR_CUID", "Baidu_ASR_Cuid"))
     AUDIO_ASR_MAX_FILE_MB: float = Field(default=50.0, validation_alias=AliasChoices("AUDIO_ASR_MAX_FILE_MB", "Audio_ASR_Max_File_MB"))
     AUDIO_ASR_TIMEOUT_SECONDS: float = Field(default=90.0, validation_alias=AliasChoices("AUDIO_ASR_TIMEOUT_SECONDS", "Audio_ASR_Timeout_Seconds"))
     AUDIO_ASR_TOOL_TIMEOUT_SECONDS: float = Field(default=180.0, validation_alias=AliasChoices("AUDIO_ASR_TOOL_TIMEOUT_SECONDS", "Audio_ASR_Tool_Timeout_Seconds"))
@@ -341,10 +358,19 @@ def resolve_kimi_runtime(config: Settings | None = None) -> dict[str, str]:
     }
 
 
+def _normalize_asr_provider(provider: str) -> str:
+    value = (provider or "groq").strip().lower().replace("-", "_")
+    if value in {"baidu", "baidu_cloud", "baiduyun", "baidu_yun"}:
+        return "baidu"
+    return "groq"
+
+
 def resolve_asr_runtime(config: Settings | None = None) -> dict:
-    """Resolve ASR (Groq Whisper) runtime config, hot-reloading key fields from .env.
+    """Resolve ASR runtime config, hot-reloading key fields from .env.
 
     与 resolve_kimi_runtime 同样每次从 .env 重新读取，避免配置 Key 后必须重启服务。
+    `AUDIO_ASR_PROVIDER` 决定服务商（groq/baidu）；两套 Key 都会解析，
+    调用方按 provider 取用，切换服务商只需改 .env 并配好对应 Key。
     """
     cfg = config or settings
     raw = dotenv_values(str(_ENV_PATH))
@@ -354,13 +380,34 @@ def resolve_asr_runtime(config: Settings | None = None) -> dict:
         return value if value is not None else default
 
     enabled_raw = (pick("AUDIO_ASR_ENABLED", str(cfg.AUDIO_ASR_ENABLED)) or "true").strip().lower()
+    provider = _normalize_asr_provider(pick("AUDIO_ASR_PROVIDER", cfg.AUDIO_ASR_PROVIDER))
+
+    try:
+        dev_pid = int(str(pick("BAIDU_ASR_DEV_PID", cfg.BAIDU_ASR_DEV_PID)).strip())
+    except (TypeError, ValueError):
+        dev_pid = 80001
+    cuid = (pick("BAIDU_ASR_CUID", cfg.BAIDU_ASR_CUID) or "").strip()[:60] or "truthseeker-api"
+
     return {
         "enabled": enabled_raw not in {"false", "0", "no", "off", "disabled"},
+        "provider": provider,
+        # Groq OpenAI 兼容 Whisper
         "api_key": (pick("GROQ_API_KEY", cfg.GROQ_API_KEY) or "").strip(),
         "base_url": (
             pick("GROQ_ASR_BASE_URL", cfg.GROQ_ASR_BASE_URL) or "https://api.groq.com/openai/v1"
         ).strip().rstrip("/"),
         "model": (pick("GROQ_ASR_MODEL", cfg.GROQ_ASR_MODEL) or "whisper-large-v3-turbo").strip(),
+        # 百度智能云短语音识别极速版
+        "baidu_api_key": (pick("BAIDU_ASR_API_KEY", cfg.BAIDU_ASR_API_KEY) or "").strip(),
+        "baidu_secret_key": (pick("BAIDU_ASR_SECRET_KEY", cfg.BAIDU_ASR_SECRET_KEY) or "").strip(),
+        "baidu_dev_pid": dev_pid if dev_pid > 0 else 80001,
+        "baidu_base_url": (
+            pick("BAIDU_ASR_BASE_URL", cfg.BAIDU_ASR_BASE_URL) or "https://vop.baidu.com/pro_api"
+        ).strip().rstrip("/"),
+        "baidu_token_url": (
+            pick("BAIDU_ASR_TOKEN_URL", cfg.BAIDU_ASR_TOKEN_URL) or "https://aip.baidubce.com/oauth/2.0/token"
+        ).strip().rstrip("/"),
+        "baidu_cuid": cuid,
         "max_file_mb": cfg.AUDIO_ASR_MAX_FILE_MB,
         "timeout_seconds": cfg.AUDIO_ASR_TIMEOUT_SECONDS,
     }

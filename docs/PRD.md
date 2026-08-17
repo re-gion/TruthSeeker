@@ -92,7 +92,7 @@ Commander 以主持人身份整理争议点、证据缺口和待确认问题
 |模块 |功能描述 |优先级 |
 |------|----------|--------|
 | **LangGraph引擎** |四 Agent 状态机编排、Challenger 硬门槛路由和最大轮数限制；动态权重仅在 Commander 最终裁决时计算 | P0 |
-| **电子取证Agent** | 保留 `forensics` 协议 key，接收全模态输入，图片默认 Sightengine，音视频 Reality Defender，音频/视频语义转写使用 Groq ASR，视频观察使用原生视频内联或关键帧，文本内部 AIGC 检测，文件哈希和 IOC 进入 VirusTotal，生成取证报告 | P0 |
+| **电子取证Agent** | 保留 `forensics` 协议 key，接收全模态输入，图片默认 Sightengine，音视频 Reality Defender，音频/视频语义转写使用可切换 ASR（`AUDIO_ASR_PROVIDER=groq|baidu`：Groq Whisper 或百度云短语音识别极速版），视频观察使用原生视频内联或关键帧，文本内部 AIGC 检测，文件哈希和 IOC 进入 VirusTotal，生成取证报告 | P0 |
 | **情报溯源Agent** | 基于 Exa、VirusTotal、WhoisXML、公开案例 RAG、个人经验 RAG、样本线索和取证输出生成 OSINT 溯源图谱；会复用取证阶段经核验的音频转写摘要与其他上游结论 | P0 |
 | **逻辑质询Agent** |分阶段审查取证报告和溯源图谱，控制收敛、打回和人机协同触发 | P0 |
 | **研判指挥Agent** |综合全局证据板、辩论过程和图谱生成最终鉴伪与溯源报告 | P0 |

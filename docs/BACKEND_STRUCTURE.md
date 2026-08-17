@@ -44,7 +44,7 @@ truthseeker-api/
 │   │   ├── skills/            # Agent 核心 Skill 包（loader.py + 4 个固定绑定 SKILL.md 包）
 │   │   └── tools/
 │   │       ├── deepfake_api.py
-│   │       ├── audio_transcription.py  # Groq Whisper ASR 音频语义转写
+│   │       ├── audio_transcription.py  # ASR 音频语义转写（Groq Whisper / 百度短语音识别极速版，provider 可切换）
 │   │       ├── video_observation.py    # 视频观察：原生视频内联 / ffmpeg 关键帧
 │   │       ├── domain_provenance.py
 │   │       ├── threat_intel.py
@@ -142,17 +142,19 @@ Sightengine / Reality Defender：
 - 图片默认由 Sightengine `genai` 做 AIGC 图片检测。
 - 音频由 Reality Defender 做合成/篡改检测。
 - 视频按 RD 免费套餐能力边界分解，不再整段上传（会被 403 `free-tier-restriction` 拒绝）：
-  - 画面 → `video_keyframe_aigc`：ffmpeg 均匀抽 3 帧关键帧，逐帧送 Sightengine `genai`，聚合帧间最大 AI 生成概率（任一帧 ≥0.5 判 `is_aigc`），参与 `media_aigc_probability` 评分；聚合结果只保留逐帧概率，不携带原始响应。
-  - 音轨 → `reality_defender`（工具名不变）：ffmpeg 抽取音轨为 mp3 后按音频送 RD；视频无音轨是正常结论（`success + analysis_available=false`），不计降级。
+  - 画面 → `video_keyframe_aigc`：ffmpeg 均匀抽 3 帧关键帧，逐帧送 Sightengine `genai`，聚合帧间最大 AI 生成概率（任一帧 ≥0.5 判 `is_aigc`），参与 `media_aigc_probability` 评分；聚合结果只保留逐帧概率，不携带原始响应。视频画面维度由该工具覆盖，结果携带 `analysis_scope=video_visual_keyframes` 与范围说明，下游不得据此宣称“视频画面检测缺失”。
+  - 音轨 → `reality_defender`（工具名不变）：ffmpeg 抽取音轨为 mp3 后按音频送 RD；视频无音轨是正常结论（`success + analysis_available=false`），不计降级。结果携带 `detection_scope=video_audio_track`、`analysis_scope=audio_track_only` 与范围说明，其 `aigc_probability` 仅代表音频合成/篡改维度，不是视频画面伪造概率。
+  - 检测范围标注随工具摘要（`检测范围=仅视频音轨…`、`视频画面检测（关键帧抽样）…`）进入工具矩阵、报告、上游已核验结论引用块与各 LLM 上下文；跨轮复用成功结果时会按当前代码重新生成摘要，保证标注口径一致。
 - 返回成功、降级或失败结构。
 - 运行时主字段统一为 `aigc_probability`、`is_aigc`、`aigc_score`；旧 `deepfake_probability`、`is_deepfake`、`deepfake_score` 只允许作为历史 JSONB 快照读取兼容，不再作为新报告主字段。
 
 音频 ASR 语义转写（audio_transcription）：
 
-- Forensics 对音频/视频检材并行调用 Groq OpenAI 兼容 `/audio/transcriptions`（默认 `whisper-large-v3-turbo`），转写结果进入工具矩阵和 `forensics_result.audio_transcripts`，供取证 LLM 校验音频语义与文本主题一致性。
-- 视频检材先用 ffprobe 探测音轨：无音轨记录正常结论并跳过上传；有音轨用 ffmpeg 抽取 16kHz 单声道 mp3 再上传。ffmpeg/ffprobe 按 `FFMPEG_BINARY`/`FFPROBE_BINARY` → PATH → `C:\Users\user\ffmpeg\bin` 顺序解析；配置值必须指向真实存在的文件，无效配置（dotenv 不支持行内注释，`FFMPEG_BINARY=  # 说明` 会把注释读成路径）自动回退 PATH 查找。
+- ASR 服务商由 `AUDIO_ASR_PROVIDER=groq|baidu` 切换（.env 热加载，配好对应 Key 即可）：`groq`（默认）走 Groq OpenAI 兼容 `/audio/transcriptions`（`whisper-large-v3-turbo`）；`baidu` 走百度智能云短语音识别极速版 `POST https://vop.baidu.com/pro_api`（`dev_pid=80001` 普通话输入法模型），token 由 `BAIDU_ASR_TOKEN_URL` 按 client_credentials 获取并进程级缓存（提前 1 小时刷新），token 推迟到真正要识别时才取——无音轨视频等无需上传的场景不发起任何百度请求。转写结果进入工具矩阵和 `forensics_result.audio_transcripts`，供取证 LLM 校验音频语义与文本主题一致性。
+- 百度极速版单次识别限 60 秒且仅接受 pcm/wav/amr/m4a（16kHz 单声道），不支持 mp3/flac 等格式：ffmpeg 可用时统一本地归一化为 16kHz 单声道 wav 并按 55 秒分段（`-f segment`，音频/视频共用，视频经 `-vn` 直接取音轨），逐段 JSON+base64 上传后拼接全文，长音频最多转写前 20 段（`BAIDU_MAX_SEGMENTS`，约 18 分钟）并在结果 note 注明；ffmpeg 不可用时仅 wav/amr/m4a/pcm 原样直传（超 60 秒由服务端 err_no 拒绝后降级）。空语音类 err_no（2000/3301/3314）按空转写成功处理（等价 Groq 对静音返回空文本），服务端繁忙/限流类 err_no（3303/3304/3307/3313/3315）按传输层同款策略重试，其余业务 err_no 映射为可自解释降级原因（如 3302→鉴权失败、3308→音频超 60 秒）。
+- 视频检材先用 ffprobe 探测音轨：无音轨记录正常结论并跳过上传；Groq 路径有音轨时用 ffmpeg 抽取 16kHz 单声道 mp3 上传。ffmpeg/ffprobe 按 `FFMPEG_BINARY`/`FFPROBE_BINARY` → PATH → `C:\Users\user\ffmpeg\bin` 顺序解析；配置值必须指向真实存在的文件，无效配置（dotenv 不支持行内注释，`FFMPEG_BINARY=  # 说明` 会把注释读成路径）自动回退 PATH 查找。
 - 所有 ffmpeg/ffprobe 调用统一走 `audio_transcription._run_process`（视频观察共用）：线程池 + 同步 `subprocess.run`，不依赖事件循环类型。不要用 `asyncio.create_subprocess_exec`——Windows 下 uvicorn 以 `--reload` 或多 worker 启动时会把事件循环固定为 SelectorEventLoop（`uvicorn.loops.asyncio.asyncio_loop_factory`），该循环不实现子进程 transport，会抛空消息 `NotImplementedError`。超时由 subprocess 自行终止子进程并转成 `asyncio.TimeoutError`。
-- `AUDIO_ASR_ENABLED=false` 时完全不分发；未配置 `GROQ_API_KEY`、ffmpeg 缺失、文件超限或 Groq 失败时按结构化降级写入工具矩阵，不虚构转写内容。Groq 401/403 分别映射为 key 无效与 key 被拒/工作区模型权限限制的明确降级原因。
+- `AUDIO_ASR_ENABLED=false` 时完全不分发；未配置对应服务商 Key（Groq 需 `GROQ_API_KEY`；百度需 `BAIDU_ASR_API_KEY` + `BAIDU_ASR_SECRET_KEY` 两者齐全）、ffmpeg 缺失、文件超限或服务商失败时按结构化降级写入工具矩阵，不虚构转写内容。Groq 401/403 分别映射为 key 无效与 key 被拒/工作区模型权限限制的明确降级原因；百度 token 端点 400/401/403 映射为凭证错误。
 - 转写摘要随 `audio_transcript_summaries` 注入 OSINT 的“上游已核验结论引用”块；该字段属于证据内容而非鉴伪结论。
 
 视频检材观察（video_observation）：

@@ -96,9 +96,16 @@ WHOISXML_TIMEOUT_SECONDS=20
 TEXT_AIGC_DETECTOR_ENABLED=true
 TEXT_AIGC_AI_THRESHOLD=0.6
 AUDIO_ASR_ENABLED=true
+AUDIO_ASR_PROVIDER=groq
 GROQ_API_KEY=
 GROQ_ASR_BASE_URL=https://api.groq.com/openai/v1
 GROQ_ASR_MODEL=whisper-large-v3-turbo
+BAIDU_ASR_API_KEY=
+BAIDU_ASR_SECRET_KEY=
+BAIDU_ASR_DEV_PID=80001
+BAIDU_ASR_BASE_URL=https://vop.baidu.com/pro_api
+BAIDU_ASR_TOKEN_URL=https://aip.baidubce.com/oauth/2.0/token
+BAIDU_ASR_CUID=truthseeker-api
 AUDIO_ASR_MAX_FILE_MB=50
 AUDIO_ASR_TIMEOUT_SECONDS=90
 AUDIO_ASR_TOOL_TIMEOUT_SECONDS=180
@@ -154,7 +161,7 @@ CONVERGENCE_THRESHOLD=0.08
 - Agent LLM 能力边界：Kimi K2.6 输入 `text,image,video`、上下文 262144 tokens、本系统固定 thinking disabled；MiMo `mimo-v2.5` 输入 `text,image`、上下文 1048576 tokens、官方输出上限 131072 tokens，支持显式 thinking enabled/disabled。TruthSeeker 当前用 `AGENT_LLM_MAX_OUTPUT_TOKENS=4096` 统一限制单次 Agent LLM 输出。
 - 图片 AIGC 检测默认使用 Sightengine `genai`，通过 `AIGC_IMAGE_PROVIDER=sightengine`、`SIGHTENGINE_API_USER` 和 `SIGHTENGINE_API_SECRET` 启用；Reality Defender 保留为音视频合成/篡改检测和图片检测降级备份。系统主字段使用 `aigc_*`，不再把图片 `AI_GENERATED` 结果上浮为 Deepfake 概率。
 - 文本 AIGC 检测使用内部工具，通过 `TEXT_AIGC_DETECTOR_ENABLED=true` 和 `TEXT_AIGC_AI_THRESHOLD` 控制。Forensics/OSINT 都会把结果以 `ai_text_detector` 写入工具矩阵；当前调用固定为 `analyze_text(..., use_llm=False)`，依据本地文本统计和社工诱导特征给出概率性线索，不单独定性。
-- 音频语义转写（ASR）默认走 GroqCloud OpenAI 兼容接口 `whisper-large-v3-turbo`，通过 `AUDIO_ASR_ENABLED=true` 和 `GROQ_API_KEY` 启用。Forensics 对音频检材直接上传转写、对视频检材先用 ffprobe 探测音轨（无音轨记录正常结论并跳过上传），再用 ffmpeg 抽取音轨上传；转写结果以 `audio_transcription` 写入工具矩阵并进入 `audio_transcripts`，供取证报告判断音频语义与文本主题一致性，并以摘要形式注入 OSINT 的“上游已核验结论引用”块。未配置 Key、ffmpeg 缺失或 Groq 失败时按结构化降级处理，不虚构转写内容。ffmpeg/ffprobe 留空 `FFMPEG_BINARY`/`FFPROBE_BINARY` 时按 PATH 查找，再回退 `C:\Users\user\ffmpeg\bin`；配置值必须指向真实存在的文件（无效值自动回退 PATH）。注意：dotenv 不支持行内注释，`.env` 中 `KEY=  # 说明` 会把注释文本读成值（空值行尤甚），注释必须独立成行。
+- 音频语义转写（ASR）通过 `AUDIO_ASR_ENABLED=true` 启用，`AUDIO_ASR_PROVIDER=groq|baidu` 切换服务商，配好对应 Key 即可，无需改代码：`groq`（默认）走 GroqCloud OpenAI 兼容接口 `whisper-large-v3-turbo`（`GROQ_API_KEY`）；`baidu` 走百度智能云短语音识别极速版 `dev_pid=80001` 普通话输入法模型（`BAIDU_ASR_API_KEY`/`BAIDU_ASR_SECRET_KEY`，token 由 `BAIDU_ASR_TOKEN_URL` 按 client_credentials 获取并进程级缓存）。百度单次识别限 60 秒且仅接受 pcm/wav/amr/m4a（16kHz 单声道），系统用 ffmpeg 本地归一化为 16kHz 单声道 wav 并按 55 秒分段、逐段识别后拼接全文，长音频最多取前 20 段（代码常量 `BAIDU_MAX_SEGMENTS`，约 18 分钟）并在结果 note 中注明；ffmpeg 不可用时仅 wav/amr/m4a/pcm 可原样直传（无法绕开 60 秒限制）。Forensics 对音频检材直接转写、对视频检材先用 ffprobe 探测音轨（无音轨记录正常结论并跳过上传，百度路径下不发起任何百度请求）；转写结果以 `audio_transcription` 写入工具矩阵并进入 `audio_transcripts`，供取证报告判断音频语义与文本主题一致性，并以摘要形式注入 OSINT 的“上游已核验结论引用”块。未配置对应 Key、ffmpeg 缺失或服务商失败时按结构化降级处理（百度业务 err_no 映射为可自解释的降级原因，空语音类错误码按空转写成功处理），不虚构转写内容。ffmpeg/ffprobe 留空 `FFMPEG_BINARY`/`FFPROBE_BINARY` 时按 PATH 查找，再回退 `C:\Users\user\ffmpeg\bin`；配置值必须指向真实存在的文件（无效值自动回退 PATH）。注意：dotenv 不支持行内注释，`.env` 中 `KEY=  # 说明` 会把注释文本读成值（空值行尤甚），注释必须独立成行。
 - 域名溯源使用 WhoisXML WHOIS + DNS Lookup + IP Geolocation，通过 `DOMAIN_PROVENANCE_ENABLED=true` 和 `WHOISXML_API_KEY` 启用；未配置 key 时 OSINT 会记录结构化降级。DNS Lookup 优先解析完整主机名的 A/AAAA，必要时跟随 CNAME，再回退注册域；WHOIS 可用但 DNS Lookup/IP Geolocation 403 时按 `partial` 处理，通常表示对应 WhoisXML 子产品权限或额度受限。
 - 公开案例库 RAG 和个人经验库 RAG 复用独立 embedding 配置，默认接入 SiliconFlow OpenAI-compatible `POST /v1/embeddings`，模型为 `Qwen/Qwen3-VL-Embedding-8B`，维度固定 1024。只需在本地 `.env` 填入 `EMBEDDING_API_KEY` 并运行对应迁移/索引流程即可启用。
 - 当前运行时是 Kimi 2.6 自主推理 + 内部文本/案例工具 + 外部媒体与情报 API + LangGraph 的 Fed-MBPR-compatible 架构；Fed-MBPR 训练/推理底座仍是可替换检测器方向。

@@ -665,6 +665,11 @@ async def analyze_video_keyframes(
         "model": "sightengine_genai_keyframes",
         "provider": "sightengine",
         "detection_scope": "video_keyframe_aigc",
+        "analysis_scope": "video_visual_keyframes",
+        "scope_note": (
+            "视频画面 AIGC 检测由本工具覆盖（关键帧抽样逐帧检测）；"
+            "RD 免费套餐不支持视频整段画面检测，不存在独立的 RD 画面结论"
+        ),
         "analysis_available": True,
         "frames_total": len(frames),
         "frames_analyzed": len(frame_results),
@@ -676,6 +681,24 @@ async def analyze_video_keyframes(
         "details": {"method": "keyframe_sightengine_genai"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _with_audio_track_scope(result: dict) -> dict:
+    """为视频音轨检测结果附加检测范围标注。
+
+    RD 免费套餐拒绝视频整段上传，此处只分析抽出的音轨：
+    aigc_probability 仅代表音频合成/篡改维度，不是视频画面伪造概率；
+    画面维度由 video_keyframe_aigc（Sightengine 关键帧）覆盖。
+    成功与降级结果都要标注，防止下游跨维度误读概率。
+    """
+    if isinstance(result, dict):
+        result["detection_scope"] = "video_audio_track"
+        result["analysis_scope"] = "audio_track_only"
+        result["scope_note"] = (
+            "仅检测视频音轨（音频合成/篡改维度），不代表视频画面伪造概率；"
+            "画面维度由 video_keyframe_aigc 关键帧检测覆盖"
+        )
+    return result
 
 
 async def analyze_video_audio_track(file_url: str, filename_hint: str = "") -> dict:
@@ -693,18 +716,18 @@ async def analyze_video_audio_track(file_url: str, filename_hint: str = "") -> d
         )
     except Exception as exc:
         logger.warning("[video] 音轨检测下载失败 %s: %s", file_url, exc)
-        return await mock_deepfake_analysis(
+        return _with_audio_track_scope(await mock_deepfake_analysis(
             file_url, "audio",
             fallback_reason=f"video_download_failed: {type(exc).__name__}",
             api_key_configured=bool(_get_api_key()),
-        )
+        ))
     hint = filename_hint or downloaded_name or hint
     if len(file_data) > VIDEO_DECOMPOSE_MAX_BYTES:
-        return await mock_deepfake_analysis(
+        return _with_audio_track_scope(await mock_deepfake_analysis(
             file_url, "audio",
             fallback_reason=f"video_too_large_for_audio_track({len(file_data) // (1024 * 1024)}MB)",
             api_key_configured=bool(_get_api_key()),
-        )
+        ))
 
     audio_bytes = await video_observation.extract_audio_track_bytes(file_data, hint)
     if audio_bytes is None:
@@ -719,13 +742,16 @@ async def analyze_video_audio_track(file_url: str, filename_hint: str = "") -> d
             "model": "reality_defender",
             "provider": "reality_defender",
             "detection_scope": "video_audio_track",
+            "analysis_scope": "audio_track_only",
+            "scope_note": "仅检测视频音轨（音频维度），不覆盖视频画面",
             "note": "视频检材未检测到音轨，无需 RD 音频检测",
             "details": {"method": "video_audio_track_extraction"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     base_name = os.path.splitext(os.path.basename(hint))[0] or "video"
-    return await _rd_analyze_bytes(file_url, f"{base_name}_audiotrack.mp3", audio_bytes, "audio")
+    result = await _rd_analyze_bytes(file_url, f"{base_name}_audiotrack.mp3", audio_bytes, "audio")
+    return _with_audio_track_scope(result)
 
 
 async def mock_aigc_media_analysis(

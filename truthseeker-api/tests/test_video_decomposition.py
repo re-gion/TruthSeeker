@@ -145,6 +145,116 @@ async def test_video_audio_track_sends_audio_to_rd(monkeypatch):
     assert captured["media_type"] == "audio"
     assert captured["filename"].endswith("_audiotrack.mp3")
     assert captured["data"] == b"mp3-audio-bytes"
+    # RD 此处只分析音轨：结果必须携带 audio-only 范围标注，
+    # 防止下游把音轨概率误读为视频画面伪造概率
+    assert result["detection_scope"] == "video_audio_track"
+    assert result["analysis_scope"] == "audio_track_only"
+    assert "不代表视频画面伪造概率" in result["scope_note"]
+
+
+@pytest.mark.asyncio
+async def test_video_audio_track_degraded_result_keeps_scope_label(monkeypatch):
+    async def fake_download(url, timeout=120.0, range_header=None):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(deepfake_api, "download_evidence_bytes", fake_download)
+
+    result = await deepfake_api.analyze_video_audio_track("mock://video", "case.mp4")
+
+    assert result["degraded"] is True
+    assert result["analysis_available"] is False
+    # 降级结果同样要标注检测范围，摘要才能写清"仅音轨检测未取得结论"
+    assert result["detection_scope"] == "video_audio_track"
+    assert result["analysis_scope"] == "audio_track_only"
+
+
+# ---------- 工具摘要检测范围标注 ----------
+
+def test_rd_summary_labels_audio_track_scope():
+    from app.agents.nodes.forensics import _summarize_tool_result
+
+    summary = _summarize_tool_result("reality_defender", {
+        "analysis_scope": "audio_track_only",
+        "detection_scope": "video_audio_track",
+        "aigc_probability": 0.08,
+        "confidence": 0.92,
+    })
+    assert "仅视频音轨" in summary
+    assert "不含视频画面" in summary
+    assert "aigc_probability=0.08" in summary
+    assert "confidence=0.92" in summary
+
+
+def test_rd_summary_labels_whole_audio_file_scope():
+    from app.agents.nodes.forensics import _summarize_tool_result
+
+    summary = _summarize_tool_result("reality_defender", {
+        "aigc_probability": 0.30,
+        "confidence": 0.70,
+    })
+    assert "音频文件整体" in summary
+
+
+def test_rd_degraded_summary_keeps_scope_label():
+    from app.agents.nodes.forensics import _summarize_tool_result
+
+    summary = _summarize_tool_result("reality_defender", {
+        "analysis_scope": "audio_track_only",
+        "detection_scope": "video_audio_track",
+        "degraded": True,
+        "analysis_available": False,
+        "details": {"fallback_reason": "missing_api_key"},
+    })
+    assert "仅视频音轨" in summary
+    assert "missing_api_key" in summary
+
+
+def test_keyframe_summary_labels_video_visual_coverage():
+    from app.agents.nodes.forensics import _summarize_tool_result
+
+    summary = _summarize_tool_result("video_keyframe_aigc", {
+        "frames_analyzed": 3,
+        "frames_total": 3,
+        "aigc_probability": 0.99,
+        "confidence": 0.99,
+    })
+    assert "视频画面检测" in summary
+    assert "关键帧 3/3 帧" in summary
+    assert "ai_generated_probability=0.99" in summary
+
+
+def test_upstream_conclusions_include_keyframe_visual_summary():
+    """上游已核验结论必须同时携带音轨与画面两个维度的检测结论。"""
+    from app.agents.nodes.osint import _upstream_citation_markdown, _upstream_verified_conclusions
+
+    state = {
+        "forensics_result": {
+            "aigc_probability": 0.99,
+            "is_aigc": True,
+            "confidence": 0.9,
+            "tool_results": [
+                {
+                    "tool": "reality_defender",
+                    "status": "success",
+                    "summary": "检测范围=仅视频音轨（不含视频画面，画面维度见 video_keyframe_aigc）, aigc_probability=0.08, confidence=0.92",
+                },
+                {
+                    "tool": "video_keyframe_aigc",
+                    "status": "success",
+                    "summary": "视频画面检测（关键帧抽样）: 关键帧 3/3 帧, 帧间最大 ai_generated_probability=0.99, confidence=0.99",
+                },
+            ],
+        }
+    }
+
+    conclusions = _upstream_verified_conclusions(state)
+    assert conclusions is not None
+    assert any("仅视频音轨" in item for item in conclusions["media_detection_summaries"])
+    assert any("视频画面检测" in item for item in conclusions["media_detection_summaries"])
+
+    markdown = _upstream_citation_markdown("task-video-1", conclusions)
+    assert "仅视频音轨" in markdown
+    assert "视频画面检测" in markdown
 
 
 # ---------- forensics 分发 ----------

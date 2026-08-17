@@ -10,6 +10,7 @@ import { createReportHeadingComponents } from "@/components/report/reportMarkdow
 import StarBackground from "@/components/ui/StarBackground"
 import { useActiveHeading } from "@/hooks/useActiveHeading"
 import { displayInputType } from "@/lib/input-types"
+import { balanceCodeFences } from "@/lib/report-markdown"
 import { REPORT_SECTION_IDS, buildReportToc } from "@/lib/report-toc"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -62,7 +63,9 @@ export default function SharedReportPage() {
             .finally(() => setLoading(false))
     }, [token])
 
-    const markdown = data?.markdown ?? ""
+    // 补齐未闭合代码围栏，避免某个未闭合的 ``` 块把后文整段吞进代码块渲染
+    const markdown = balanceCodeFences(data?.markdown ?? "")
+    const summaryMarkdown = balanceCodeFences(data?.report.summary ?? "")
     const hasSummary = Boolean(data?.report.summary)
 
     const tocEntries = useMemo(
@@ -191,7 +194,7 @@ export default function SharedReportPage() {
                         <h2 className="text-lg font-bold text-[#C0C0C0] mb-4">最终裁决报告</h2>
                         <div className="report-markdown">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {data.report.summary}
+                                {summaryMarkdown}
                             </ReactMarkdown>
                         </div>
                     </motion.div>

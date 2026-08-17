@@ -21,6 +21,16 @@
 
 ---
 
+## 2026-08-17 ASR 服务商可切换：新增百度智能云短语音识别极速版
+
+- [x] 需求：原 ASR 仅支持 Groq OpenAI 兼容 Whisper（海外接入）。新增百度智能云短语音识别极速版（`dev_pid=80001` 普通话输入法模型，国内接入），通过 `.env` 的 `AUDIO_ASR_PROVIDER=groq|baidu` 切换，配好对应服务商的 Key 即可，无需改代码；两套 Key 相互独立、均支持热加载。
+- [x] 实现：`app/config.py` 新增 `AUDIO_ASR_PROVIDER` 与 `BAIDU_ASR_*` 配置，`resolve_asr_runtime` 扩展为双服务商解析；`app/agents/tools/audio_transcription.py` 新增百度路径：client_credentials 获取 access_token 并进程级缓存（提前 1 小时刷新，推迟到真正识别时才取——无音轨视频场景不发起任何百度请求）、JSON+base64 上传、业务 err_no 映射为可自解释降级原因（3302 鉴权失败、3308 超 60 秒等）、空语音类 err_no 按空转写成功处理、服务端繁忙/限流类 err_no 按传输层同款策略重试；Forensics 启用日志按 provider 提示。
+- [x] 百度能力边界处理：单次识别限 60 秒且仅接受 pcm/wav/amr/m4a（不支持 mp3）——ffmpeg 可用时本地统一归一化为 16kHz 单声道 wav 并按 55 秒分段（音频/视频共用，视频经 `-vn` 直接取音轨），逐段识别后拼接全文，长音频最多转写前 20 段（约 18 分钟）并在结果 note 注明；ffmpeg 不可用时仅 wav/amr/m4a/pcm 可原样直传（超 60 秒由服务端拒绝后降级）。
+- [x] 验证：`tests/test_audio_transcription.py` 新增 15 项百度路径回归（请求参数形态、token 缓存、分段拼接、分段上限、空语音、鉴权失败、瞬时重试、凭证错误、视频音轨探测、无 ffmpeg 降级等），共 34 项全过；后端全量 pytest 244 项通过（5 项 Windows 临时目录权限 ERROR 与本改动无关，重定向 TMPDIR 后消失）。
+- [ ] 待用户配置 `BAIDU_ASR_API_KEY`/`BAIDU_ASR_SECRET_KEY` 后实测真实识别效果（本次开发未联网调用百度真实接口）。
+
+---
+
 ## 2026-08-16 修复 Windows 事件循环导致 ASR / 关键帧抽取失效
 
 - [x] 根因：`.env` 脏值修好后重跑案例10，ASR 音轨探测与视频关键帧抽取仍同时降级，堆栈指向 `asyncio/base_events._make_subprocess_transport` 抛空消息 `NotImplementedError`。定位为 uvicorn 在 Windows 上以 `--reload` 或多 worker 启动时（`Config.use_subprocess=True`）把事件循环固定为 SelectorEventLoop（`uvicorn.loops.asyncio.asyncio_loop_factory`），该循环不实现子进程 transport，`asyncio.create_subprocess_exec` 必然失败——这是本项目 `--reload` 标准开发启动方式下的必现问题。

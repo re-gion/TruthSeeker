@@ -942,12 +942,55 @@ def _build_consultation_sections(sessions: list, messages: list, result: dict) -
     return lines
 
 
+_FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})\s*(.*)$")
+_FENCE_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def _balance_code_fences(text: str) -> str:
+    """补齐未闭合的代码围栏，防止渲染器把后文全部吞进一个代码块。
+
+    LLM 可能输出未闭合的 ```/~~~ 围栏（如画 mermaid/ASCII 图谱），字段截断
+    也可能把闭合围栏切掉。围栏未闭合时前端会把后续整段内容渲染成代码块
+    （报告页表现为荧光绿代码样式越界）。修复策略：围栏开着却遇到 Markdown
+    标题时，说明模型已离开代码块开始写新小节，先在标题前补闭合围栏；到
+    文末仍未闭合（典型为截断切掉闭合围栏）则在文末补齐。
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    open_marker: str | None = None
+    for line in lines:
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if open_marker is not None and indent <= 3 and _FENCE_HEADING_RE.match(stripped):
+            result.append(open_marker[0] * max(3, len(open_marker)))
+            open_marker = None
+        result.append(line)
+        if indent > 3:
+            continue  # CommonMark：缩进超过 3 格的围栏不生效
+        match = _FENCE_MARKER_RE.match(stripped)
+        if not match:
+            continue
+        marker, rest = match.group(1), match.group(2).strip()
+        if open_marker is None:
+            open_marker = marker
+        elif (
+            marker[0] == open_marker[0]
+            and len(marker) >= len(open_marker)
+            and not rest  # 闭合围栏不能带信息串
+        ):
+            open_marker = None
+    if open_marker is not None:
+        result.append(open_marker[0] * max(3, len(open_marker)))
+    return "\n".join(result)
+
+
 def _render_markdown_field(key: str, value: str, indent: int = 0) -> str:
     """Render LLM Markdown fields without collapsing paragraphs into one bullet."""
     label = MARKDOWN_REPORT_FIELDS.get(key, key)
     text = (value or "").strip()
     if len(text) > 5000:
         text = text[:4999].rstrip() + "\n\n..."
+    text = _balance_code_fences(text)
     prefix = "  " * indent
     if indent == 0:
         return "\n".join([f"### {label}", "", text])

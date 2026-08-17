@@ -173,20 +173,27 @@ def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
             f"confidence={result.get('confidence', 0):.2f}"
         )
     if tool == "reality_defender":
+        # RD 在不同检材形态下检测范围不同，摘要必须显式标注，防止下游把
+        # 音轨概率误读为视频画面伪造概率（与关键帧画面检测结论形成虚假矛盾）。
+        scope_label = _rd_scope_label(result)
         if result.get("has_audio_track") is False:
             return result.get("note") or "视频检材未检测到音轨，无需 RD 音频检测"
         if result.get("degraded") or not result.get("analysis_available", True):
             reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
-            return f"Reality Defender 未取得真实检测结论，降级原因={reason}"
+            return f"{scope_label}Reality Defender 未取得真实检测结论，降级原因={reason}"
         return (
+            f"{scope_label}"
             f"aigc_probability={_read_aigc_probability(result):.2f}, "
             f"confidence={result.get('confidence', 0):.2f}"
         )
     if tool == "video_keyframe_aigc":
+        # 视频画面维度由关键帧抽样覆盖（RD 免费套餐不支持视频整段画面检测），
+        # 摘要显式标注检测范围，避免下游误判"视频画面检测缺失"。
         if result.get("degraded") or not result.get("analysis_available", True):
             reason = (result.get("details") or {}).get("fallback_reason", "unavailable")
-            return f"视频关键帧 AIGC 检测未取得真实结论，降级原因={reason}"
+            return f"视频画面检测（关键帧抽样）未取得真实结论，降级原因={reason}"
         return (
+            f"视频画面检测（关键帧抽样）: "
             f"关键帧 {result.get('frames_analyzed', 0)}/{result.get('frames_total', 0)} 帧, "
             f"帧间最大 ai_generated_probability={_read_aigc_probability(result):.2f}, "
             f"confidence={result.get('confidence', 0):.2f}"
@@ -215,6 +222,21 @@ def _summarize_tool_result(tool: str, result: dict[str, Any]) -> str:
             f"语言={result.get('language') or 'unknown'}：{preview[:80]}"
         )
     return "工具完成"
+
+
+def _rd_scope_label(result: dict[str, Any]) -> str:
+    """RD 结果摘要的检测范围标注。
+
+    RD 的概率只在检测对象范围内成立：视频场景下只检音轨，音频场景下检
+    音频文件整体。摘要必须显式携带范围，防止下游把音轨概率误读为视频
+    画面伪造概率（与关键帧画面检测结论形成虚假矛盾）。
+    """
+    if (
+        result.get("analysis_scope") == "audio_track_only"
+        or result.get("detection_scope") == "video_audio_track"
+    ):
+        return "检测范围=仅视频音轨（不含视频画面，画面维度见 video_keyframe_aigc）, "
+    return "检测范围=音频文件整体, "
 
 
 def _read_aigc_probability(result: dict[str, Any]) -> float:
@@ -335,16 +357,26 @@ async def forensics_node(state: TruthSeekerState) -> dict:
             return False
         previous = previous_successes.get((tool, target))
         if previous:
-            settled_results.append({**previous, "reused": True})
+            reused = {**previous, "reused": True}
+            # 摘要始终按当前代码重新生成：检测范围标注等摘要格式演进
+            # 对复用结果同样生效，避免跨轮次摘要口径不一致。
+            if isinstance(reused.get("result"), dict):
+                reused["summary"] = _summarize_tool_result(tool, reused["result"])
+            settled_results.append(reused)
             return True
         return False
 
     asr_runtime = resolve_asr_runtime()
     if media_files and asr_runtime["enabled"]:
-        log(
-            "thinking",
-            "ASR 音频语义转写已启用" + ("" if asr_runtime["api_key"] else "（GROQ_API_KEY 未配置，预计降级）"),
-        )
+        if asr_runtime.get("provider") == "baidu":
+            asr_label = "百度云短语音识别极速版"
+            asr_key_ready = bool(asr_runtime["baidu_api_key"] and asr_runtime["baidu_secret_key"])
+            asr_key_hint = "" if asr_key_ready else "（BAIDU_ASR_API_KEY/BAIDU_ASR_SECRET_KEY 未配置，预计降级）"
+        else:
+            asr_label = "Groq Whisper"
+            asr_key_ready = bool(asr_runtime["api_key"])
+            asr_key_hint = "" if asr_key_ready else "（GROQ_API_KEY 未配置，预计降级）"
+        log("thinking", f"ASR 音频语义转写已启用（{asr_label}）{asr_key_hint}")
 
     for media in media_files:
         target = str(media.get("name") or media.get("file_url") or media.get("storage_path") or "media")
